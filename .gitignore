@@ -1,0 +1,11 @@
+# .gitignore
+.env
+.venv/
+__pycache__/
+*.pyc
+logs/
+backups/
+chroma_data/
+.vscode/
+*.db
+.DS_Store
