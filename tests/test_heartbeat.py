@@ -5,12 +5,16 @@ Gateway(模拟) → Agent(模拟) → ModelRouter → 本地模型 → 返回
 import sys
 sys.path.insert(0, ".")
 
+import os
 import asyncio
 import uuid
+import pytest
 from loguru import logger
 from packages.shared import ModelRouter
 from packages.shared.logging_config import setup_logging
 
+
+@pytest.mark.asyncio
 async def test_local_chat():
     """本地模型基础连通"""
     router = ModelRouter()
@@ -27,44 +31,45 @@ async def test_local_chat():
             trace_id=trace_id,
             reply_preview=reply[:100],
         )
-        print(f"\n✅ 本地模型: {reply[:200]}\n")
+        assert len(reply) > 0, "本地模型应返回非空回复"
     except Exception as e:
         logger.error("heartbeat.local_fail", trace_id=trace_id, error=str(e))
-        print(f"\n❌ 本地模型连接失败: {e}\n")
-        raise
+        pytest.fail(f"本地模型连接失败: {e}")
 
+
+@pytest.mark.asyncio
 async def test_cloud_fallback():
     """云端模型连通（需要配置 API Key）"""
-    import os
     if not os.getenv("DASHSCOPE_API_KEY"):
-        print("⚠️  跳过云端测试（未配置 DASHSCOPE_API_KEY）")
-        return
+        pytest.skip("未配置 DASHSCOPE_API_KEY")
 
     router = ModelRouter()
     messages = [{"role": "user", "content": "回复：OK"}]
 
     try:
         reply = await router._call_qwen(messages)
-        print(f"✅ 云端 Qwen-Plus: {reply[:100]}\n")
+        assert len(reply) > 0, "云端模型应返回非空回复"
     except Exception as e:
-        print(f"❌ 云端连接失败: {e}\n")
+        pytest.fail(f"云端连接失败: {e}")
 
+
+@pytest.mark.asyncio
 async def test_routing():
     """路由逻辑测试"""
-    import os
     if not os.getenv("DASHSCOPE_API_KEY"):
-        print("⚠️  跳过路由测试（未配置 API Key）")
-        return
+        pytest.skip("未配置 DASHSCOPE_API_KEY")
 
     router = ModelRouter()
     messages = [{"role": "user", "content": "回复：你好"}]
 
     reply = await router.route("chat", messages)
-    print(f"✅ 路由 chat → 云端: {reply[:100]}\n")
+    assert len(reply) > 0, "chat 路由应返回非空回复"
 
     reply = await router.route("reasoning", messages)
-    print(f"✅ 路由 reasoning → DS: {reply[:100]}\n")
+    assert len(reply) > 0, "reasoning 路由应返回非空回复"
 
+
+# 保留手动运行入口
 async def main():
     setup_logging()
     print("=" * 50)
@@ -78,6 +83,7 @@ async def main():
     print("=" * 50)
     print("  验证完成 ✅")
     print("=" * 50)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -94,30 +94,39 @@ class ModelRouter:
 
     # ========== 底层调用 ==========
 
-    async def _call_ollama(self, messages: list, **kwargs):
-        response = await self.ollama.chat(
-            model=self.local_model,
-            messages=messages,
-            options={"temperature": kwargs.get("temperature", 0.7)},
+    async def _call_ollama(self, messages: list, timeout: int = 120, **kwargs):
+        response = await asyncio.wait_for(
+            self.ollama.chat(
+                model=self.local_model,
+                messages=messages,
+                options={"temperature": kwargs.get("temperature", 0.7)},
+            ),
+            timeout=timeout,
         )
         return response["message"]["content"]
 
-    async def _call_qwen(self, messages: list, **kwargs):
-        response = await self.qwen.chat.completions.create(
-            model=self.qwen_model,
-            messages=messages,
-            temperature=kwargs.get("temperature", 0.7),
-            stream=kwargs.get("stream", False),
+    async def _call_qwen(self, messages: list, timeout: int = 60, **kwargs):
+        response = await asyncio.wait_for(
+            self.qwen.chat.completions.create(
+                model=self.qwen_model,
+                messages=messages,
+                temperature=kwargs.get("temperature", 0.7),
+                stream=kwargs.get("stream", False),
+            ),
+            timeout=timeout,
         )
         if kwargs.get("stream"):
             return response
         return response.choices[0].message.content
 
-    async def _call_ds(self, messages: list, **kwargs):
-        response = await self.ds.chat.completions.create(
-            model=self.ds_model,
-            messages=messages,
-            temperature=kwargs.get("temperature", 0.3),
+    async def _call_ds(self, messages: list, timeout: int = 60, **kwargs):
+        response = await asyncio.wait_for(
+            self.ds.chat.completions.create(
+                model=self.ds_model,
+                messages=messages,
+                temperature=kwargs.get("temperature", 0.3),
+            ),
+            timeout=timeout,
         )
         return response.choices[0].message.content
 

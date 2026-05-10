@@ -1,6 +1,6 @@
 """结构化日志配置"""
 import sys
-import uuid
+from pathlib import Path
 from loguru import logger
 
 def setup_logging():
@@ -16,9 +16,11 @@ def setup_logging():
         level="DEBUG",
     )
 
-    # 文件：JSON 结构化
+    # 文件：JSON 结构化（相对于项目根目录）
+    project_root = Path(__file__).resolve().parents[2]  # shared → packages → 项目根
+    log_path = project_root / "logs" / "xilian_{time:YYYY-MM-DD}.json"
     logger.add(
-        "logs/xilian_{time:YYYY-MM-DD}.json",
+        str(log_path),
         format="{time} {level} {extra[trace_id]} {message}",
         serialize=True,
         rotation="00:00",
