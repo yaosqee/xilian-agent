@@ -10,3 +10,4 @@ chroma_data/
 *.db
 data/
 .DS_Store
+*Zone.Identifier
