@@ -22,7 +22,7 @@ YELLOW = "\033[33m"
 RED = "\033[31m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
-
+PINK = "\033[38;2;255;105;180m"  
 
 class ConsoleChannel(Channel):
     """终端交互通道"""
@@ -82,7 +82,7 @@ class ConsoleChannel(Channel):
     async def send(self, text: str) -> None:
         """输出昔涟的回复"""
         # 换行美化
-        print(f"\n{GREEN}{BOLD}昔涟{RESET} ✧ {text}\n")
+        print(f"\n{PINK}{BOLD}昔涟{RESET} ✧ {text}\n")
         sys.stdout.flush()
 
     async def stop(self) -> None:
@@ -123,7 +123,7 @@ class ConsoleChannel(Channel):
     def _print_banner(self):
         print(f"""
 {GREEN}{BOLD}╔══════════════════════════════╗
-║   昔涟 V3.2 · 心之涟漪       ║
+║   昔涟 · 心之涟漪            ║
 ║   控制台通道 (开发调试)       ║
 ╚══════════════════════════════╝{RESET}
 """)
