@@ -69,8 +69,8 @@
        │ ModelRouter（进程内路由）
        ▼
 ┌──────────────┐
-│ 模型推理层    │  核心对话: 云端 Qwen-Plus(过渡期) → 7/15 切本地 qwen3:14b → 阶段5微调版
-│ 混合路由     │  后台长文: 云端 Qwen-Plus · 推理/代码/安全/情感分析: 云端 DeepSeek-V4-Flash
+│ 模型推理层    │  核心对话/推理/安全/共情: DeepSeek V4-Pro（双 Key 轮询）
+│ 混合路由     │  后台长文/编码/反思: DeepSeek V4-Flash · 本地优先: qwen3:14b · 7/15可切本地/阶段5可切微调
 └──────────────┘
 ```
 
@@ -83,7 +83,7 @@
 | 语言 | Python 3.12+ |
 | 包管理 | uv |
 | 本地模型 | Ollama (qwen3:14b, bge-m3) |
-| 云端模型 | Qwen-Plus (qwen3.6-plus), DeepSeek-V4-Pro |
+| 云端模型 | DeepSeek V4-Pro (双 Key 轮询), DeepSeek V4-Flash, Qwen3.6-Plus (备用) |
 | 向量库 | ChromaDB (Docker) |
 | 数据库 | SQLite (aiosqlite, WAL 模式), Redis 阶段6引入 |
 | 前端 | React + TypeScript + Vite (EmotionGauge 原型已完成) |
@@ -123,6 +123,7 @@
 ## 最近决策
 
 - **2026-05-12**：阶段2完成。情感分析走 DeepSeek V4-Pro（JSON 结构化输出稳定）。共情注入为昔涟风格自然语言（非结构化指令），注入到系统提示动态段落而非对话历史。SQLite 开启 WAL 模式。EmotionGauge 原型用 Canvas 绘制雷达图。测试 64/64 全绿。
+- **2026-05-12 深夜**：Qwen3.6-Plus 实测延迟 ~27s 不可接受 → 全量迁移至 DeepSeek。Pro→高质量（chat/empathy/reasoning/安全），Flash→后台（memory_encoding/reflection/dream/approval）。Pro 双 Key 轮询防限流。本地 first 任务 fallback 改走 Flash。
 - **2026-05-10**：架构审查完成，LiteLLM → ModelRouter 进程内路由，MCP 降级为可选适配器，AgentVisor 推迟至阶段9
 - **2026-05-10**：人格提示词 v1→v2 精简（3000→~1800字），去 markdown 格式，语言标记更自然
 - **2026-05-10**：阶段1完成，40/40 测试全绿

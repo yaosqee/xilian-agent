@@ -1,7 +1,7 @@
 """
 EmotionAnalyzer — 情感分析模块
 
-用 DeepSeek V4-Pro 云端 API 做专一任务：输入用户消息，输出结构化情绪标注 JSON。
+用 DeepSeek V4-Flash 做专一任务：输入用户消息，输出结构化情绪标注 JSON。
 分析异步执行（fire-and-forget），不阻塞主回复。
 
 11 维情绪维度：喜悦 悲伤 愤怒 焦虑 平静 期待 疲惫 孤独 感激 好奇 恐惧
@@ -110,16 +110,16 @@ class EmotionAnalyzer:
 
     async def _call_model(self, messages: list[dict]) -> str | None:
         """
-        调用 DeepSeek 模型获取原始回复。
+        调用 DeepSeek V4-Flash 获取原始回复。
 
-        路由到 "empathy" 任务类型，走 ROUTE_CLOUD_DS → DeepSeek V4-Pro。
+        路由到 "emotion_analysis" 任务类型 → DS V4-Flash（结构化 JSON 提取，Flash 足够）。
         """
         try:
             result = await self.router.route(
-                "empathy",
+                "emotion_analysis",
                 messages,
                 temperature=0.3,
-                timeout=10,
+                timeout=30,
             )
             return result if isinstance(result, str) else str(result)
         except asyncio.TimeoutError:
