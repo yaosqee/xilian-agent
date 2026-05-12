@@ -1,8 +1,8 @@
 """
 AgentContext — Agent 上下文容器
 
-维护对话历史和预留未来模块接口（情绪/记忆）。
-本阶段（阶段 1）只做简单消息列表，情绪和记忆接口为空壳。
+维护对话历史和情感/记忆模块接口。
+阶段 2：情绪注入已实现，记忆检索待阶段 3 填充。
 """
 from dataclasses import dataclass, field
 from typing import Optional
@@ -16,7 +16,7 @@ class AgentContext:
     history: list[dict] = field(default_factory=list)
     _max_history: int = 40  # 保留最近 N 条消息
 
-    # 阶段 4：情绪快照 {"emotion": str, "intensity": float, "pad": (P,A,D)}
+    # 阶段 2：情绪快照（来自 EmotionAnalyzer 后台分析）
     emotion_snapshot: Optional[dict] = None
 
     # 阶段 3：记忆检索结果 [{summary, score, ...}]
@@ -54,12 +54,23 @@ class AgentContext:
     def inject_emotion_context(self) -> str:
         """
         将情绪快照转为系统提示动态注入段落。
-        阶段 4 实现，本阶段返回空字符串。
+        阶段 2 实现：从上一轮情感分析结果生成昔涟风格共情文本。
         """
-        if self.emotion_snapshot is None:
+        snap = self.emotion_snapshot
+        if not snap:
             return ""
-        # 阶段 4 TODO: 将 emotion_snapshot 转为昔涟能感知的情感提示
-        return ""
+
+        emotion = snap.get("primary_emotion", "")
+        need = snap.get("need", "")
+
+        if not emotion:
+            return ""
+
+        text = f"伙伴刚才似乎有些{emotion}呢。"
+        if need:
+            text += f"伙伴可能需要的，是{need}吧。"
+
+        return text
 
     def inject_memory_context(self) -> str:
         """

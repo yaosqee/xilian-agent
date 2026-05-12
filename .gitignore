@@ -8,4 +8,5 @@ backups/
 chroma_data/
 .vscode/
 *.db
+data/
 .DS_Store

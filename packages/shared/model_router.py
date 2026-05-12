@@ -57,11 +57,12 @@ class ModelRouter:
     ROUTE_LOCAL_FIRST = {"proactive_greeting", "tool_result_wrap", "image_response"}
     ROUTE_CLOUD_QWEN = {"memory_encoding", "autobiography", "reflection", "dream"}
     ROUTE_CLOUD_DS = {"reasoning", "code", "planning",
-                      "personality_check", "prompt_injection_detect", "approval_text"}
+                      "personality_check", "prompt_injection_detect", "approval_text",
+                      "empathy"}
 
     async def route(self, task_type: TaskType, messages: list, **kwargs):
-        # --- 核心对话/共情：过渡期路由 ---
-        if task_type in ("chat", "empathy"):
+        # --- 核心对话：过渡期路由 ---
+        if task_type == "chat":
             if self.use_local_for_chat:
                 try:
                     return await self._call_ollama(messages, **kwargs)

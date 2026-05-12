@@ -1,19 +1,22 @@
 """
 AgentCore — 昔涟的核心大脑
 
-ActorMind 推理链（5 阶段）：
-  感知 → 上下文注入 → 人格加载 → 模型调用 → 响应包装
+ActorMind 推理链：
+  感知 → 共情注入 → 人格加载 → 模型调用 → 响应包装
 
-本阶段（阶段 1）上下文注入为空壳，工具调用仅返回占位语，
-后续阶段逐步填充情绪引擎、记忆检索、工具执行。
+阶段 2：共情注入 + 后台情感分析已实现。
+记忆检索、工具执行后续阶段逐步填充。
 """
+import asyncio
 from pathlib import Path
 from loguru import logger
 
 from ..shared.model_router import ModelRouter
 from ..shared.events import InternalEvent
+from ..shared.database import DatabaseManager
 from .agent_context import AgentContext
 from .tool_registry import ToolRegistry
+from .emotion_analyzer import EmotionAnalyzer
 
 
 # ── 降级回复（模型不可用时的友好提示） ──────────────────────
@@ -37,6 +40,13 @@ class AgentCore:
         self.tool_registry = ToolRegistry()
         self.context = AgentContext()
         self._personality: str = self._load_personality()
+
+        # 阶段 2: 情感分析
+        self.emotion_analyzer = EmotionAnalyzer(self.router)
+        self._pending_analysis: asyncio.Task | None = None
+
+        # 阶段 2: 数据库预埋（阶段 3 开始实际写入）
+        self._db = DatabaseManager()
 
         logger.info(
             "AgentCore 就绪",
@@ -115,34 +125,35 @@ class AgentCore:
             trace_log.info("agent.process.done", reply_preview=reply[:60])
             return reply
 
-        # ── 2. 上下文注入（空壳，阶段 3-4 填充） ──
-        injected = self._inject_context()
+        # ── 2. 共情注入：读取上一轮情感分析结果 ──
+        empathy_prompt = self._inject_empathy()
 
-        # ── 3. 人格 + 上下文 → 消息列表 ──
-        messages = self._build_messages(event.payload, injected)
+        # ── 3. 人格 + 共情 → 消息列表 ──
+        messages = self._build_messages(event.payload, empathy_prompt)
 
-        # ── 4. 模型调用 ──
+        # ── 4. 模型调用 → 主回复 ──
         try:
             result = await self.router.route(
                 "chat",
                 messages,
-                temperature=0.8,  # 昔涟需要高温度保持语言灵动
+                temperature=0.8,
                 stream=stream,
             )
             if stream:
-                # 流式响应直接返回（stream 对象），调用方负责消费
                 reply = "[stream]"
                 trace_log.info("agent.process.stream_started")
             else:
                 reply = result
-                # ── 5. 响应包装 ──
                 reply = self._clean_reply(reply)
 
         except Exception as e:
             trace_log.error("agent.process.model_error", error=str(e))
             reply = DEGRADED_REPLY
 
-        # ── 5. 记录历史 + 日志 ──
+        # ── 5. 后台情感分析（fire-and-forget，不阻塞主回复）──
+        self._schedule_emotion_analysis(event.payload)
+
+        # ── 6. 记录历史 + 日志 ──
         self.context.add_message("user", event.payload)
         self.context.add_message("assistant", reply)
 
@@ -162,7 +173,9 @@ class AgentCore:
         """
         感知阶段：解析用户消息，提取意图/情绪基调。
 
-        本阶段用简单启发式，后续阶段 2-4 替换为 LLM 情感分析。
+        阶段 1: 简单启发式关键词匹配。
+        阶段 2: 新增 LLM 情感分析（后台执行为 _run_emotion_analysis）。
+        阶段 4: 升级为对话级情绪感知。
 
         Returns:
             {"intent": str, "is_tool_request": bool, "emotion_hint": str}
@@ -201,7 +214,9 @@ class AgentCore:
         """
         上下文注入：拼接情绪上下文 + 记忆检索内容。
 
-        阶段 1 返回空字符串，阶段 3-4 由对应模块填充。
+        阶段 2: emotion 上下文已由 _inject_empathy() 在 process() 中直接注入。
+                此方法保留作为向后兼容路径（供测试/调试）。
+        阶段 3: memory 上下文待实现。
         """
         parts = []
 
@@ -250,9 +265,72 @@ class AgentCore:
         return cleaned
 
     def reset_session(self) -> None:
-        """重置会话（清空历史 + 上下文）"""
+        """重置会话（取消 pending 分析 + 清空历史 + 上下文）"""
+        if self._pending_analysis and not self._pending_analysis.done():
+            self._pending_analysis.cancel()
+            self._pending_analysis = None
         self.context.clear()
         logger.info("agent.session_reset")
+
+    # ============================================================
+    # 阶段 2: 情感分析管道
+    # ============================================================
+
+    def _inject_empathy(self) -> str:
+        """
+        从 context.emotion_snapshot 读取上一轮情感分析结果，
+        生成昔涟风格的动态共情段落。
+
+        无 snapshot（首轮/分析失败）时返回空字符串。
+        """
+        snap = self.context.emotion_snapshot
+        if not snap:
+            return ""
+
+        emotion = snap.get("primary_emotion", "")
+        cause = snap.get("possible_cause", "")
+        need = snap.get("need", "")
+
+        if not emotion:
+            return ""
+
+        prompt = "[共情感知]\n"
+        prompt += f"伙伴刚才似乎有些{emotion}呢"
+        if cause:
+            prompt += f"，可能是因为{cause}"
+        prompt += "。"
+        if need:
+            prompt += f"伙伴现在需要的或许是{need}。"
+        prompt += "在回复中自然地回应这份情绪，不必刻意提起，让它像涟漪一样轻轻扩散。\n"
+
+        return prompt
+
+    def _schedule_emotion_analysis(self, user_message: str) -> None:
+        """
+        启动后台情感分析任务（fire-and-forget），不阻塞主回复。
+        快速连续消息时取消上一轮未完成的分析。
+        """
+        if self._pending_analysis and not self._pending_analysis.done():
+            self._pending_analysis.cancel()
+
+        self._pending_analysis = asyncio.create_task(
+            self._run_emotion_analysis(user_message)
+        )
+
+    async def _run_emotion_analysis(self, user_message: str) -> None:
+        """后台执行情感分析 + 存储结果到 context.emotion_snapshot"""
+        try:
+            result = await self.emotion_analyzer.analyze(user_message)
+            if result:
+                self.context.emotion_snapshot = result
+                logger.debug(
+                    "emotion.snapshot_updated",
+                    emotion=result.get("primary_emotion"),
+                )
+        except asyncio.CancelledError:
+            logger.debug("emotion.analysis_cancelled")
+        except Exception as e:
+            logger.warning("emotion.analysis_failed", error=str(e))
 
     @property
     def personality_preview(self) -> str:

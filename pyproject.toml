@@ -11,6 +11,7 @@ dependencies = [
     "loguru>=0.7",
     "fastapi>=0.100",
     "uvicorn>=0.20",
+    "aiosqlite>=0.20",
 ]
 
 [project.optional-dependencies]
