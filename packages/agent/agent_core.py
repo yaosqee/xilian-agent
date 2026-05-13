@@ -1,13 +1,15 @@
 """
 AgentCore — 昔涟的核心大脑
 
-ActorMind 推理链：
-  感知 → 共情注入 → 人格加载 → 模型调用 → 响应包装
+ActorMind 推理链（阶段 3）：
+  感知 → 记忆检索 → 共情注入 → 记忆注入 → 人格加载 → 模型调用 → 响应
+          ↳ 后台情感分析 + 记忆编码 + 对话日志写入
 
-阶段 2：共情注入 + 后台情感分析已实现。
-记忆检索、工具执行后续阶段逐步填充。
+阶段 2：共情注入 + 后台情感分析
+阶段 3：记忆检索注入 + 记忆编码调度 + 对话日志实际写入 + shutdown
 """
 import asyncio
+import os
 from pathlib import Path
 from loguru import logger
 
@@ -17,6 +19,7 @@ from ..shared.database import DatabaseManager
 from .agent_context import AgentContext
 from .tool_registry import ToolRegistry
 from .emotion_analyzer import EmotionAnalyzer
+from .memory_manager import MemoryManager
 
 
 # ── 降级回复（模型不可用时的友好提示） ──────────────────────
@@ -35,7 +38,7 @@ TOOL_PLACEHOLDER = (
 class AgentCore:
     """昔涟的核心引擎，接收 InternalEvent，返回文本回复"""
 
-    def __init__(self, model_router: ModelRouter | None = None):
+    def __init__(self, model_router: ModelRouter | None = None, db_path: str = "data/xilian.db"):
         self.router = model_router or ModelRouter()
         self.tool_registry = ToolRegistry()
         self.context = AgentContext()
@@ -45,22 +48,63 @@ class AgentCore:
         self.emotion_analyzer = EmotionAnalyzer(self.router)
         self._pending_analysis: asyncio.Task | None = None
 
-        # 阶段 2: 数据库预埋（阶段 3 开始实际写入）
-        self._db = DatabaseManager()
+        # 阶段 2: 数据库预埋 → 阶段 3 实际写入
+        self._db = DatabaseManager(db_path)
+
+        # 阶段 3: 记忆管理器（需 startup() 初始化 ChromaDB 连接）
+        chroma_host = os.getenv("CHROMA_HOST", "localhost")
+        chroma_port = int(os.getenv("CHROMA_PORT", "8000"))
+        self.memory_manager = MemoryManager(
+            db=self._db,
+            chroma_host=chroma_host,
+            chroma_port=chroma_port,
+            ollama_client=self.router.ollama,
+            model_router=self.router,
+        )
 
         logger.info(
             "AgentCore 就绪",
             personality_length=len(self._personality),
             tools_registered=len(self.tool_registry),
+            db_path=str(self._db.db_path),
         )
+
+    # ============================================================
+    # 生命周期
+    # ============================================================
+
+    async def startup(self) -> None:
+        """启动初始化：DB 连接 + 记忆模块启动 + 修复 pending"""
+        await self._db.init()
+        await self.memory_manager.startup()
+        logger.info("agent.startup_complete")
+
+    async def shutdown(self) -> str:
+        """
+        优雅关闭：编码待处理记忆 → 关闭 DB。
+
+        Returns:
+            "done" / "empty" / "failed"
+        """
+        # 取消 pending 的情感分析
+        if self._pending_analysis and not self._pending_analysis.done():
+            self._pending_analysis.cancel()
+
+        # 记忆编码兜底
+        result = await self.memory_manager.shutdown()
+
+        # 关闭数据库
+        await self._db.close()
+
+        logger.info("agent.shutdown_complete", memory_result=result)
+        return result
 
     # ============================================================
     # 人格加载
     # ============================================================
 
     def _load_personality(self) -> str:
-        """从 prompts/personality_v1.md 加载系统提示"""
-        # 从 packages/agent/ → 项目根目录
+        """从 prompts/personality_v2.md 加载系统提示"""
         prompt_path = (
             Path(__file__).resolve().parent.parent.parent
             / "prompts" / "personality_v2.md"
@@ -71,7 +115,6 @@ class AgentCore:
             return content
         except FileNotFoundError:
             logger.error("人格提示文件缺失", path=str(prompt_path))
-            # 回退：一个极简的系统提示
             return "你是昔涟。用温柔、轻盈的方式和伙伴说话。"
 
     # ============================================================
@@ -86,14 +129,10 @@ class AgentCore:
         """
         处理一条用户消息，返回昔涟的回复。
 
-        Args:
-            event: Gateway 产出的标准事件
-            stream: 是否流式返回（True 时返回 generator/stream 对象）
-
-        Returns:
-            昔涟的文本回复（或流对象，取决于 stream 参数）
+        阶段 3 流程：
+          感知 → 记忆检索 → 共情注入 → 记忆注入 → 构建消息 → 模型调用 →
+          后台情感分析 + 后台记忆编码 + 写入对话日志
         """
-        # 绑定 trace_id 用于全链路日志
         trace_log = logger.bind(trace_id=event.event_id[:8])
 
         trace_log.info(
@@ -103,35 +142,36 @@ class AgentCore:
             msg_preview=event.payload[:80],
         )
 
-        # ── 0. 安全：非主人消息直接忽略 ──
+        # ── 0. 安全 ──
         if not event.is_owner:
-            trace_log.warning("agent.process.blocked — 非主人消息")
+            trace_log.warning("agent.process.blocked")
             return ""
 
-        # ── 1. 感知阶段 ──
+        # ── 1. 感知 ──
         intent = self._perceive(event.payload)
         trace_log.debug("agent.perceive", intent=intent)
 
-        # ── 1.5 工具意图检测 ──
         if intent.get("is_tool_request"):
-            trace_log.info(
-                "agent.tool_request",
-                payload=event.payload[:80],
-                tools_available=list(self.tool_registry.tool_names),
-            )
             reply = TOOL_PLACEHOLDER
             self.context.add_message("user", event.payload)
             self.context.add_message("assistant", reply)
             trace_log.info("agent.process.done", reply_preview=reply[:60])
             return reply
 
-        # ── 2. 共情注入：读取上一轮情感分析结果 ──
-        empathy_prompt = self._inject_empathy()
+        # ── 2. 记忆检索 (NEW) ──
+        self.memory_manager.signal_new_message()
+        self.context.memory_retrieval = await self._retrieve_memories(event.payload)
 
-        # ── 3. 人格 + 共情 → 消息列表 ──
-        messages = self._build_messages(event.payload, empathy_prompt)
+        # ── 3. 共情注入 ──
+        empathy_text = self._inject_empathy()
 
-        # ── 4. 模型调用 → 主回复 ──
+        # ── 4. 记忆注入 (NEW) ──
+        memory_text = self.context.inject_memory_context()
+
+        # ── 5. 构建消息 ──
+        messages = self._build_messages(event.payload, empathy_text, memory_text)
+
+        # ── 6. 模型调用 ──
         try:
             result = await self.router.route(
                 "chat",
@@ -143,17 +183,21 @@ class AgentCore:
                 reply = "[stream]"
                 trace_log.info("agent.process.stream_started")
             else:
-                reply = result
-                reply = self._clean_reply(reply)
-
+                reply = self._clean_reply(result)
         except Exception as e:
             trace_log.error("agent.process.model_error", error=str(e))
             reply = DEGRADED_REPLY
 
-        # ── 5. 后台情感分析（fire-and-forget，不阻塞主回复）──
+        # ── 7. 后台情感分析 ──
         self._schedule_emotion_analysis(event.payload)
 
-        # ── 6. 记录历史 + 日志 ──
+        # ── 8. 后台记忆编码 (NEW) ──
+        self._schedule_memory_encoding()
+
+        # ── 9. 写入对话日志 (NEW) ──
+        await self._write_conversation_log(event, reply)
+
+        # ── 10. 记录历史 ──
         self.context.add_message("user", event.payload)
         self.context.add_message("assistant", reply)
 
@@ -161,6 +205,7 @@ class AgentCore:
             "agent.process.done",
             reply_preview=reply[:100],
             history_size=len(self.context.history),
+            memories_retrieved=len(self.context.memory_retrieval or []),
         )
 
         return reply
@@ -172,13 +217,6 @@ class AgentCore:
     def _perceive(self, payload: str) -> dict:
         """
         感知阶段：解析用户消息，提取意图/情绪基调。
-
-        阶段 1: 简单启发式关键词匹配。
-        阶段 2: 新增 LLM 情感分析（后台执行为 _run_emotion_analysis）。
-        阶段 4: 升级为对话级情绪感知。
-
-        Returns:
-            {"intent": str, "is_tool_request": bool, "emotion_hint": str}
         """
         intent = {
             "intent": "chat",
@@ -186,7 +224,6 @@ class AgentCore:
             "emotion_hint": "",
         }
 
-        # 工具意图检测：关键词匹配（后续阶段由 LLM 判定）
         tool_keywords = {"帮我查", "查一下", "查询", "搜索一下", "发送邮件", "写邮件"}
         for kw in tool_keywords:
             if kw in payload:
@@ -194,7 +231,6 @@ class AgentCore:
                 intent["intent"] = "tool_request"
                 break
 
-        # 情绪基调简单判断（后续替换为 LLM 分析）
         positive = {"开心", "高兴", "好耶", "哈哈", "太棒了", "喜欢", "爱"}
         negative = {"难过", "累", "烦", "焦虑", "害怕", "孤独", "不开心", "哭"}
 
@@ -210,45 +246,111 @@ class AgentCore:
 
         return intent
 
+    # ============================================================
+    # 阶段 3: 记忆检索
+    # ============================================================
+
+    async def _retrieve_memories(self, user_message: str) -> list[dict] | None:
+        """
+        检索与当前消息相关的历史记忆。
+
+        检索条件：
+        - 用户消息长度 ≥ 5 字符（太短不触发，节省资源）
+        - ChromaDB 不可用时静默跳过
+        """
+        if len(user_message.strip()) < 5:
+            return None
+
+        try:
+            results = await self.memory_manager.retrieve_memories(user_message, k=3)
+            if results:
+                logger.debug("memory.retrieved", count=len(results))
+            return results if results else None
+        except Exception as e:
+            logger.warning("memory.retrieval_failed", error=str(e))
+            return None
+
+    def _schedule_memory_encoding(self):
+        """
+        触发后台记忆编码（三层调度）。
+        对话太短（< 4 条消息）时不触发。
+        """
+        if len(self.context.history) < 4:
+            return
+
+        recent_exchanges = self.context.get_last_n(6)
+        emotion = self.context.emotion_snapshot
+
+        conversation_context = {
+            "exchanges": recent_exchanges,
+            "emotion": emotion,
+        }
+
+        asyncio.create_task(
+            self.memory_manager.schedule_encoding(conversation_context)
+        )
+
+    async def _write_conversation_log(self, event: InternalEvent, reply: str):
+        """每次对话后实际写入 conversation_logs（阶段 2 建表，阶段 3 写入）"""
+        try:
+            snap = self.context.emotion_snapshot
+            await self._db.insert_log(
+                event_id=event.event_id,
+                user_message=event.payload,
+                assistant_reply=reply,
+                emotion_label=snap,
+                emotion_primary=snap.get("primary_emotion") if snap else None,
+                emotion_intensity=snap.get("primary_intensity") if snap else None,
+                user_id=event.user_id,
+                source=event.source,
+            )
+        except Exception as e:
+            logger.warning("database.log_write_failed", error=str(e))
+
+    # ============================================================
+    # 上下文注入（向后兼容）
+    # ============================================================
+
     def _inject_context(self) -> str:
-        """
-        上下文注入：拼接情绪上下文 + 记忆检索内容。
-
-        阶段 2: emotion 上下文已由 _inject_empathy() 在 process() 中直接注入。
-                此方法保留作为向后兼容路径（供测试/调试）。
-        阶段 3: memory 上下文待实现。
-        """
+        """拼接情绪上下文 + 记忆检索内容（向后兼容路径）"""
         parts = []
-
-        # 阶段 4：情绪上下文
         emotion = self.context.inject_emotion_context()
         if emotion:
             parts.append(emotion)
-
-        # 阶段 3：记忆上下文
         memory = self.context.inject_memory_context()
         if memory:
             parts.append(memory)
-
         return "\n".join(parts) if parts else ""
 
-    def _build_messages(self, user_msg: str, injected_context: str) -> list[dict]:
+    # ============================================================
+    # 消息构建
+    # ============================================================
+
+    def _build_messages(
+        self,
+        user_msg: str,
+        empathy_text: str = "",
+        memory_text: str = "",
+    ) -> list[dict]:
         """
         构建模型输入消息列表：
-          系统提示（人格 + 可选动态注入） + 对话历史 + 当前用户消息
+          系统提示 = 人格 + 记忆上下文 + 共情上下文
         """
-        # 系统提示 = 人格 + 动态注入（如果有）
         system_prompt = self._personality
-        if injected_context:
-            system_prompt += f"\n\n[当前上下文]\n{injected_context}"
+
+        # 记忆在前（更底层的历史背景）
+        if memory_text:
+            system_prompt += f"\n\n{memory_text}"
+
+        # 共情在后（当前情绪感知）
+        if empathy_text:
+            system_prompt += f"\n\n{empathy_text}"
 
         messages = [{"role": "system", "content": system_prompt}]
 
-        # 注入对话历史（最近 N 条）
         history = self.context.get_messages(limit=20)
         messages.extend(history)
 
-        # 当前用户消息
         messages.append({"role": "user", "content": user_msg})
 
         return messages
@@ -280,8 +382,6 @@ class AgentCore:
         """
         从 context.emotion_snapshot 读取上一轮情感分析结果，
         生成昔涟风格的动态共情段落。
-
-        无 snapshot（首轮/分析失败）时返回空字符串。
         """
         snap = self.context.emotion_snapshot
         if not snap:
@@ -306,10 +406,7 @@ class AgentCore:
         return prompt
 
     def _schedule_emotion_analysis(self, user_message: str) -> None:
-        """
-        启动后台情感分析任务（fire-and-forget），不阻塞主回复。
-        快速连续消息时取消上一轮未完成的分析。
-        """
+        """启动后台情感分析任务（fire-and-forget）"""
         if self._pending_analysis and not self._pending_analysis.done():
             self._pending_analysis.cancel()
 

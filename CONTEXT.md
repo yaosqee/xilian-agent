@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-12（阶段 2 完成）
+> 📅 最后更新：2026-05-13（阶段 3 完成）
 
 ---
 
@@ -18,14 +18,16 @@ xilian-v3/
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
 │   ├── model_router.py              # ModelRouter：混合路由核心（~140行）
-│   ├── database.py                  # DatabaseManager：SQLite 对话日志
+│   ├── database.py                  # DatabaseManager：SQLite（3张表：conversation_logs / episodic_memories / message_queue）
+│   ├── backup.py                    # BackupManager：每日备份 + 清理 + 恢复（阶段 3）
 │   └── logging_config.py            # loguru 结构化日志配置
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
-│   ├── agent_core.py                # AgentCore：ActorMind 推理链 + 主入口 process()
-│   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆接口预留
+│   ├── agent_core.py                # AgentCore：ActorMind 推理链 + 记忆管道 + shutdown
+│   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器注册表
-│   └── emotion_analyzer.py          # EmotionAnalyzer：DeepSeek 11维情感分析
+│   ├── emotion_analyzer.py          # EmotionAnalyzer：DeepSeek 11维情感分析
+│   └── memory_manager.py            # MemoryManager：情景记忆编码/检索/调度/容量管理（阶段 3）
 │
 ├── gateway/                         # 🚪 消息网关
 │   ├── gateway.py                   # Gateway：通道管理 + Agent 路由
@@ -42,17 +44,22 @@ xilian-v3/
 │   ├── personality_v1.md            # v1 原始版（保留对比）
 │   └── CHANGELOG.md                 # 提示词变更记录
 │
-├── packages/frontend/               # 🎨 前端（阶段 2 起逐步搭建）
-│   └── emotion-gauge/               # Vite + React + TS — 11 维情绪雷达图原型
-│       ├── src/
-│       │   ├── components/
-│       │   │   ├── EmotionGauge.tsx  # Canvas 雷达图核心
-│       │   │   ├── EmotionLegend.tsx # 11 维图例
-│       │   │   └── EmotionTimeline.tsx # 情绪历史
-│       │   ├── hooks/useEmotionData.ts
-│       │   ├── utils/radarMath.ts    # 多边形坐标计算
-│       │   └── types/emotion.ts      # 情绪数据类型 + 颜色映射
-│       └── ... (package.json, vite, tsconfig)
+├── packages/frontend/               # 🎨 前端（阶段 3 正式搭建）
+│   ├── package.json                 # Vite + React + Zustand + framer-motion
+│   ├── vite.config.ts               # Vite proxy /api → localhost:8000
+│   ├── src/
+│   │   ├── main.tsx / App.tsx       # 入口 + 根组件
+│   │   ├── components/
+│   │   │   ├── layout/              # IconStrip(40px↔120px) + MainLayout
+│   │   │   ├── chat/                # ChatView + MessageBubble + MessageList + ChatInput (SSE)
+│   │   │   ├── panels/              # SlidePanel + EmotionPanel + MemoryPanel + SettingsPanel
+│   │   │   ├── EmotionGauge/        # Canvas 11维雷达图 + 图例 + 情绪历史线图
+│   │   │   └── status/              # EncodingStatusBar（轮询编码状态）
+│   │   ├── hooks/                   # useChat + useEmotionData
+│   │   ├── stores/                  # Zustand: appStore + chatStore + emotionStore
+│   │   ├── services/api.ts          # API 封装（fetch + SSE 流式）
+│   │   ├── types/                   # chat.ts + emotion.ts + memory.ts
+│   │   └── utils/radarMath.ts       # 雷达图数学工具
 │
 ├── tests/                           # 🧪 测试
 │   ├── test_console_channel.py
@@ -90,14 +97,18 @@ main.py 启动
              ├─ ConsoleChannel: stdin 读一行 → InternalEvent → agent.process() → 打印
              └─ HTTPChannel: POST /api/chat → InternalEvent → agent.process() → JSON/SSE
 
-agent.process(event) 内部（阶段 2）：
+agent.process(event) 内部（阶段 3）：
+  signal_new_message() → 暂停编码
   _perceive() → 意图/情绪简单检测
+  _retrieve_memories() → bge-m3 向量化 → ChromaDB top-3 → 设置 memory_retrieval
   _inject_empathy() → 读上一轮 emotion_snapshot → 昔涟风格共情段落
-  _build_messages() → 系统提示 + 共情 + 历史 + 用户消息
-  router.route("chat", messages) → 模型调用 → 立即返回主回复
+  inject_memory_context() → 记忆检索结果 → 叙事性上下文
+  _build_messages() → 系统提示（人格 + 记忆 + 共情）+ 历史 + 用户消息
+  router.route("chat") → 模型调用 → 立即返回主回复
   _schedule_emotion_analysis() → fire-and-forget 后台任务
-    └─ EmotionAnalyzer.analyze() → DeepSeek V4-Pro → 更新 emotion_snapshot
-  _clean_reply() → 返回
+  _schedule_memory_encoding() → 三层调度（空闲30s/强制20轮/关闭兜底）
+  _write_conversation_log() → SQLite 实际写入
+  add_message() → 对话历史记录
 ```
 
 ---
@@ -107,16 +118,17 @@ agent.process(event) 内部（阶段 2）：
 | 模块 | 单句职责 | 关键方法 |
 |------|---------|---------|
 | `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, payload, is_owner)` |
-| `model_router.py` | 按任务类型自动选择模型，本地不可用自动 fallback 云端 | `route(task_type, messages)`, `route_with_override()` |
-| `agent_core.py` | 昔涟的"大脑"，ActorMind 推理链 + 情感管道 | `process(event)`, `_perceive()`, `_inject_empathy()`, `_schedule_emotion_analysis()` |
-| `agent_context.py` | 对话历史容器 + 情绪快照 + 记忆接口预留 | `add_message()`, `get_messages()`, `inject_emotion_context()` |
-| `emotion_analyzer.py` | 调用 DeepSeek V4-Pro 做 11 维情感分析 | `analyze(user_message)`, `_parse_response()`, `_validate_dimensions()` |
-| `tool_registry.py` | 装饰器注册工具，`tools/list` 查询 | `register_tool()`, `list_tools()` |
-| `database.py` | SQLite 对话日志，conversation_logs 表 CRUD | `init()`, `insert_log()`, `get_recent()`, `get_emotion_history()` |
+| `model_router.py` | 按任务类型自动选择模型 | `route(task_type, messages)`, `route_with_override()` |
+| `database.py` | SQLite 3张表 + 完整CRUD | `init()`, `insert_log()`, `insert_episodic_memory()`, `queue_push/pop()` |
+| `backup.py` | 每日凌晨3点备份+清理 | `run_backup()`, `cleanup_old()`, `verify_backup()`, `restore()` |
+| `agent_core.py` | 昔涟的"大脑"，ActorMind + 记忆管道 | `process(event)`, `_retrieve_memories()`, `_schedule_memory_encoding()`, `shutdown()` |
+| `agent_context.py` | 对话历史容器 + 情绪快照 + 记忆注入 | `add_message()`, `inject_emotion_context()`, `inject_memory_context()` |
+| `memory_manager.py` | 情景记忆全管线：编码/检索/调度/容量 | `encode_memory()`, `retrieve_memories()`, `schedule_encoding()`, `manage_capacity()` |
+| `emotion_analyzer.py` | 调用 DeepSeek V4-Pro 做 11 维情感分析 | `analyze(user_message)` |
+| `tool_registry.py` | 装饰器注册工具 | `register_tool()`, `list_tools()` |
 | `gateway.py` | 通道生命周期管理 | `register()`, `start()`, `stop()` |
-| `security.py` | 白名单 + 紧急熔断 + 频率限制 | `validate(event)`, `emergency_stop()` |
-| `console_channel.py` | 终端交互，颜色输出 | `start()`, `receive()` → stdin, `send()` → stdout |
-| `http_channel.py` | FastAPI 应用，`/api/chat`, `/api/chat/stream`, `/api/health` | `start()`, FastAPI routes |
+| `security.py` | 白名单 + 紧急熔断 + 频率限制 | `filter(event)`, `emergency_stop()` |
+| `http_channel.py` | FastAPI 应用，8个端点 + SSE | `/api/chat`, `/api/emotion`, `/api/status` 等 |
 
 ---
 
@@ -136,16 +148,13 @@ agent.process(event) 内部（阶段 2）：
 
 | 位置 | 说明 | 填充阶段 |
 |------|------|---------|
-| `agent_context.inject_memory_context()` | 当前返回空，等待记忆检索 | 阶段 3 |
-| `agent_core._db` (DatabaseManager) | 已建表预设，实际写入待阶段 3 | 阶段 3 |
 | `tool_registry` 实际工具 | 只有注册表，无具体工具实现 | 阶段 7 |
 | `gateway/mcp/adapter.py` | 只有接口签名，空实现 | 阶段 7 |
 | Redis | 所有异步通信目前进程内，Redis 推至阶段 6 | 阶段 6 |
-| 前端完整骨架 | packages/frontend/ 仅有 EmotionGauge 原型 | 阶段 3 |
+| PAD 情感空间 / 情绪惯性 | 情绪模型升级 | 阶段 4 |
+| 艾宾浩斯衰减 / 记忆压缩 | 记忆系统升级 | 阶段 5 |
 
----
+## 下一步：阶段 4
 
-## 下一步：阶段 3
-
-情景记忆写入 ChromaDB + 检索注入 · 前端骨架搭建 · EmotionGauge 集成。
-详细计划见 `/home/hezi/projects/xilian_plan/xilian-v3.md` → 阶段 3 章节。
+PAD 情感空间 + 情绪惯性 + 生命节律。
+详细计划见 `/home/hezi/projects/xilian_plan/xilian-v3.md`

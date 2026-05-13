@@ -12,6 +12,8 @@ dependencies = [
     "fastapi>=0.100",
     "uvicorn>=0.20",
     "aiosqlite>=0.20",
+    "chromadb>=0.5",
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]

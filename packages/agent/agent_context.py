@@ -75,12 +75,27 @@ class AgentContext:
     def inject_memory_context(self) -> str:
         """
         将记忆检索结果转为系统提示动态注入段落。
-        阶段 3 实现，本阶段返回空字符串。
+        阶段 3 实现：从 memory_retrieval 列表生成叙事性上下文。
         """
         if not self.memory_retrieval:
             return ""
-        # 阶段 3 TODO: 将记忆检索结果转为昔涟能引用的上下文
-        return ""
+
+        lines = ["[当前记忆 — 昔涟书中的一些页码]"]
+
+        for mem in self.memory_retrieval:
+            summary = mem.get("summary", "")
+            if not summary:
+                continue
+            lines.append(f"· 书页翻到一段回忆：{summary}")
+
+        if len(lines) == 1:
+            return ""  # 只有标题，无实际内容
+
+        lines.append(
+            "如果这些回忆与伙伴现在说的话有关，"
+            "可以自然地提及——像翻到旧书页那样轻轻提起，不必刻意。"
+        )
+        return "\n".join(lines)
 
     def __repr__(self) -> str:
         return (

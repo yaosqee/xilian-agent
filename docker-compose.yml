@@ -7,7 +7,7 @@ services:
     image: chromadb/chroma:latest
     container_name: xilian-chromadb
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./chroma_data:/chroma/chroma
     environment:

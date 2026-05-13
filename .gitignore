@@ -11,3 +11,5 @@ chroma_data/
 data/
 .DS_Store
 *Zone.Identifier
+packages/frontend/node_modules/
+packages/frontend/dist/
