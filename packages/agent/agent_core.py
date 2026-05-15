@@ -135,10 +135,10 @@ class AgentCore:
     # ============================================================
 
     def _load_personality(self) -> str:
-        """从 prompts/personality_v2.md 加载系统提示"""
+        """从 prompts/personality_v3.md 加载系统提示"""
         prompt_path = (
             Path(__file__).resolve().parent.parent.parent
-            / "prompts" / "personality_v2.md"
+            / "prompts" / "personality_v3.md"
         )
         try:
             content = prompt_path.read_text(encoding="utf-8")
