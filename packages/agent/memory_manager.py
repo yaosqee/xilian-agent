@@ -2,26 +2,21 @@
 MemoryManager — 情景记忆模块
 
 阶段 3 核心交付。实现完整的情景记忆写入、检索、容量管理管线。
-· 嵌入：bge-m3（本地 Ollama，~50ms/条）
-· 叙事化：DeepSeek V4-Flash（后台异步）
-· Source of Truth：SQLite（ChromaDB 只存向量+元数据）
-· 三层调度：空闲30s / 强制20轮→5s / shutdown兜底
+2026-05-15 修订（V3.3）：
+  · 嵌入：云端 API（硅基流动 bge-m3）
+  · 向量存储：sqlite-vec（零外部依赖，精确检索）
+  · 叙事化：DeepSeek V4-Flash（后台异步）
+  · 一致性：全部数据在同一个 SQLite 文件 + 事务保证
+  · 三层调度：空闲30s / 强制20轮→5s / shutdown兜底
 """
 import asyncio
 import json
 import math
 import time
-import uuid
 from typing import Optional
 
-import chromadb
 from loguru import logger
-from ollama import AsyncClient as OllamaClient
 
-
-# ── ChromaDB Collection 名 ────────────────────────────
-
-COLLECTION_NAME = "episodic_memories"
 
 # ── 重要性评分配置 ─────────────────────────────────────
 
@@ -57,38 +52,15 @@ class MemoryManager:
 
     def __init__(
         self,
-        db,                         # DatabaseManager
-        chroma_host: str = "localhost",
-        chroma_port: int = 8000,
-        ollama_client: Optional[OllamaClient] = None,
-        model_router=None,          # ModelRouter
+        db,                        # DatabaseManager
+        vector_store,              # VectorStore (sqlite-vec)
+        model_router=None,         # ModelRouter (cloud embed + narration)
         max_records: int = 1000,
     ):
         self._db = db
+        self._vs = vector_store
         self._router = model_router
-        self._ollama = ollama_client or OllamaClient(host="http://localhost:11434")
-        self._embed_model = "bge-m3"
         self._max_records = max_records
-
-        # ChromaDB 客户端（同步，用 asyncio.to_thread 包裹）
-        try:
-            self._chroma = chromadb.HttpClient(
-                host=chroma_host,
-                port=chroma_port,
-            )
-            self._collection = self._chroma.get_or_create_collection(
-                name=COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-            )
-            logger.info(
-                "memory.chroma_connected",
-                host=f"{chroma_host}:{chroma_port}",
-                collection=COLLECTION_NAME,
-            )
-        except Exception as e:
-            logger.warning("memory.chroma_unavailable", error=str(e))
-            self._chroma = None
-            self._collection = None
 
         # ── 编码调度状态 ──
         self._idle_timeout: float = 30.0
@@ -101,21 +73,20 @@ class MemoryManager:
         self._encoding_state: str = "idle"  # idle / waiting / encoding / done
         self._shutdown_requested: bool = False
         self._encoding_task: Optional[asyncio.Task] = None
-        self._last_repair_time: float = time.time()
 
     # ============================================================
     # 生命周期
     # ============================================================
 
     async def startup(self) -> None:
-        """启动时调用：健康检查 + 修复 pending 记录"""
-        healthy = await self.health_check()
-        if healthy and self._db:
-            await self.repair_pending()
+        """启动时调用：初始化 vec 表 + 修复缺失向量"""
+        await self._vs.init()
+        repaired = await self.repair_pending()
         logger.info(
             "memory.startup",
-            chroma_ok=healthy,
+            vs_ok=True,
             max_records=self._max_records,
+            repaired=repaired,
         )
 
     async def shutdown(self) -> str:
@@ -157,12 +128,10 @@ class MemoryManager:
 
     @property
     def has_pending_encoding(self) -> bool:
-        """是否有未编码的对话"""
         return self._exchanges_since_last_encoding > 0
 
     @property
     def encoding_state(self) -> str:
-        """当前编码状态：idle / waiting / encoding / done"""
         return self._encoding_state
 
     # ============================================================
@@ -171,13 +140,13 @@ class MemoryManager:
 
     async def encode_memory(self, conversation_context: dict) -> int:
         """
-        完整编码管线：重要性评分 → 叙事化 → 向量化 → SQLite → ChromaDB
+        完整编码管线：重要性评分 → 叙事化 → 向量化 → SQLite + sqlite-vec
 
         Args:
             conversation_context: {"exchanges": [...], "emotion": {...}}
 
         Returns:
-            episodic_id (SQLite 主键)
+            episodic_id (SQLite 主键，与 vec0 rowid 对应)
         """
         exchanges = conversation_context.get("exchanges", [])
         if not exchanges:
@@ -193,40 +162,26 @@ class MemoryManager:
         summary = await self._narrate_summary(exchanges)
         logger.debug("memory.narration_done", preview=summary[:60])
 
-        # Step 3: bge-m3 向量化
+        # Step 3: 云端嵌入
         vector = await self._embed_text(summary)
 
-        # Step 4: SQLite 写入（status=pending）
+        # Step 4: SQLite 写入（一个事务内完成：episodic_memories + vec）
         raw_json = json.dumps(exchanges, ensure_ascii=False)
         episodic_id = await self._db.insert_episodic_memory(
             summary=summary,
             raw_conversation=raw_json,
             emotion_tags=emotion,
             importance=importance,
-            embedding_model=self._embed_model,
+            embedding_model=self._router._embed_model if self._router else "bge-m3",
             embedding_version="v1",
         )
 
-        # Step 5: ChromaDB 写入
-        embedding_uuid = str(uuid.uuid4())
-        if self._collection:
-            try:
-                await self._store_to_chroma(
-                    embedding_id=embedding_uuid,
-                    vector=vector,
-                    metadata={
-                        "summary": summary,
-                        "timestamp": time.time(),
-                        "importance": importance,
-                    },
-                )
-            except Exception as e:
-                logger.error("memory.chroma_write_failed", error=str(e))
-                # 不中止 — SQLite 中已有记录，repair_pending 会修复
+        # Step 5: sqlite-vec 写入（rowid = episodic_id，精确关联）
+        await self._vs.insert(row_id=episodic_id, embedding=vector)
 
-        # Step 6: SQLite 状态更新（status=done）
+        # Step 6: 标记完成
         await self._db.update_embedding_status(
-            episodic_id, "done", embedding_uuid
+            episodic_id, "done", str(episodic_id)
         )
 
         logger.info(
@@ -253,11 +208,11 @@ class MemoryManager:
         intensity = emotion.get("primary_intensity", 0.5) or 0.5
         scores["emotion_intensity"] = intensity
 
-        # 对话长度（每轮 ≈ 2 条消息）
+        # 对话长度
         exchange_count = len(exchanges)
         scores["exchange_count"] = min(exchange_count / 10.0, 1.0)
 
-        # 话题显著性（关键词匹配）
+        # 话题显著性
         all_text = " ".join(
             e.get("content", "") for e in exchanges
         )
@@ -268,7 +223,10 @@ class MemoryManager:
         if emotion:
             dims = emotion.get("dimensions", {})
             if dims:
-                non_zero = sum(1 for v in dims.values() if isinstance(v, (int, float)) and v > 0.3)
+                non_zero = sum(
+                    1 for v in dims.values()
+                    if isinstance(v, (int, float)) and v > 0.3
+                )
                 scores["emotion_diversity"] = min(non_zero / 11.0, 1.0)
             else:
                 scores["emotion_diversity"] = 0.2
@@ -307,38 +265,18 @@ class MemoryManager:
             return summary.strip()
         except Exception as e:
             logger.error("memory.narration_failed", error=str(e))
-            # fallback：简单截取
             texts = [e.get("content", "") for e in exchanges[-3:]]
             return "伙伴和人家说了一会儿话。" + texts[-1][:80] if texts else ""
 
     async def _embed_text(self, text: str) -> list[float]:
-        """bge-m3 向量化（本地 Ollama）"""
+        """云端嵌入（ModelRouter.embed → 硅基流动 bge-m3）"""
+        if not self._router:
+            raise RuntimeError("嵌入需要 ModelRouter")
         try:
-            result = await asyncio.wait_for(
-                self._ollama.embed(model=self._embed_model, input=text),
-                timeout=30,
-            )
-            return result["embeddings"][0]
+            return await self._router.embed(text)
         except Exception as e:
             logger.error("memory.embed_failed", error=str(e))
             raise
-
-    async def _store_to_chroma(
-        self,
-        embedding_id: str,
-        vector: list[float],
-        metadata: dict,
-    ) -> None:
-        """ChromaDB 写入（用 asyncio.to_thread 包裹同步调用）"""
-        def _add():
-            self._collection.add(
-                ids=[embedding_id],
-                embeddings=[vector],
-                metadatas=[metadata],
-            )
-
-        await asyncio.to_thread(_add)
-        logger.debug("memory.chroma_stored", id=embedding_id[:8])
 
     # ============================================================
     # 核心：记忆检索管线
@@ -359,64 +297,52 @@ class MemoryManager:
         Returns:
             [{summary, distance, importance, episodic_id, ...}]
         """
-        if not self._collection:
-            logger.debug("memory.retrieve_skipped — chroma 不可用")
-            return []
-
         try:
-            # Step 1: bge-m3 向量化用户消息
+            # Step 1: 云端嵌入用户消息
             query_vector = await self._embed_text(user_message)
 
-            # Step 2: ChromaDB 查询 top-k
-            def _query():
-                return self._collection.query(
-                    query_embeddings=[query_vector],
-                    n_results=k,
-                )
+            # Step 2: sqlite-vec 检索
+            results = await self._vs.search(query_vector, top_k=k)
 
-            chroma_result = await asyncio.to_thread(_query)
-
-            ids = chroma_result.get("ids", [[]])[0]
-            distances = chroma_result.get("distances", [[]])[0]
-            metadatas = chroma_result.get("metadatas", [[]])[0]
-
-            if not ids:
+            if not results:
                 return []
 
-            # Step 3: SQLite 读取完整摘要
-            records = await self._db.get_episodic_by_embedding_ids(ids)
+            # Step 3: SQLite 读取完整摘要（rowid = episodic_id）
+            row_ids = [r[0] for r in results]
+            now = time.time()
+            LAMBDA_FORGET = 0.099  # ln(2)/7，7天半衰期
 
-            # Step 4: 组装结果 + 排序
-            record_map = {
-                r.get("embedding_id", ""): r for r in records
-            }
+            memories = []
+            for row_id, distance in results:
+                mem = await self._db.get_episodic_memory(row_id)
+                if mem:
+                    # 艾宾浩斯遗忘衰减（阶段 5 新增）
+                    # 越久没被访问的记忆，乘性惩罚越大
+                    days_since_access = max(0, (now - (mem.get("last_accessed") or mem.get("timestamp", now))) / 86400)
+                    decay = max(0.1, math.exp(-LAMBDA_FORGET * days_since_access))
+                    adjusted_score = distance / decay  # 旧记忆分值被放大（=被推远）
 
-            results = []
-            for i, eid in enumerate(ids):
-                record = record_map.get(eid, {})
-                results.append({
-                    "summary": metadatas[i].get("summary", "")
-                        if i < len(metadatas) else "",
-                    "distance": distances[i] if i < len(distances) else 1.0,
-                    "importance": metadatas[i].get("importance", 0.5)
-                        if i < len(metadatas) else 0.5,
-                    "episodic_id": record.get("id"),
-                    "timestamp": record.get("timestamp"),
-                })
+                    memories.append({
+                        "summary": mem.get("summary", ""),
+                        "distance": distance,
+                        "adjusted_score": adjusted_score,
+                        "importance": mem.get("importance", 0.5),
+                        "episodic_id": row_id,
+                        "timestamp": mem.get("timestamp"),
+                        "days_since_access": round(days_since_access, 1),
+                    })
+                    # 更新访问计数
+                    await self._db.increment_access_count(row_id)
 
-                # Step 5: 更新访问计数
-                if record.get("id"):
-                    await self._db.increment_access_count(record["id"])
-
-            # 按相似度排序（余弦距离越小越相似）
-            results.sort(key=lambda r: r["distance"])
-
+            # 按调整后分数排序（融合向量距离 + 艾宾浩斯衰减）
+            memories.sort(key=lambda r: r["adjusted_score"])
+            memories.sort(key=lambda r: r["distance"])
             logger.debug(
                 "memory.retrieved",
-                count=len(results),
-                min_distance=round(results[0]["distance"], 4) if results else None,
+                count=len(memories),
+                min_distance=round(memories[0]["distance"], 4) if memories else None,
             )
-            return results
+            return memories
 
         except Exception as e:
             logger.warning("memory.retrieve_failed", error=str(e))
@@ -433,20 +359,17 @@ class MemoryManager:
         self._idle_event.set()
 
     def _pause_encoding(self) -> None:
-        """暂停正在进行的编码（标记，让当前编码自然完成）"""
+        """暂停正在进行的编码"""
         logger.debug("memory.encoding_paused")
-        # 当前编码任务会自然完成；已保存的 _pending_context 下次合并
 
     async def schedule_encoding(self, context: dict) -> None:
         """Agent 每轮对话后调用，触发分层调度"""
         self._exchanges_since_last_encoding += 1
 
-        # 合并累积上下文
         self._pending_context = self._merge_context(
             self._pending_context, context
         )
 
-        # 选择超时时间
         if self._exchanges_since_last_encoding >= self._force_threshold:
             logger.info(
                 "memory.force_threshold_reached",
@@ -456,7 +379,6 @@ class MemoryManager:
         else:
             timeout = self._idle_timeout
 
-        # 取消上一轮等待
         if self._encoding_task and not self._encoding_task.done():
             self._encoding_task.cancel()
 
@@ -471,16 +393,13 @@ class MemoryManager:
         context: dict,
         timeout: float,
     ) -> None:
-        """等待空闲 → 编码"""
         try:
             await asyncio.wait_for(
                 self._idle_event.wait(),
                 timeout=timeout,
             )
-            # 新消息到达 → 放弃本轮编码
             logger.debug("memory.encoding_deferred")
         except asyncio.TimeoutError:
-            # 空闲时间到 → 执行编码
             self._encoding_in_progress = True
             self._encoding_state = "encoding"
             try:
@@ -505,7 +424,6 @@ class MemoryManager:
         old_exchanges = old.get("exchanges", [])
         new_exchanges = new.get("exchanges", [])
 
-        # 去重拼接（按内容）
         seen = {e.get("content", "") for e in old_exchanges}
         merged = list(old_exchanges)
         for e in new_exchanges:
@@ -513,7 +431,7 @@ class MemoryManager:
                 merged.append(e)
 
         return {
-            "exchanges": merged[-20:],  # 最多 20 条
+            "exchanges": merged[-20:],
             "emotion": new.get("emotion") or old.get("emotion"),
         }
 
@@ -524,6 +442,7 @@ class MemoryManager:
     async def manage_capacity(self, max_records: int | None = None) -> int:
         """
         硬上限检查：超限时按 importance × recency_decay 排序淘汰底端 10%。
+        淘汰后压缩为「遥远记忆」归档。
 
         Returns:
             淘汰的记录数
@@ -534,12 +453,10 @@ class MemoryManager:
         if count <= max_records:
             return 0
 
-        # 获取所有记忆的 id、timestamp、importance
         all_records = await self._db.get_all_episodic()
         now = time.time()
+        LAMBDA = 0.01
 
-        # 计算保留评分：importance × exp(-λ × days_since)
-        LAMBDA = 0.01  # 衰减系数
         scored = []
         for r in all_records:
             ts = r.get("timestamp", now)
@@ -547,33 +464,24 @@ class MemoryManager:
             score = r.get("importance", 0.5) * math.exp(-LAMBDA * days)
             scored.append((r["id"], score))
 
-        # 排序，取末 10%
         scored.sort(key=lambda x: x[1])
         evict_count = max(1, count - max_records + max_records // 10)
         evicted = scored[:evict_count]
-
-        # 压缩 + 删除
         evict_ids = [e[0] for e in evicted]
         evict_records = [
             r for r in all_records if r["id"] in evict_ids
         ]
 
+        # 压缩为遥远记忆
         if evict_records:
             try:
                 await self._compress_evicted(evict_records)
             except Exception as e:
                 logger.warning("memory.compress_failed", error=str(e))
 
-        # 从 SQLite + ChromaDB 删除
+        # 事务内删除：SQLite + sqlite-vec 同时清理
         for eid in evict_ids:
-            record = next((r for r in all_records if r["id"] == eid), None)
-            if record and record.get("embedding_id") and self._collection:
-                try:
-                    def _del():
-                        self._collection.delete(ids=[record["embedding_id"]])
-                    await asyncio.to_thread(_del)
-                except Exception:
-                    pass
+            await self._vs.delete(eid)
             await self._db.delete_episodic(eid)
 
         logger.info(
@@ -605,31 +513,12 @@ class MemoryManager:
                 messages,
                 temperature=0.5,
             )
-            # 写入一条特殊记忆：importance 低、标记为 compressed
             if compressed:
-                vector = await self._embed_text(compressed)
-                eid = str(uuid.uuid4())
                 await self._db.insert_episodic_memory(
                     summary=f"[遥远记忆] {compressed.strip()}",
                     raw_conversation=combined,
                     importance=0.05,
                 )
-                if self._collection:
-                    await self._store_to_chroma(
-                        embedding_id=eid,
-                        vector=vector,
-                        metadata={
-                            "summary": compressed.strip(),
-                            "timestamp": time.time(),
-                            "importance": 0.05,
-                        },
-                    )
-                    await self._db.update_embedding_status(
-                        # 获取刚插入的 id
-                        (await self._db.get_episodic_recent(1))[0]["id"],
-                        "done",
-                        eid,
-                    )
                 logger.info("memory.compressed", original_count=len(records))
         except Exception as e:
             logger.warning("memory.compress_error", error=str(e))
@@ -640,32 +529,22 @@ class MemoryManager:
 
     async def repair_pending(self) -> int:
         """
-        扫描 status='pending' 的记录 → 补写 ChromaDB。
-        启动时自动调用，每小时后可手动触发。
+        扫描缺少向量的记录 → 补写入 sqlite-vec。
+        启动时自动调用。
         """
-        if not self._db or not self._collection:
-            return 0
-
         pending = await self._db.get_episodic_pending()
         if not pending:
             return 0
 
         repaired = 0
         for record in pending:
+            if not record.get("summary"):
+                continue
             try:
                 vector = await self._embed_text(record["summary"])
-                eid = str(uuid.uuid4())
-                await self._store_to_chroma(
-                    embedding_id=eid,
-                    vector=vector,
-                    metadata={
-                        "summary": record["summary"],
-                        "timestamp": record.get("timestamp", time.time()),
-                        "importance": record.get("importance", 0.5),
-                    },
-                )
+                await self._vs.insert(row_id=record["id"], embedding=vector)
                 await self._db.update_embedding_status(
-                    record["id"], "done", eid
+                    record["id"], "done", str(record["id"])
                 )
                 repaired += 1
             except Exception as e:
@@ -675,80 +554,41 @@ class MemoryManager:
                     error=str(e),
                 )
 
-        self._last_repair_time = time.time()
         logger.info("memory.repair_done", repaired=repaired, total=len(pending))
         return repaired
 
     async def rebuild_embeddings(
         self,
-        new_model: str,
-        new_version: str,
+        new_embed_fn=None,
     ) -> int:
         """
         嵌入模型切换时全量重建所有向量。
         1. 标记所有记录 status=pending
-        2. 逐条重新向量化 + 写入 ChromaDB
-        3. 更新 embedding_model + embedding_version
+        2. 调用 VectorStore.rebuild_from_records()
+        3. 更新状态
         """
-        if not self._db or not self._collection:
-            return 0
-
-        old_model = self._embed_model
-        self._embed_model = new_model
-
         all_records = await self._db.get_episodic_recent(limit=10000)
-        rebuilt = 0
 
-        for record in all_records:
-            try:
-                await self._db.update_embedding_model(
-                    record["id"], new_model, new_version
-                )
-                vector = await self._embed_text(record["summary"])
-                eid = str(uuid.uuid4())
-                await self._store_to_chroma(
-                    embedding_id=eid,
-                    vector=vector,
-                    metadata={
-                        "summary": record["summary"],
-                        "timestamp": record.get("timestamp", time.time()),
-                        "importance": record.get("importance", 0.5),
-                    },
-                )
-                await self._db.update_embedding_status(
-                    record["id"], "done", eid
-                )
-                rebuilt += 1
-            except Exception as e:
-                logger.warning(
-                    "memory.rebuild_item_failed",
-                    id=record["id"],
-                    error=str(e),
-                )
-                await self._db.update_embedding_status(
-                    record["id"], "failed"
-                )
+        embed_fn = new_embed_fn or self._embed_text
+        rebuilt = await self._vs.rebuild_from_records(all_records, embed_fn)
+
+        # 更新 SQLite 状态
+        for rec in all_records:
+            await self._db.update_embedding_status(rec["id"], "done", str(rec["id"]))
 
         logger.info(
             "memory.rebuild_complete",
             rebuilt=rebuilt,
             total=len(all_records),
-            old_model=old_model,
-            new_model=new_model,
         )
         return rebuilt
 
     async def health_check(self) -> bool:
-        """检查 ChromaDB 连通性"""
-        if not self._chroma:
-            return False
+        """检查向量存储可用性"""
         try:
-            def _heartbeat():
-                return self._chroma.heartbeat()
-            result = await asyncio.to_thread(_heartbeat)
-            ok = bool(result)
-            logger.debug("memory.health_check", ok=ok)
-            return ok
+            count = await self._vs.count()
+            logger.debug("memory.health_check", vec_count=count)
+            return True
         except Exception as e:
             logger.warning("memory.health_check_failed", error=str(e))
             return False

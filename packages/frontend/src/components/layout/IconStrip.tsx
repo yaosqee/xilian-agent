@@ -4,7 +4,8 @@ import { useAppStore, type PanelType } from '../../stores/appStore';
 const icons: { key: PanelType; emoji: string; label: string }[] = [
   { key: null, emoji: '💭', label: '对话' },
   { key: 'emotion', emoji: '📊', label: '情绪' },
-  { key: 'memory', emoji: '📖', label: '记忆' },
+  { key: 'memory', emoji: '🔮', label: '回忆' },
+  { key: 'autobiography', emoji: '📔', label: '日记' },
   { key: 'settings', emoji: '⚙️', label: '设置' },
 ];
 

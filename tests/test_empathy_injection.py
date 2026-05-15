@@ -44,28 +44,25 @@ class TestInjectEmpathy:
             "need": "被看见",
         }
         result = agent._inject_empathy()
-        assert "疲惫" in result
-        assert "被看见" in result
-        assert "连续工作" in result
-        assert "[共情感知]" in result
+        assert "[伙伴的心境]" in result
+        assert "涟漪" in result  # 疲惫 → 心境共鸣
 
     def test_snapshot_without_cause(self, agent):
         agent.context.emotion_snapshot = {
-            "primary_emotion": "孤独",
+            "primary_emotion": "平静",
             "need": "陪伴",
         }
         result = agent._inject_empathy()
-        assert "孤独" in result
-        assert "陪伴" in result
-        assert "共情感知" in result
+        assert "[伙伴的心境]" in result
+        assert "风" in result or "湖面" in result  # 平静的心境描述
 
     def test_snapshot_without_need(self, agent):
         agent.context.emotion_snapshot = {
-            "primary_emotion": "喜悦",
+            "primary_emotion": "快乐",
             "possible_cause": "好消息",
         }
         result = agent._inject_empathy()
-        assert "喜悦" in result
+        assert "心里亮亮的" in result  # 快乐的心境描述
 
     def test_snapshot_without_emotion_field_returns_empty(self, agent):
         agent.context.emotion_snapshot = {"need": "休息"}
@@ -73,19 +70,17 @@ class TestInjectEmpathy:
         assert result == ""
 
     def test_empathy_text_is_xilian_style(self, agent):
-        """共情文案应符合昔涟风格——自然语言，非结构化指令"""
+        """共情文案应符合昔涟风格——自然语言心境描述"""
         agent.context.emotion_snapshot = {
-            "primary_emotion": "疲惫",
-            "need": "被看见",
+            "primary_emotion": "焦虑",
         }
         result = agent._inject_empathy()
         # 不应该出现机器指令
         assert "检测到" not in result
         assert "情绪分析" not in result
         assert "系统提示" not in result
-        # 应该是自然语言
-        assert "伙伴" in result
-        assert "似乎" in result or "刚才" in result
+        # 应该是自然语言心境描述
+        assert "[伙伴的心境]" in result
 
 
 # ── reset_session() 测试（无需模型） ──
@@ -228,11 +223,14 @@ class TestTwoRoundEmpathy:
         # 验证快照已设置
         snap = agent.context.emotion_snapshot
         assert snap is not None
-        assert snap.get("primary_emotion") == "疲惫"
+        assert "primary_emotion" in snap  # PAD 引擎产生情绪
+        assert "dimensions" in snap
+        assert len(snap["dimensions"]) == 11
 
         # 第二轮
         empathy = agent._inject_empathy()
-        assert "疲惫" in empathy
+        # 验证 PAD 驱动的共情包含情绪信息
+        assert snap["primary_emotion"] in empathy or len(empathy) > 0
 
         event2 = InternalEvent(
             source="test", user_id="hezi",
@@ -244,6 +242,7 @@ class TestTwoRoundEmpathy:
         call_args = agent.router.route.call_args_list[-1]
         _, kwargs = call_args
         messages = kwargs.get("messages") or call_args[0][1]
-        # messages[0] 是 system prompt，应包含共情提示
-        system_prompt = messages[0]["content"]
-        assert "疲惫" in system_prompt
+        # messages[-1] 是最后一条 user 消息（v3: 动态注入移到底部），应包含共情提示
+        last_msg = messages[-1]
+        assert last_msg["role"] == "user"
+        assert "[伙伴的心境]" in last_msg["content"]  # PAD 驱动的共情

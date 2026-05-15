@@ -16,9 +16,11 @@ from loguru import logger
 from ..shared.model_router import ModelRouter
 from ..shared.events import InternalEvent
 from ..shared.database import DatabaseManager
+from ..shared.vector_store import VectorStore
 from .agent_context import AgentContext
 from .tool_registry import ToolRegistry
 from .emotion_analyzer import EmotionAnalyzer
+from .emotion_core import EmotionEngine
 from .memory_manager import MemoryManager
 
 
@@ -35,6 +37,21 @@ TOOL_PLACEHOLDER = (
 )
 
 
+def _sanitize_surrogates(text: str) -> str:
+    r"""
+    清理 WSL/终端传入的 lone surrogate 字符。
+    
+    WSL 的 stdin 可能把 emoji 编码为 U+DCxx 前缀的 lone surrogates，
+    这会导致 JSON 序列化失败（OpenAI API）和 loguru 日志写入失败。
+    此函数将 lone surrogates 替换为 U+FFFD。
+    """
+    try:
+        return text.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+    except Exception:
+        # 极端情况：替换不可编码字符
+        return text.encode("ascii", errors="replace").decode("ascii")
+
+
 class AgentCore:
     """昔涟的核心引擎，接收 InternalEvent，返回文本回复"""
 
@@ -48,19 +65,21 @@ class AgentCore:
         self.emotion_analyzer = EmotionAnalyzer(self.router)
         self._pending_analysis: asyncio.Task | None = None
 
+        # 阶段 4: PAD 情感引擎
+        self.emotion_engine: EmotionEngine = EmotionEngine(
+            model_router=self.router,
+        )
+
+        # 阶段 5: 人格漂移检测 + 时间感知
+        self._drift_counter: int = 0
+        self._last_interaction_time: float = 0.0
+
         # 阶段 2: 数据库预埋 → 阶段 3 实际写入
         self._db = DatabaseManager(db_path)
 
-        # 阶段 3: 记忆管理器（需 startup() 初始化 ChromaDB 连接）
-        chroma_host = os.getenv("CHROMA_HOST", "localhost")
-        chroma_port = int(os.getenv("CHROMA_PORT", "8000"))
-        self.memory_manager = MemoryManager(
-            db=self._db,
-            chroma_host=chroma_host,
-            chroma_port=chroma_port,
-            ollama_client=self.router.ollama,
-            model_router=self.router,
-        )
+        # 阶段 3: 记忆管理器（sqlite-vec 零外部依赖，conn 在 startup 中注入）
+        self._vector_store: VectorStore | None = None
+        self.memory_manager: MemoryManager | None = None
 
         logger.info(
             "AgentCore 就绪",
@@ -74,8 +93,18 @@ class AgentCore:
     # ============================================================
 
     async def startup(self) -> None:
-        """启动初始化：DB 连接 + 记忆模块启动 + 修复 pending"""
+        """启动初始化：DB 连接 + 向量存储 + 记忆模块启动 + 修复 pending"""
         await self._db.init()
+
+        # VectorStore 独立连接（sqlite-vec 扩展需要直接操作 sqlite3）
+        self._vector_store = VectorStore(db_path=str(self._db.db_path))
+        await self._vector_store.init()
+
+        self.memory_manager = MemoryManager(
+            db=self._db,
+            vector_store=self._vector_store,
+            model_router=self.router,
+        )
         await self.memory_manager.startup()
         logger.info("agent.startup_complete")
 
@@ -91,7 +120,9 @@ class AgentCore:
             self._pending_analysis.cancel()
 
         # 记忆编码兜底
-        result = await self.memory_manager.shutdown()
+        result = "empty"
+        if self.memory_manager:
+            result = await self.memory_manager.shutdown()
 
         # 关闭数据库
         await self._db.close()
@@ -135,6 +166,9 @@ class AgentCore:
         """
         trace_log = logger.bind(trace_id=event.event_id[:8])
 
+        # ── 0. 输入清洗：修复 WSL/终端传入的 lone surrogate 字符 ──
+        event.payload = _sanitize_surrogates(event.payload)
+
         trace_log.info(
             "agent.process.start",
             source=event.source,
@@ -142,7 +176,7 @@ class AgentCore:
             msg_preview=event.payload[:80],
         )
 
-        # ── 0. 安全 ──
+        # ── 1. 安全 ──
         if not event.is_owner:
             trace_log.warning("agent.process.blocked")
             return ""
@@ -159,7 +193,8 @@ class AgentCore:
             return reply
 
         # ── 2. 记忆检索 (NEW) ──
-        self.memory_manager.signal_new_message()
+        if self.memory_manager:
+            self.memory_manager.signal_new_message()
         self.context.memory_retrieval = await self._retrieve_memories(event.payload)
 
         # ── 3. 共情注入 ──
@@ -207,6 +242,10 @@ class AgentCore:
             history_size=len(self.context.history),
             memories_retrieved=len(self.context.memory_retrieval or []),
         )
+
+        # 阶段 5: 人格漂移检测 + 记录交互时间
+        self._check_personality_drift(reply)
+        self.mark_interaction()
 
         return reply
 
@@ -262,6 +301,8 @@ class AgentCore:
             return None
 
         try:
+            if not self.memory_manager:
+                return None
             results = await self.memory_manager.retrieve_memories(user_message, k=3)
             if results:
                 logger.debug("memory.retrieved", count=len(results))
@@ -285,6 +326,9 @@ class AgentCore:
             "exchanges": recent_exchanges,
             "emotion": emotion,
         }
+
+        if not self.memory_manager:
+            return
 
         asyncio.create_task(
             self.memory_manager.schedule_encoding(conversation_context)
@@ -333,25 +377,35 @@ class AgentCore:
         memory_text: str = "",
     ) -> list[dict]:
         """
-        构建模型输入消息列表：
-          系统提示 = 人格 + 记忆上下文 + 共情上下文
+        构建模型输入消息列表（前缀缓存友好结构）：
+          [system: 纯人格] → [历史消息] → [动态注入 + 用户消息]
+
+        优化要点：
+        - 系统提示只含静态人格，永远不变 → 前缀缓存 100% 命中
+        - 历史消息与前一轮 95% 一致 → 高缓存命中率
+        - 记忆/共情注入收到底部用户消息中 → 只有这部分每轮重新推理
+
+        v3: 2026-05-14 从前缀混入改为底部注入
         """
-        system_prompt = self._personality
+        # 纯静态系统提示（前缀缓存友好）
+        messages = [{"role": "system", "content": self._personality}]
 
-        # 记忆在前（更底层的历史背景）
-        if memory_text:
-            system_prompt += f"\n\n{memory_text}"
-
-        # 共情在后（当前情绪感知）
-        if empathy_text:
-            system_prompt += f"\n\n{empathy_text}"
-
-        messages = [{"role": "system", "content": system_prompt}]
-
+        # 历史消息（与前一轮前缀高度一致）
         history = self.context.get_messages(limit=20)
         messages.extend(history)
 
-        messages.append({"role": "user", "content": user_msg})
+        # 动态注入 + 用户消息收到底部
+        user_content = user_msg
+        if memory_text or empathy_text:
+            context_parts = []
+            if memory_text:
+                context_parts.append(memory_text)
+            if empathy_text:
+                context_parts.append(empathy_text)
+            context = "\n\n".join(context_parts)
+            user_content = f"{context}\n\n---\n\n{user_msg}"
+
+        messages.append({"role": "user", "content": user_content})
 
         return messages
 
@@ -380,30 +434,28 @@ class AgentCore:
 
     def _inject_empathy(self) -> str:
         """
-        从 context.emotion_snapshot 读取上一轮情感分析结果，
-        生成昔涟风格的动态共情段落。
+        从 context.emotion_snapshot 读取 PAD 情绪状态，
+        生成昔涟视角的心境感知（注入到伙伴消息下方的背景中）。
         """
         snap = self.context.emotion_snapshot
         if not snap:
             return ""
 
         emotion = snap.get("primary_emotion", "")
-        cause = snap.get("possible_cause", "")
-        need = snap.get("need", "")
-
         if not emotion:
             return ""
 
-        prompt = "[共情感知]\n"
-        prompt += f"伙伴刚才似乎有些{emotion}呢"
-        if cause:
-            prompt += f"，可能是因为{cause}"
-        prompt += "。"
-        if need:
-            prompt += f"伙伴现在需要的或许是{need}。"
-        prompt += "在回复中自然地回应这份情绪，不必刻意提起，让它像涟漪一样轻轻扩散。\n"
+        # 心境底色描述（不说教，只告知）
+        mood_map: dict[str, str] = {
+            "快乐": "心里亮亮的", "悲伤": "心有点沉", "愤怒": "心里有团火",
+            "恐惧": "心里发紧", "惊讶": "心里一亮", "厌恶": "心头不悦",
+            "信任": "心是安稳的", "期待": "心在轻轻跳动",
+            "焦虑": "心里有一小片乌云", "平静": "心像无风的湖面",
+            "兴奋": "心跳在加速",
+        }
+        mood = mood_map.get(emotion, f"心里泛起了{emotion}的涟漪")
 
-        return prompt
+        return f"[伙伴的心境] {mood}。不必刻意分析他的情绪，去感受他便好。\n"
 
     def _schedule_emotion_analysis(self, user_message: str) -> None:
         """启动后台情感分析任务（fire-and-forget）"""
@@ -415,14 +467,40 @@ class AgentCore:
         )
 
     async def _run_emotion_analysis(self, user_message: str) -> None:
-        """后台执行情感分析 + 存储结果到 context.emotion_snapshot"""
+        """
+        后台执行情感分析 + PAD 情绪更新。
+
+        两条管道并行（不互相阻塞）：
+        ① EmotionEngine（阶段4）：appraisal → PAD → 连续状态更新 → DB
+        ② ~~EmotionAnalyzer（阶段2）~~：已被 PAD 管道取代
+        """
         try:
-            result = await self.emotion_analyzer.analyze(user_message)
-            if result:
-                self.context.emotion_snapshot = result
+            # ── 阶段 4: PAD 情感引擎 ──
+            pad_profile = await self.emotion_engine.process_message(user_message)
+            if pad_profile:
+                # 存储 PAD 结果到 context（兼容旧的 emotion_snapshot 字段）
+                self.context.emotion_snapshot = pad_profile
+
+                # 写入 DB 情感快照
+                if self._db and self._db._conn:
+                    appraisal = pad_profile.get("appraisal", {})
+                    await self._db.insert_emotion_snapshot(
+                        pad_p=self.emotion_engine.state.pad_p,
+                        pad_a=self.emotion_engine.state.pad_a,
+                        pad_d=self.emotion_engine.state.pad_d,
+                        primary_emotion=pad_profile.get("primary_emotion"),
+                        primary_intensity=pad_profile.get("primary_intensity", 0.0),
+                        dimensions=pad_profile.get("dimensions"),
+                        appraisal_relevance=appraisal.get("relevance"),
+                        appraisal_facilitation=appraisal.get("facilitation"),
+                        appraisal_coping=appraisal.get("coping"),
+                        source=appraisal.get("source", "llm"),
+                    )
+
                 logger.debug(
-                    "emotion.snapshot_updated",
-                    emotion=result.get("primary_emotion"),
+                    "emotion.pad_updated",
+                    pad=f"({self.emotion_engine.state.pad_p:.2f},{self.emotion_engine.state.pad_a:.2f},{self.emotion_engine.state.pad_d:.2f})",
+                    emotion=pad_profile.get("primary_emotion"),
                 )
         except asyncio.CancelledError:
             logger.debug("emotion.analysis_cancelled")
@@ -433,3 +511,68 @@ class AgentCore:
     def personality_preview(self) -> str:
         """返回人格提示前 200 字符（调试用）"""
         return self._personality[:200] + "..."
+
+    # ============================================================
+    # 阶段 5: 时间感知问候 + 人格漂移检测
+    # ============================================================
+
+    def get_time_greeting(self) -> str:
+        """
+        根据当前时间和上次对话时间生成自然问候。
+        """
+        from datetime import datetime
+        now = datetime.now()
+        hour = now.hour
+        last_seen = self._last_interaction_time
+        hours_ago = (now.timestamp() - last_seen) / 3600 if last_seen else 999
+
+        if 5 <= hour < 12:
+            time_phrase = "早安"
+        elif 12 <= hour < 18:
+            time_phrase = "下午好"
+        elif 18 <= hour < 23:
+            time_phrase = "晚上好"
+        else:
+            time_phrase = "夜深了呢"
+
+        if hours_ago > 168:
+            gap = "好久不见！"
+        elif hours_ago > 48:
+            gap = f"离上次聊天过了{hours_ago:.0f}小时呢～"
+        elif hours_ago > 8:
+            gap = "今天过得怎么样？"
+        else:
+            gap = ""
+
+        greeting = f"{time_phrase}，伙伴。"
+        if gap:
+            greeting += f" {gap}"
+        return greeting
+
+    def _check_personality_drift(self, reply: str) -> None:
+        """
+        检查回复是否含有人格特征标记。连续 3 轮无特征 → 告警。
+        """
+        markers = [
+            "人家", "伙伴", "……♪", "~♪", "呢", "呀",
+            "涟漪", "书", "页", "花", "星", "秋千", "麦田",
+        ]
+        has_marker = any(m in reply for m in markers)
+
+        if has_marker:
+            self._drift_counter = 0
+        else:
+            self._drift_counter += 1
+
+        if self._drift_counter >= 3:
+            from loguru import logger
+            logger.warning(
+                "personality.drift_warning",
+                counter=self._drift_counter,
+                reply_preview=reply[:80],
+            )
+
+    def mark_interaction(self) -> None:
+        """记录本次交互时间（每轮对话后调用）"""
+        import time as _time
+        self._last_interaction_time = _time.time()

@@ -3,11 +3,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '../../stores/appStore';
 import { EmotionPanel } from './EmotionPanel';
 import { MemoryPanel } from './MemoryPanel';
+import { MemoryTimeline } from './MemoryTimeline';
+import { AutobiographyPanel } from './AutobiographyPanel';
 import { SettingsPanel } from './SettingsPanel';
 
 const panels: Record<string, React.FC> = {
   emotion: EmotionPanel,
-  memory: MemoryPanel,
+  memory: MemoryTimeline,      // 新：记忆时间线卡片
+  autobiography: AutobiographyPanel,  // 新：自传体日记
   settings: SettingsPanel,
 };
 

@@ -65,6 +65,61 @@ CREATE TABLE IF NOT EXISTS message_queue (
 );
 """
 
+_CREATE_EMOTION_SNAPSHOTS = """
+CREATE TABLE IF NOT EXISTS emotion_snapshots (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       REAL    NOT NULL,
+    pad_p           REAL    NOT NULL DEFAULT 0.0,
+    pad_a           REAL    NOT NULL DEFAULT 0.0,
+    pad_d           REAL    NOT NULL DEFAULT 0.0,
+    primary_emotion TEXT,
+    primary_intensity REAL,
+    dimensions_json TEXT,
+    appraisal_relevance  REAL,
+    appraisal_facilitation REAL,
+    appraisal_coping     REAL,
+    source          TEXT    DEFAULT 'appraisal',
+    session_id      TEXT    NOT NULL,
+    trace_id        TEXT
+);
+"""
+
+_CREATE_AUTOBIOGRAPHY = """
+CREATE TABLE IF NOT EXISTS autobiography_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT    NOT NULL UNIQUE,
+    content     TEXT    NOT NULL,
+    word_count  INTEGER DEFAULT 0,
+    mood_summary TEXT,
+    key_memories TEXT,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
+_CREATE_REFLECTION_CRYSTALS = """
+CREATE TABLE IF NOT EXISTS reflection_crystals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start  TEXT    NOT NULL,
+    week_end    TEXT    NOT NULL,
+    learned     TEXT,
+    surprised   TEXT,
+    grateful    TEXT,
+    remember    TEXT,
+    raw_prompt  TEXT,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
+_CREATE_AUTONOMY_SETTINGS = """
+CREATE TABLE IF NOT EXISTS autonomy_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  REAL NOT NULL
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -78,6 +133,13 @@ _CREATE_INDEXES_SQL = [
     # message_queue
     "CREATE INDEX IF NOT EXISTS idx_queue_status ON message_queue(status, created_at);",
     "CREATE INDEX IF NOT EXISTS idx_queue_event ON message_queue(event_id);",
+    # emotion_snapshots
+    "CREATE INDEX IF NOT EXISTS idx_emo_timestamp ON emotion_snapshots(timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_emo_session ON emotion_snapshots(session_id);",
+    # autobiography
+    "CREATE INDEX IF NOT EXISTS idx_auto_date ON autobiography_entries(date);",
+    # reflection
+    "CREATE INDEX IF NOT EXISTS idx_ref_week ON reflection_crystals(week_start);",
 ]
 
 
@@ -108,6 +170,10 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_CONVERSATION_LOGS)
         await self._conn.execute(_CREATE_EPISODIC_MEMORIES)
         await self._conn.execute(_CREATE_MESSAGE_QUEUE)
+        await self._conn.execute(_CREATE_EMOTION_SNAPSHOTS)
+        await self._conn.execute(_CREATE_AUTOBIOGRAPHY)
+        await self._conn.execute(_CREATE_REFLECTION_CRYSTALS)
+        await self._conn.execute(_CREATE_AUTONOMY_SETTINGS)
 
         # 建索引（幂等）
         for idx_sql in _CREATE_INDEXES_SQL:
@@ -407,6 +473,211 @@ class DatabaseManager:
         return row["cnt"] if row else 0
 
     # ============================================================
+    # emotion_snapshots CRUD（阶段 4 新增）
+    # ============================================================
+
+    async def insert_emotion_snapshot(
+        self,
+        pad_p: float, pad_a: float, pad_d: float,
+        primary_emotion: str | None = None,
+        primary_intensity: float = 0.0,
+        dimensions: dict | None = None,
+        appraisal_relevance: float | None = None,
+        appraisal_facilitation: float | None = None,
+        appraisal_coping: float | None = None,
+        source: str = "appraisal",
+        trace_id: str | None = None,
+    ) -> int:
+        """写入一条情感快照"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        dims_json = json.dumps(dimensions, ensure_ascii=False) if dimensions else None
+
+        cursor = await self._conn.execute(
+            """INSERT INTO emotion_snapshots
+               (timestamp, pad_p, pad_a, pad_d,
+                primary_emotion, primary_intensity, dimensions_json,
+                appraisal_relevance, appraisal_facilitation, appraisal_coping,
+                source, session_id, trace_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                time.time(),
+                pad_p, pad_a, pad_d,
+                primary_emotion, primary_intensity, dims_json,
+                appraisal_relevance, appraisal_facilitation, appraisal_coping,
+                source, self._session_id, trace_id,
+            ),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_latest_emotion(self) -> dict | None:
+        """获取最新的情感快照"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM emotion_snapshots ORDER BY timestamp DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_emotion_snapshots(
+        self, limit: int = 50, offset: int = 0
+    ) -> list[dict]:
+        """按时间倒序查询情感快照历史"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM emotion_snapshots ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_emotion_stats(self, days: int = 7) -> dict:
+        """获取情绪统计摘要"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cutoff = time.time() - days * 86400
+        cursor = await self._conn.execute(
+            "SELECT * FROM emotion_snapshots WHERE timestamp >= ? ORDER BY timestamp ASC",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return {"avg_pad": {"P": 0, "A": 0, "D": 0}, "snapshot_count": 0}
+
+        records = [dict(r) for r in rows]
+        n = len(records)
+        avg_p = sum(r["pad_p"] for r in records) / n
+        avg_a = sum(r["pad_a"] for r in records) / n
+        avg_d = sum(r["pad_d"] for r in records) / n
+
+        # 情绪分布
+        from collections import Counter
+        emotions = [r["primary_emotion"] for r in records if r["primary_emotion"]]
+        distribution = {k: v / n for k, v in Counter(emotions).most_common()}
+
+        # 情绪波动率（最大 PAD 距离）
+        pads = [(r["pad_p"], r["pad_a"], r["pad_d"]) for r in records]
+        max_dist = 0.0
+        for i in range(len(pads)):
+            for j in range(i + 1, len(pads)):
+                dist = sum((pads[i][k] - pads[j][k]) ** 2 for k in range(3)) ** 0.5
+                if dist > max_dist:
+                    max_dist = dist
+
+        return {
+            "avg_pad": {"P": round(avg_p, 4), "A": round(avg_a, 4), "D": round(avg_d, 4)},
+            "emotion_distribution": distribution,
+            "emotional_volatility": round(max_dist, 4),
+            "snapshot_count": n,
+        }
+
+    # ============================================================
+    # autobiography + reflection CRUD（阶段 5 新增）
+    # ============================================================
+
+    async def insert_autobiography(
+        self,
+        date: str,
+        content: str,
+        mood_summary: str | None = None,
+        key_memories: str | None = None,
+        word_count: int = 0,
+    ) -> int:
+        """写入每日自传体"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT OR REPLACE INTO autobiography_entries
+               (date, content, word_count, mood_summary, key_memories, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (date, content, word_count, mood_summary, key_memories, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_autobiography(self, date: str | None = None) -> dict | None:
+        """获取指定日期或最新的自传体"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        if date:
+            cursor = await self._conn.execute(
+                "SELECT * FROM autobiography_entries WHERE date=?", (date,)
+            )
+        else:
+            cursor = await self._conn.execute(
+                "SELECT * FROM autobiography_entries ORDER BY date DESC LIMIT 1"
+            )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_autobiography_list(self, limit: int = 30) -> list[dict]:
+        """获取自传体目录（不含正文，轻量）"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT date, mood_summary, word_count FROM autobiography_entries ORDER BY date DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def insert_reflection(
+        self,
+        week_start: str,
+        week_end: str,
+        learned: str = "",
+        surprised: str = "",
+        grateful: str = "",
+        remember: str = "",
+        raw_prompt: str | None = None,
+    ) -> int:
+        """写入每周反思结晶"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT INTO reflection_crystals
+               (week_start, week_end, learned, surprised, grateful, remember, raw_prompt, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (week_start, week_end, learned, surprised, grateful, remember, raw_prompt, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_latest_reflection(self) -> dict | None:
+        """获取最新的反思结晶"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM reflection_crystals ORDER BY week_start DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_reflections(self, limit: int = 10) -> list[dict]:
+        """获取反思历史"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM reflection_crystals ORDER BY week_start DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ============================================================
     # message_queue 消息队列 CRUD（阶段 3 新增）
     # ============================================================
 
@@ -529,8 +800,48 @@ class DatabaseManager:
         return purged
 
     # ============================================================
+    # autonomy_settings CRUD（阶段 6 新增）
+    # ============================================================
+
+    async def get_autonomy_config(self) -> dict | None:
+        """读取自主行为配置（单行 JSON）"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        import json
+        cursor = await self._conn.execute(
+            "SELECT value FROM autonomy_settings WHERE key='config'"
+        )
+        row = await cursor.fetchone()
+        if row:
+            return json.loads(row[0])
+        return None
+
+    async def save_autonomy_config(self, config: dict) -> None:
+        """保存自主行为配置（INSERT OR REPLACE）"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        import json
+        now = time.time()
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO autonomy_settings (key, value, updated_at)
+               VALUES ('config', ?, ?)""",
+            (json.dumps(config, ensure_ascii=False), now),
+        )
+        await self._conn.commit()
+        logger.debug("database.autonomy_config_saved")
+
+    # ============================================================
     # 工具属性
     # ============================================================
+
+    @property
+    def conn(self):
+        """aiosqlite 连接（供 VectorStore 等复用）"""
+        if self._conn is None:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        return self._conn
 
     @property
     def session_id(self) -> str:

@@ -26,6 +26,7 @@ def setup_logging():
         rotation="00:00",
         retention="30 days",
         level="INFO",
+        encoding="utf-8",
     )
 
     logger.info("日志系统就绪")

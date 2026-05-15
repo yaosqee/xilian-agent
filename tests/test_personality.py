@@ -204,18 +204,17 @@ class TestHeuristicPersonality:
     # ── 阶段 2：共情注入人设检查 ──
 
     def test_empathy_injection_is_xilian_style(self):
-        """共情注入文案应符合昔涟风格——有「伙伴」、无机器话术"""
+        """共情注入文案应符合昔涟风格——有心境描述、无机器话术"""
         from packages.agent import AgentCore
         ag = AgentCore()
         ag.context.emotion_snapshot = {
-            "primary_emotion": "疲惫",
+            "primary_emotion": "焦虑",
             "possible_cause": "连续工作",
             "need": "被看见",
         }
         result = ag._inject_empathy()
         # 应该自然
-        assert "伙伴" in result
-        assert "似乎" in result
+        assert "[伙伴的心境]" in result
         # 不应该有机器话术
         for bad in ["检测到", "情绪分析", "系统提示", "请回复"]:
             assert bad not in result, f"共情注入含机器话术「{bad}」"

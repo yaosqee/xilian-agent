@@ -11,7 +11,6 @@ def agent():
     with patch("packages.agent.agent_core.ModelRouter") as MockRouter, \
          patch("packages.agent.agent_core.MemoryManager") as MockMM:
         mock_router = MockRouter.return_value
-        mock_router.ollama = MagicMock()
         mock_router.route = AsyncMock(return_value="昔涟的回复~♪")
 
         mock_mm = MockMM.return_value
@@ -111,14 +110,25 @@ async def test_reset_session(agent):
 
 @pytest.mark.asyncio
 async def test_build_messages_with_memory(agent):
+    """v3: 记忆/共情注入现在位于最后一条 user 消息中，而非 system prompt"""
     agent._personality = "你是昔涟。"
     memory_text = "[当前记忆]\n· 书页翻到一段回忆：昨天..."
     empathy_text = "[共情感知]\n伙伴似乎有些疲惫"
     msgs = agent._build_messages("今天好累", empathy_text, memory_text)
-    system = msgs[0]["content"]
-    assert "你是昔涟" in system
-    mem_idx = system.index("当前记忆")
-    emp_idx = system.index("共情感知")
+
+    # system prompt 仅含纯人格
+    assert msgs[0]["content"] == "你是昔涟。"
+
+    # 记忆和共情在最后一条 user 消息中
+    last_msg = msgs[-1]
+    assert last_msg["role"] == "user"
+    last_content = last_msg["content"]
+    assert "当前记忆" in last_content
+    assert "共情感知" in last_content
+    assert "今天好累" in last_content
+    # 记忆在前，共情在后
+    mem_idx = last_content.index("当前记忆")
+    emp_idx = last_content.index("共情感知")
     assert mem_idx < emp_idx
 
 
@@ -127,6 +137,7 @@ async def test_build_messages_no_injections(agent):
     agent._personality = "你是昔涟。"
     msgs = agent._build_messages("hello", "", "")
     assert msgs[0]["content"] == "你是昔涟。"
+    assert msgs[-1]["content"] == "hello"
 
 
 @pytest.mark.asyncio

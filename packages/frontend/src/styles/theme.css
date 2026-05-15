@@ -1,0 +1,69 @@
+/**
+ * 昔涟品牌视觉系统 — V3.3
+ *
+ * 樱花粉 #FFB3B3 色系 · 圆角气泡 · 水波纹过渡
+ * 在全局 CSS 或组件中引入此文件即可覆盖默认样式。
+ */
+:root {
+  --xilian-pink:        #FFB3B3;
+  --xilian-pink-dark:   #FF6B9D;
+  --xilian-pink-light:  #FFE0E0;
+  --xilian-bg:          #1A1218;
+  --xilian-card:        rgba(255,179,179,0.06);
+  --xilian-card-hover:  rgba(255,179,179,0.10);
+  --xilian-text:        rgba(255,255,255,0.85);
+  --xilian-text-dim:    rgba(255,255,255,0.4);
+  --xilian-border:      rgba(255,255,255,0.06);
+}
+
+/* 消息气泡 */
+.xilian-bubble {
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+/* 卡片通用 */
+.xilian-card {
+  background: var(--xilian-card);
+  border-radius: 12px;
+  border: 1px solid var(--xilian-border);
+}
+
+.xilian-card:hover {
+  background: var(--xilian-card-hover);
+}
+
+/* 水波纹过渡 */
+.xilian-transition {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Tab 按钮 */
+.xilian-tab {
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border: none;
+  font-size: 13px;
+  background: transparent;
+  color: var(--xilian-text-dim);
+  transition: all 0.2s;
+}
+
+.xilian-tab.active {
+  background: rgba(255,179,179,0.15);
+  color: var(--xilian-pink);
+  font-weight: 600;
+}
+
+/* 滚动条（暗色主题） */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+}

@@ -1,0 +1,91 @@
+/**
+ * AffectionBar — 羁绊值指示器
+ *
+ * 阶段 5 新增。4 级羁绊值，本地计算，不调 LLM。
+ * 计算方法：基础 50% + 活跃天数 × 3 + 记忆数 / 50 + 积极情绪占比 × 10
+ */
+import React, { useState, useEffect, useCallback } from 'react';
+import { fetchEmotionStats } from '../services/api';
+
+interface AffectionData {
+  score: number;
+  level: number;
+  label: string;
+  emoji: string;
+}
+
+const LEVELS: AffectionData[] = [
+  { score: 25, level: 1, label: '初遇', emoji: '🌱' },
+  { score: 50, level: 2, label: '相识', emoji: '🌿' },
+  { score: 75, level: 3, label: '老友', emoji: '🌳' },
+  { score: 100, level: 4, label: '羁绊', emoji: '💎' },
+];
+
+/** 获取当前羁绊等级 */
+function getLevel(score: number): AffectionData {
+  for (let i = LEVELS.length - 1; i >= 0; i--) {
+    if (score >= LEVELS[i].score) return LEVELS[i];
+  }
+  return LEVELS[0];
+}
+
+export const AffectionBar: React.FC = () => {
+  const [affection, setAffection] = useState(50);
+  const level = getLevel(affection);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetchEmotionStats(30);
+      if (res) {
+        // 简化的羁绊值计算
+        let score = 50;
+        score += Math.min(30, (res.snapshot_count || 0) * 0.5);
+        if (res.emotion_distribution) {
+          const pos = (res.emotion_distribution['快乐'] || 0) +
+            (res.emotion_distribution['平静'] || 0) * 0.5;
+          score += pos * 30;
+        }
+        if (res.emotional_volatility) {
+          score -= Math.min(15, res.emotional_volatility * 20);
+        }
+        setAffection(Math.max(5, Math.min(100, Math.round(score))));
+      }
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 30000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  return (
+    <div style={{
+      padding: '8px 12px',
+      borderRadius: 10,
+      background: 'rgba(255,179,179,0.04)',
+      marginBottom: 12,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>
+          {level.emoji} {level.label}
+        </span>
+        <span style={{ fontSize: 12, color: '#FFB3B3', fontWeight: 600 }}>
+          羁绊值 {affection}
+        </span>
+      </div>
+      <div style={{
+        height: 4, borderRadius: 2,
+        background: 'rgba(255,255,255,0.06)',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          height: '100%', borderRadius: 2,
+          width: `${affection}%`,
+          background: `linear-gradient(90deg, #FFB3B3, #FF6B9D)`,
+          transition: 'width 0.5s ease',
+        }} />
+      </div>
+    </div>
+  );
+};
