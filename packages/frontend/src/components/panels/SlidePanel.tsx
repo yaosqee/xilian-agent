@@ -24,6 +24,7 @@ import { MemoryTimeline } from './MemoryTimeline';
 import { AutobiographyPanel } from './AutobiographyPanel';
 import { NotebookPanel } from './NotebookPanel';
 import { AuditPanel } from './AuditPanel';
+import { SkillsPanel } from './SkillsPanel';
 import { SettingsPanel } from './SettingsPanel';
 
 const PANELS: Record<string, React.FC> = {
@@ -32,6 +33,7 @@ const PANELS: Record<string, React.FC> = {
   autobiography:  AutobiographyPanel,
   notebook:       NotebookPanel,
   audit:          AuditPanel,
+  skills:         SkillsPanel,
   settings:       SettingsPanel,
 };
 
@@ -41,6 +43,7 @@ const TITLES: Record<string, string> = {
   autobiography:  '自传体',
   notebook:       '笔记本',
   audit:          '审计日志',
+  skills:         '技能管理',
   settings:       '设置',
 };
 

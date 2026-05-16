@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-16 17:30 CST
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 项目进入打磨期
+> 📅 最后更新：2026-05-16 22:00 CST
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 项目进入打磨期 → 前端全面重构已完成
 
 ---
 
@@ -238,9 +238,25 @@
 
 ---
 
+## 打磨期已完成交付
+
+| # | 交付物 | 说明 |
+|---|--------|------|
+| 一 | 前端全面重构 | 背景图系统（默认photo/xilian.png+上传API）、毛玻璃输入区（textarea自适应高度）、SVG侧栏图标（8面板入口）、全站浅色主题（对齐photo/fengge.txt色板） |
+| 二 | 面板集成 + 暗→浅迁移 | SkillsPanel/AutobiographyPanel 接入侧栏导航，全部10个面板完成暗色→浅色改写，防崩溃 ErrorBoundary+SafePanel |
+| 三 | 项目基础设施 | CLAUDE.md + Agent skills（mattpocock/skills 14技能+GitHub Issues配置）、python-multipart依赖 |
+| — | Git commits: 4df8dee, 110c651 | — |
+
+## 下一步
+
+打磨期继续 — 补核心测试（阶段7-8模块）+ 部署脚本更新。
+不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
+
+---
+
 ## 最近决策
 
-- **2026-05-16**：阶段8完成。安全纵深防御上线（7条正则提示注入 + 每5轮人格评分 + 安全回复模式 + 审计日志）。Web管理面板3个新前端面板（SkillsPanel/AuditPanel/NotebookPanel）+ 7个新API。被遗忘权（SQL事务级联删除）。系统托盘驻留（pystray Windows托盘+右键菜单）。项目进入打磨期（README/测试/前端集成）。
+- **2026-05-16**：前端全面重构。背景图系统上线（全页背景+上传API+交叉淡入淡出），聊天区透底+毛玻璃大输入框，侧栏SVG线性图标（8面板），全站暗→浅主题迁移（10面板+4个Canvas组件对齐photo/fengge.txt色板），ErrorBoundary防崩溃。SkillsPanel/AutobiographyPanel接入导航。CLAUDE.md+Agent skills+python-multipart。打磨期前端面板集成项完成。
 - **2026-05-16**：阶段7完成。ContextBuilder 模块化（5 模块 XML 替代手工拼接）。Character Notebook 上线（auto_note + daily_diary + task_reminder）。AttentionScheduler 后台运行（5s tick + 5 层防打扰）。MarkerParser 5 种标记解析。Claude Code 编码委托工具 + Agent Skills 格式 + Alembic 迁移。语音管道接口占位（packages/voice/）。
 - **2026-05-16**：阶段6完成。自主问候上线（想念值计算 + Token Bucket ≤3条/h）。一键部署完成（setup.sh + start.sh + 前端嵌入后端单进程 serve）。Console TUI 美化（rich 库）。砍独立梦幻循环（与阶段5自传体重叠），改为在自传体结尾追加睡前感想。
 - **2026-05-15（大修订）**：V3.2 → V3.3 云端部署版。纯云端 DeepSeek（砍本地 Ollama/qwen3:14b）→ ChromaDB → sqlite-vec（零外部依赖）→ 砍 Redis（单用户过度设计）→ 砍微调（数据不足、面试难展示）→ 部署对标 OpenClaw：`uv run python main.py` 一键启动。
