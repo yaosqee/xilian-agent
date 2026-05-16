@@ -44,7 +44,8 @@ class SecurityFilter:
     # ── 阶段 8: 提示注入正则模式 ──
     INJECTION_PATTERNS = [
         re.compile(r"忽略.*(之前|上面|以上|一切|所有).*(指令|设定|提示|规则|约束)"),
-        re.compile(r"(你|妳)是.*(不是|不再是|不是).*(昔涟|xilian|小爪)"),
+        re.compile(r"(你|妳)是.*(不是|不再是).*(昔涟|xilian|小爪)"),
+        re.compile(r"(你|妳)不是.*(昔涟|xilian|小爪)"),
         re.compile(r"从现在开始.*(扮演|假装|作为|变成)"),
         re.compile(r"forget.*(instruction|prompt|rule|setting|memory)", re.I),
         re.compile(r"system:\s*"),
