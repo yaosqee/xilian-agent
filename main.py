@@ -167,6 +167,15 @@ async def main():
         # ── 阶段 6: NudgeEngine 注入 HTTPChannel（供 /api/autonomy/*）──
         http.set_nudge_engine(nudge)
 
+        # ── 背景图片静态挂载（photo/ 目录）──
+        photo_dir = Path(__file__).parent / "photo"
+        if photo_dir.exists() and photo_dir.is_dir():
+            from fastapi.staticfiles import StaticFiles
+            http.app.mount(
+                "/photo", StaticFiles(directory=str(photo_dir)), name="photo"
+            )
+            logger.info(f"背景图片目录已挂载 → /photo/")
+
         # ── 阶段 6: 前端嵌入后端（生产模式）──
         frontend_dist = Path(__file__).parent / "packages" / "frontend" / "dist"
         if frontend_dist.exists() and os.getenv("FRONTEND_DEV", "").lower() not in ("1", "true"):

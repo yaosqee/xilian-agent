@@ -1,20 +1,15 @@
 import React, { useRef, useEffect } from 'react';
 import type { EmotionData } from '../../types/emotion';
-import { EMOTION_DIMENSIONS } from '../../types/emotion';
-import { EMOTION_COLORS } from '../../types/emotion';
+import { EMOTION_DIMENSIONS, EMOTION_COLORS } from '../../types/emotion';
 import { AXIS_COUNT, ANGLE_STEP, START_ANGLE, getPoint } from '../../utils/radarMath';
 
-interface Props {
-  data: EmotionData;
-  width: number;
-  height: number;
-}
+interface Props { data: EmotionData; width: number; height: number; }
 
 export const EmotionGauge: React.FC<Props> = React.memo(({ data, width, height }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const centerX = width / 2;
   const centerY = height / 2;
-  const radius = Math.min(width, height) / 2 - 40;
+  const radius = Math.min(width, height) / 2 - 36;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -22,9 +17,14 @@ export const EmotionGauge: React.FC<Props> = React.memo(({ data, width, height }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
     ctx.clearRect(0, 0, width, height);
 
-    // Background grid
+    // Grid rings
     for (let i = 1; i <= 5; i++) {
       const r = (radius / 5) * i;
       ctx.beginPath();
@@ -36,7 +36,7 @@ export const EmotionGauge: React.FC<Props> = React.memo(({ data, width, height }
         else ctx.lineTo(x, y);
       }
       ctx.closePath();
-      ctx.strokeStyle = `rgba(255,255,255,${0.04 + i * 0.02})`;
+      ctx.strokeStyle = `rgba(180, 160, 200, ${0.08 + i * 0.04})`;
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -49,20 +49,20 @@ export const EmotionGauge: React.FC<Props> = React.memo(({ data, width, height }
       ctx.beginPath();
       ctx.moveTo(centerX, centerY);
       ctx.lineTo(x, y);
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.strokeStyle = 'rgba(180, 160, 200, 0.2)';
       ctx.stroke();
 
       // Labels
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillStyle = '#8B7A93';
       ctx.font = '11px sans-serif';
       ctx.textAlign = 'center';
-      const labelR = radius + 20;
+      const labelR = radius + 18;
       const lx = centerX + labelR * Math.cos(angle);
       const ly = centerY + labelR * Math.sin(angle);
       ctx.fillText(EMOTION_DIMENSIONS[i], lx, ly + 4);
     }
 
-    // Data polygon
+    // Data polygon fill
     const dims = data.dimensions;
     ctx.beginPath();
     for (let i = 0; i < AXIS_COUNT; i++) {
@@ -72,9 +72,15 @@ export const EmotionGauge: React.FC<Props> = React.memo(({ data, width, height }
       else ctx.lineTo(x, y);
     }
     ctx.closePath();
-    ctx.fillStyle = 'rgba(100, 180, 255, 0.15)';
+
+    // Gradient fill
+    const grad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+    grad.addColorStop(0, 'rgba(255, 183, 197, 0.2)');
+    grad.addColorStop(1, 'rgba(180, 160, 210, 0.05)');
+    ctx.fillStyle = grad;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(100, 180, 255, 0.6)';
+
+    ctx.strokeStyle = 'rgba(255, 183, 197, 0.5)';
     ctx.lineWidth = 2;
     ctx.stroke();
 
@@ -84,18 +90,18 @@ export const EmotionGauge: React.FC<Props> = React.memo(({ data, width, height }
       const { x, y } = getPoint(centerX, centerY, radius, value, i);
       ctx.beginPath();
       ctx.arc(x, y, 4, 0, Math.PI * 2);
-      const color = EMOTION_COLORS[EMOTION_DIMENSIONS[i]];
-      ctx.fillStyle = color;
+      ctx.fillStyle = EMOTION_COLORS[EMOTION_DIMENSIONS[i]];
       ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
   }, [data, width, height, centerX, centerY, radius]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={width}
-      height={height}
-      style={{ display: 'block', margin: '0 auto' }}
+      style={{ display: 'block', margin: '0 auto', width, height }}
     />
   );
 });

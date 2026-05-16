@@ -1,0 +1,273 @@
+> **视觉参考：** 充满梦幻、空灵与浪漫气息的图片（强烈指向爱莉希雅相关的“真我”或“记忆”主题），整体传递出神圣、温柔、略带忧伤但充满希望的感觉。
+
+---
+
+### 1. 整体氛围与情绪
+- **核心感受：** **Ethereal & Romantic (空灵与浪漫)**。
+- **前端营造手法：**
+    - **色彩：** 大面积使用低饱和度的粉紫色渐变，避免高对比度的纯黑或纯白。
+    - **质感：** 大量使用 **Glassmorphism (毛玻璃)** 和 **Diffuse Lighting (弥散光)**，营造通透感。
+    - **动效：** 缓慢、漂浮的动画（如花瓣飘落、光晕呼吸），使用平滑的缓动函数。
+
+---
+
+### 2. 色彩系统
+图片的主色调为粉紫与蓝紫的交织，辅以高光的白色。
+
+- **主色 (Primary - Pink/Love):**
+    - `#FFB7C5` (樱花粉 - 用于按钮、高亮)
+    - `#FF9EBB` (深樱粉 - 用于 Hover 态)
+- **辅色 (Secondary - Purple/Mystery):**
+    - `#D8B4E2` (淡紫 - 用于次要按钮、背景块)
+    - `#BFA2DB` (中紫 - 用于边框、图标)
+- **强调色 (Accent - Blue/Ice):**
+    - `#A2C4E6` (冰蓝 - 对应笼子的冷光感，用于链接、特殊状态)
+    - `#6C8EBF` (深蓝紫 - 对应链条，用于强调文字)
+- **背景色 (Background):**
+    - `Base`: `#FFF5F8` (极淡粉白，主背景)
+    - `Surface`: `rgba(255, 255, 255, 0.6)` (玻璃态背景)
+    - `Gradient`: `linear-gradient(135deg, #FFF0F5 0%, #F0F4FF 100%)` (整体页面背景渐变)
+- **文字色 (Text):**
+    - `Primary`: `#5E4B66` (深紫灰，避免纯黑，保持柔和)
+    - `Secondary`: `#8B7A93` (中紫灰)
+    - `Placeholder`: `#C4B5CF` (浅紫)
+- **边框色 (Border):**
+    - `Default`: `rgba(216, 180, 226, 0.4)`
+    - `Focus`: `#FFB7C5`
+
+---
+
+### 3. 字体排版
+为了配合画面的优雅与神性，推荐使用衬线体或纤细的无衬线体。
+
+- **字体族 (Font Family):**
+    - **中文:** `'Noto Serif SC', 'Source Han Serif CN', serif` (思源宋体，优雅)
+    - **英文/数字:** `'Playfair Display', 'Cinzel', serif` (具有古典美感的衬线体) 或 `'Quicksand', sans-serif` (圆润无衬线，若需现代感)
+- **字号层级 (Typography Scale):**
+    - `H1`: `3rem (48px)`, `font-weight: 700`, `letter-spacing: 0.05em` (大标题，带光晕)
+    - `H2`: `2.25rem (36px)`, `font-weight: 600`
+    - `H3`: `1.5rem (24px)`, `font-weight: 500`
+    - `Body`: `1rem (16px)`, `line-height: 1.6`, `font-weight: 400`
+    - `Caption`: `0.875rem (14px)`, `color: #8B7A93`
+- **强调文字:** 使用渐变色文字 `background-clip: text` (粉紫渐变) 或添加微弱的 `text-shadow` (粉色光晕)。
+
+---
+
+### 4. 间距与布局
+- **基准网格:** `8px` 系统。所有间距应为 8 的倍数 (8, 16, 24, 32, 48, 64)。
+- **布局:**
+    - **最大宽度:** `1200px` (内容居中，两侧留白营造呼吸感)。
+    - **卡片内边距:** `p-8 (32px)` 或 `p-6 (24px)`。
+    - **组件间距:** `gap-6 (24px)` 或 `gap-8 (32px)`。
+
+---
+
+### 5. 形状与边框
+- **圆角 (Border Radius):** 整体偏向圆润，但不完全是圆角。
+    - `Small (Buttons/Inputs)`: `12px` (Tailwind: `rounded-xl`)
+    - `Medium (Cards)`: `20px` (Tailwind: `rounded-[20px]`)
+    - `Large (Modals/Special Blocks)`: `32px` (Tailwind: `rounded-[32px]`)
+    - `Full (Tags/Avatars)`: `9999px` (Tailwind: `rounded-full`)
+- **边框:**
+    - 宽度: `1px` 或 `2px`。
+    - 样式: 实线，颜色为半透明紫色。
+    - 分割线: `1px solid rgba(216, 180, 226, 0.3)`。
+
+---
+
+### 6. 阴影与层级
+这是营造“梦幻感”的关键。不要使用生硬的黑阴影，使用**彩色弥散阴影**。
+
+- **Shadow Sm (Hover/Small):**
+    - `0 4px 12px rgba(255, 183, 197, 0.2)` (粉色微光)
+- **Shadow Md (Card/Floating):**
+    - `0 10px 30px -5px rgba(180, 140, 220, 0.25)` (紫色柔光)
+- **Shadow LG (Modal/Important):**
+    - `0 20px 50px -10px rgba(100, 80, 150, 0.3)` (深色光晕)
+- **Glow Effect (特殊光效):**
+    - `box-shadow: 0 0 20px 5px rgba(255, 255, 255, 0.6), 0 0 40px 10px rgba(255, 183, 197, 0.3)` (模拟左侧强光)
+
+---
+
+### 7. 质感与纹理
+- **毛玻璃 (Glassmorphism):**
+    - 核心 CSS: `background: rgba(255, 255, 255, 0.4); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.5);`
+- **光晕背景 (Diffuse Background):**
+    - 使用绝对定位的 `div`，设置高斯模糊 `filter: blur(80px)`，配合径向渐变 `radial-gradient`，放置在背景层，模拟图片中的光柱。
+- **纹理:**
+    - 可以叠加一层极淡的噪点 `opacity: 0.03` 增加质感，或者使用花瓣形状的 SVG 背景图案。
+- **图标风格:**
+    - 线性图标 (Outline)，描边宽度 `1.5px`，端点圆角 `stroke-linecap="round"`，颜色为深紫色或渐变色。
+
+---
+
+### 8. 动效与交互
+- **过渡 (Transition):**
+    - 时间: `0.4s` 或 `0.6s` (比普通网页慢，体现优雅)。
+    - 函数: `cubic-bezier(0.4, 0, 0.2, 1)` (Ease-in-out)。
+- **悬停 (Hover):**
+    - **按钮:** 背景色变深，阴影扩大 (Glow 增强)，轻微上浮 `transform: translateY(-2px)`。
+    - **卡片:** 边框变亮，内部光效流动。
+- **点击 (Active):**
+    - 轻微缩放 `scale(0.98)`。
+- **加载态:**
+    - 使用旋转的花瓣或闪烁的光点，而不是传统的 Loading Spinner。
+- **微交互:**
+    - 鼠标移动时，背景的光晕可以跟随鼠标轻微移动 (Parallax)。
+
+---
+
+### 9. 组件风格示例
+
+#### 按钮 (Button)
+- **Primary:**
+    - 背景: 粉紫渐变 `linear-gradient(135deg, #FFB7C5, #D8B4E2)`
+    - 文字: 白色，加粗。
+    - 阴影: `0 4px 15px rgba(255, 183, 197, 0.4)`
+    - 圆角: `12px`
+- **Secondary (Ghost):**
+    - 背景: 透明。
+    - 边框: `1px solid #D8B4E2`。
+    - 文字: `#5E4B66`。
+    - Hover: 背景变为 `rgba(216, 180, 226, 0.1)`。
+
+#### 输入框 (Input)
+- 背景: `rgba(255, 255, 255, 0.5)`。
+- 边框: `1px solid rgba(216, 180, 226, 0.3)`。
+- Focus: 边框变为 `#FFB7C5`，阴影 `0 0 0 4px rgba(255, 183, 197, 0.2)`。
+- 圆角: `12px`。
+
+#### 卡片 (Card)
+- 背景: `rgba(255, 255, 255, 0.6)` (Glassmorphism)。
+- 边框: `1px solid rgba(255, 255, 255, 0.8)` (模拟玻璃边缘高光)。
+- 阴影: `0 8px 32px rgba(180, 140, 220, 0.15)`。
+- 圆角: `24px`。
+
+#### 导航栏 (Navbar)
+- 位置: 顶部固定或悬浮。
+- 背景: 高斯模糊 `backdrop-filter: blur(20px)`，背景色 `rgba(255, 245, 248, 0.8)`。
+- 激活态: 文字下方有一个淡粉色的光点或短横线。
+
+#### 模态框 (Modal)
+- 遮罩: `rgba(94, 75, 102, 0.4)` (深紫半透明) + `backdrop-filter: blur(4px)`。
+- 内容区: 白色/淡粉玻璃态，大圆角 `32px`，边缘有柔和的粉色光晕。
+
+---
+
+### 10. 前端实现速查 (Tailwind / CSS 变量)
+
+```css
+/* :root 变量定义 */
+:root {
+  /* Colors */
+  --color-primary: #FFB7C5;
+  --color-primary-dark: #FF9EBB;
+  --color-secondary: #D8B4E2;
+  --color-accent: #A2C4E6;
+  --color-bg-base: #FFF5F8;
+  --color-text-main: #5E4B66;
+  --color-text-sub: #8B7A93;
+  
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #FFB7C5 0%, #D8B4E2 100%);
+  --gradient-bg: linear-gradient(135deg, #FFF0F5 0%, #F0F4FF 100%);
+  
+  /* Glassmorphism */
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-border: 1px solid rgba(255, 255, 255, 0.8);
+  --glass-shadow: 0 8px 32px rgba(180, 140, 220, 0.15);
+  --backdrop-blur: blur(12px);
+  
+  /* Typography */
+  --font-serif: 'Noto Serif SC', 'Playfair Display', serif;
+  --font-sans: 'Quicksand', sans-serif;
+  
+  /* Radius */
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 32px;
+  --radius-full: 9999px;
+  
+  /* Shadows (Glow) */
+  --shadow-glow-pink: 0 0 20px rgba(255, 183, 197, 0.4);
+  --shadow-glow-purple: 0 10px 30px rgba(180, 140, 220, 0.25);
+}
+
+/* Tailwind 配置建议 */
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        primary: { DEFAULT: '#FFB7C5', dark: '#FF9EBB' },
+        secondary: { DEFAULT: '#D8B4E2' },
+        accent: '#A2C4E6',
+        surface: 'rgba(255, 255, 255, 0.6)',
+        text: { main: '#5E4B66', sub: '#8B7A93' }
+      },
+      fontFamily: {
+        serif: ['"Noto Serif SC"', '"Playfair Display"', 'serif'],
+        sans: ['"Quicksand"', 'sans-serif']
+      },
+      borderRadius: {
+        'xl': '12px',
+        '2xl': '20px',
+        '3xl': '32px',
+      },
+      boxShadow: {
+        'glow': '0 0 20px rgba(255, 183, 197, 0.4)',
+        'soft': '0 10px 30px rgba(180, 140, 220, 0.25)',
+        'glass': '0 8px 32px rgba(180, 140, 220, 0.15)',
+      },
+      backdropBlur: {
+        'xs': '2px',
+        'glass': '12px',
+      }
+    }
+  }
+}
+🔒 Agent 强制实现检查点（必须严格遵守）
+以下规则是为了保证最终成品能够 100% 还原图片的梦幻质感，在生成代码时必须全部实现，不可遗漏：
+
+毛玻璃卡片必须同时包含以下三项，缺一不可：
+
+css
+background: rgba(255, 255, 255, 0.6);
+backdrop-filter: blur(12px);
+border: 1px solid rgba(255, 255, 255, 0.8);
+任何卡片如果只写了背景透明度而没有 backdrop-filter，视为不合格。
+
+渐变文字必须使用：
+
+css
+background: var(--gradient-primary);
+-webkit-background-clip: text;
+-webkit-text-fill-color: transparent;
+color: transparent; /* 兼容非 webkit 浏览器 */
+全局禁止使用纯黑色 #000 或纯白色 #FFF：
+文字主色必须使用 #5E4B66，背景主色必须使用 #FFF5F8，白色卡片背景使用 rgba(255, 255, 255, 0.6)。
+
+所有阴影必须是彩色弥散阴影（粉/紫色系），严禁出现 rgba(0,0,0, ...)：
+任何 box-shadow 必须使用预设的粉色或紫色系变量。
+
+页面必须叠加一层弥散光氛围背景（模拟图片中的光柱）：
+在背景层放置一个绝对定位的 div，具体 CSS：
+
+css
+position: absolute;
+top: -10%;
+left: -10%;
+width: 600px;
+height: 600px;
+background: radial-gradient(circle, #FFB7C5, transparent 70%);
+filter: blur(120px);
+opacity: 0.4;
+z-index: 0;
+pointer-events: none;
+可复制多份放在页面不同角落（调整位置和颜色，如用冰蓝 #A2C4E6）。
+
+动效时长必须设置为 0.4s ~ 0.6s，缓动函数使用 cubic-bezier(0.4, 0, 0.2, 1)，禁止使用默认的 ease。
+
+所有组件圆角严格按照规范：按钮/输入框 12px，卡片 20px，模态框 32px，不得混乱。
+
+执行建议
+请基于以上所有章节和第 11 节的强制检查点，生成一个完整的、可直接运行的前端页面（或组件库）。任何一条检查点未能实现，都视为未完成该风格。

@@ -20,44 +20,41 @@ export const AuditPanel: React.FC = () => {
         : '/api/audit/logs?limit=30';
       const res = await fetch(url);
       const data = await res.json();
-      setLogs(data);
-    } catch {}
+      setLogs(Array.isArray(data) ? data : []);
+    } catch { setLogs([]); }
   };
 
   useEffect(() => { fetchLogs(); }, [filter]);
 
   const severityColor = (s: string) => {
-    if (s === 'warning') return '#f0a020';
-    if (s === 'error') return '#d04040';
-    return '#888';
+    if (s === 'warning') return '#d08020';
+    if (s === 'error') return '#c04040';
+    return 'var(--color-text-dim)';
   };
 
   const typeLabel = (t: string) => {
     const map: Record<string, string> = {
-      prompt_injection_detected: '提示注入',
-      personality_drift_warning: '人设漂移告警',
-      safe_mode_entered: '进入安全模式',
-      safe_mode_exited: '退出安全模式',
-      tool_executed: '工具执行',
-      tool_blocked: '工具拦截',
-      rate_limited: '频率限制',
-      emergency_stop: '紧急熔断',
-      config_changed: '配置变更',
-      forgotten: '数据删除',
-      personality_check: '人设自检',
+      prompt_injection_detected: '提示注入', personality_drift_warning: '人设漂移告警',
+      safe_mode_entered: '进入安全模式', safe_mode_exited: '退出安全模式',
+      tool_executed: '工具执行', tool_blocked: '工具拦截',
+      rate_limited: '频率限制', emergency_stop: '紧急熔断',
+      config_changed: '配置变更', forgotten: '数据删除', personality_check: '人设自检',
     };
     return map[t] || t;
   };
 
   return (
-    <div style={{ padding: 16, overflowY: 'auto', height: '100%' }}>
-      <h3 style={{ color: '#f0c0d0', marginBottom: 12 }}>审计日志</h3>
+    <div>
+      <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 10, color: 'var(--color-text)' }}>
+        审计日志
+      </h3>
       <select
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         style={{
-          background: '#1a1a2e', color: '#ccc', border: '1px solid #333',
-          padding: '4px 8px', borderRadius: 4, marginBottom: 12,
+          background: 'var(--glass-bg)', border: '1px solid rgba(200, 180, 210, 0.3)',
+          padding: '6px 10px', borderRadius: 8, marginBottom: 12,
+          color: 'var(--color-text)', fontSize: 13, outline: 'none',
         }}
       >
         <option value="">全部类型</option>
@@ -70,29 +67,27 @@ export const AuditPanel: React.FC = () => {
       </select>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {logs.map((log) => (
-          <div
-            key={log.id}
-            style={{
-              background: '#15152a', borderRadius: 6, padding: '10px 14px',
-              borderLeft: `3px solid ${severityColor(log.severity)}`,
-              fontSize: 13,
-            }}
-          >
+          <div key={log.id} style={{
+            background: 'rgba(255, 255, 255, 0.4)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 13,
+            border: '1px solid rgba(200, 180, 210, 0.2)',
+            borderLeft: `3px solid ${severityColor(log.severity)}`,
+          }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: severityColor(log.severity) }}>
+              <span style={{ color: severityColor(log.severity), fontWeight: 500 }}>
                 {typeLabel(log.event_type)}
               </span>
-              <span style={{ color: '#666', fontSize: 11 }}>
+              <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>
                 {new Date(log.timestamp * 1000).toLocaleString('zh-CN')}
               </span>
             </div>
             {log.detail && (
-              <div style={{ color: '#999', marginTop: 4 }}>{log.detail}</div>
+              <div style={{ color: 'var(--color-text-dim)', marginTop: 4 }}>{log.detail}</div>
             )}
           </div>
         ))}
         {logs.length === 0 && (
-          <div style={{ color: '#666', textAlign: 'center', padding: 24 }}>
+          <div style={{ color: 'var(--color-text-muted)', textAlign: 'center', padding: 24, fontSize: 13 }}>
             暂无审计记录
           </div>
         )}

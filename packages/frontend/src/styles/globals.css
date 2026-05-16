@@ -1,29 +1,28 @@
+/* FILE: src/styles/globals.css */
 @import './theme.css';
 
+/* ── Reset ── */
 *,
 *::before,
-*::after { margin: 0; padding: 0; box-sizing: border-box; }
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--color-bg-base);
-  color: var(--color-text-main);
-  font-family: var(--font-sans);
-  font-size: 16px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
 }
 
-/* ═══════════════════════════════════════════════════════
-   弥散光氛围背景层（强制检查点 5）
-   ═══════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════
+   弥散光氛围层 · 强制检查点 5
+   radial-gradient + blur 120px
+   ══════════════════════════════════════════════ */
 .atmosphere {
   position: fixed;
-  top: 0; left: 0;
-  width: 100vw;
-  height: 100vh;
+  inset: 0;
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
@@ -37,218 +36,95 @@ html, body, #root {
 }
 
 .atmosphere-orb--pink {
-  top: -15%; left: -10%;
-  width: 600px; height: 600px;
-  background: radial-gradient(circle, var(--color-primary), transparent 70%);
+  top: -15%;
+  left: -10%;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, var(--color-pink), transparent 70%);
 }
 
 .atmosphere-orb--purple {
-  bottom: -20%; right: -10%;
-  width: 500px; height: 500px;
-  background: radial-gradient(circle, var(--color-secondary), transparent 70%);
+  bottom: -20%;
+  right: -10%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, var(--color-purple), transparent 70%);
 }
 
-.atmosphere-orb--blue {
-  top: 40%; right: -5%;
-  width: 350px; height: 350px;
-  background: radial-gradient(circle, var(--color-accent), transparent 70%);
-  opacity: 0.2;
+.atmosphere-orb--rose {
+  top: 40%;
+  left: 50%;
+  width: 350px;
+  height: 350px;
+  background: radial-gradient(circle, var(--color-rose), transparent 70%);
+  opacity: 0.25;
 }
 
-/* ═══════════════════════════════════════════════════════
-   主布局
-   ═══════════════════════════════════════════════════════ */
-.app-shell {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
+/* ══════════════════════════════════════════════
+   动画 · 强制检查点 6
+   ══════════════════════════════════════════════ */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.main-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  min-width: 0;
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
-/* ═══════════════════════════════════════════════════════
-   侧栏
-   ═══════════════════════════════════════════════════════ */
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 24px;
-  gap: 4px;
-  background: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-right: 1px solid rgba(216, 180, 226, 0.3);
-  transition: width var(--dur-normal) var(--ease-soft);
-  overflow: hidden;
-  flex-shrink: 0;
-  z-index: 2;
+@keyframes slideOutRight {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
 }
 
-.sidebar-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: calc(100% - 8px);
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-sub);
-  font-size: 14px;
-  font-weight: 500;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--dur-normal) var(--ease-soft);
-  white-space: nowrap;
-  position: relative;
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 16px var(--color-pink-glow);
+  }
+  50% {
+    box-shadow: 0 0 36px var(--color-purple-glow);
+  }
 }
 
-.sidebar-item:hover {
-  background: rgba(216, 180, 226, 0.15);
-  color: var(--color-text-main);
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
-.sidebar-item--active {
-  color: var(--color-primary-dark);
-  background: rgba(255, 183, 197, 0.15);
-}
-
-.sidebar-item--active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 60%;
-  background: var(--gradient-primary);
-  border-radius: 0 3px 3px 0;
-}
-
-.sidebar-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-  flex-shrink: 0;
-}
-
-/* ═══════════════════════════════════════════════════════
-   对话区
-   ═══════════════════════════════════════════════════════ */
-.chat-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 32px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.chat-message-row {
-  display: flex;
-  animation: bubbleIn var(--dur-normal) var(--ease-soft);
-}
-
-.chat-message-row--xilian { justify-content: flex-start; }
-.chat-message-row--partner { justify-content: flex-end; }
-
-/* 输入区 */
-.chat-input-bar {
-  padding: 16px 24px 24px;
-  background: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(216, 180, 226, 0.2);
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.chat-input {
-  flex: 1;
-  padding: 12px 18px;
-  border: 1px solid rgba(216, 180, 226, 0.3);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--color-text-main);
-  font-size: 15px;
-  outline: none;
-  transition: all var(--dur-normal) var(--ease-soft);
-}
-
-.chat-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 4px rgba(255, 183, 197, 0.12);
-}
-
-.chat-input::placeholder {
-  color: var(--color-text-dim);
-}
-
-.chat-send-btn {
-  background: var(--gradient-primary);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  width: 42px; height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all var(--dur-normal) var(--ease-soft);
-  flex-shrink: 0;
-}
-
-.chat-send-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-glow);
-}
-
-/* ═══════════════════════════════════════════════════════
-   面板区
-   ═══════════════════════════════════════════════════════ */
-.panel-back-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 24px;
-  border: none;
-  background: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(8px);
-  color: var(--color-text-sub);
-  font-size: 14px;
-  cursor: pointer;
-  border-bottom: 1px solid rgba(216, 180, 226, 0.2);
-  transition: color var(--dur-normal) var(--ease-soft);
-}
-.panel-back-btn:hover { color: var(--color-primary-dark); }
-
-/* ═══════════════════════════════════════════════════════
-   7c 阶段动画保留
-   ═══════════════════════════════════════════════════════ */
 @keyframes xilian-thinking {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.03); opacity: 0.85; }
 }
+
+/* ── 工具类 ── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
 .xilian-thinking {
-  animation: xilian-thinking 1.5s ease-in-out;
-  animation-iteration-count: 2;
+  animation: xilian-thinking 1.5s ease-in-out 2;
 }

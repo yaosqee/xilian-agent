@@ -150,3 +150,24 @@ export async function updateAutonomySettings(patch: Record<string, any>): Promis
   });
   return res.json();
 }
+
+/** 获取当前背景图片 URL */
+export async function fetchBackground(): Promise<{ filename: string; url: string }> {
+  const res = await fetch(`${BASE}/background/current`);
+  if (!res.ok) return { filename: 'xilian.png', url: '/photo/xilian.png' };
+  return res.json();
+}
+
+/** 上传自定义背景图片 */
+export async function uploadBackground(file: File): Promise<{ filename: string; url: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/background/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}

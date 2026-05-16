@@ -2,27 +2,29 @@
 /* ── 昔涟 浅色梦幻风 CSS 变量 ── */
 
 :root {
-  /* ════ 色彩 · 禁止纯黑#000/纯白#FFF ════ */
+  /* ════ 色彩 · 对齐 fengge.txt 色板 · 禁止纯黑#000/纯白#FFF ════ */
   --color-bg: #FFF5F8;
   --color-bg-alt: #FFECF0;
   --color-surface: #FFF9FB;
 
   --color-text: #5E4B66;
-  --color-text-dim: #8E7B96;
-  --color-text-muted: #BAA8C4;
+  --color-text-dim: #8B7A93;
+  --color-text-muted: #C4B5CF;
 
-  --color-pink: #E0A0B8;
-  --color-pink-light: #FCE4EC;
-  --color-pink-dark: #C4708A;
-  --color-pink-glow: rgba(224, 160, 184, 0.28);
+  --color-pink: #FFB7C5;
+  --color-pink-light: #FFD0DA;
+  --color-pink-dark: #FF9EBB;
+  --color-pink-glow: rgba(255, 183, 197, 0.28);
 
-  --color-purple: #B4A0D0;
-  --color-purple-light: #EDE7F6;
-  --color-purple-dark: #8E78B0;
-  --color-purple-glow: rgba(180, 160, 208, 0.28);
+  --color-purple: #D8B4E2;
+  --color-purple-light: #EDE4F3;
+  --color-purple-dark: #BFA2DB;
+  --color-purple-glow: rgba(216, 180, 226, 0.28);
 
-  --color-rose: #F0C8D4;
-  --color-lavender: #D8CCE8;
+  --color-rose: #FFCCD9;
+  --color-ice: #A2C4E6;
+  --color-ice-dark: #6C8EBF;
+  --color-lavender: #E8DCF0;
 
   /* ════ 毛玻璃 ════ */
   --glass-bg: rgba(255, 255, 255, 0.6);
@@ -32,14 +34,14 @@
   --glass-blur: blur(12px);
   --glass-blur-strong: blur(20px);
 
-  /* ════ 弥散阴影 · 仅粉/紫色，禁止 rgba(0,0,0) ════ */
-  --shadow-xs: 0 1px 3px rgba(200, 160, 180, 0.15);
-  --shadow-sm: 0 2px 8px rgba(200, 160, 190, 0.18);
-  --shadow-md: 0 4px 16px rgba(200, 160, 190, 0.2);
-  --shadow-lg: 0 8px 32px rgba(200, 160, 190, 0.22);
-  --shadow-xl: 0 12px 48px rgba(190, 150, 190, 0.25);
-  --shadow-glow-pink: 0 0 40px rgba(224, 160, 184, 0.2);
-  --shadow-glow-purple: 0 0 40px rgba(180, 160, 208, 0.2);
+  /* ════ 弥散阴影 · fengge.txt 彩色影 · 仅粉/紫色，禁止 rgba(0,0,0) ════ */
+  --shadow-xs: 0 2px 6px rgba(255, 183, 197, 0.15);
+  --shadow-sm: 0 4px 12px rgba(255, 183, 197, 0.2);
+  --shadow-md: 0 10px 30px -5px rgba(180, 140, 220, 0.25);
+  --shadow-lg: 0 16px 40px -8px rgba(160, 120, 200, 0.25);
+  --shadow-xl: 0 20px 50px -10px rgba(100, 80, 150, 0.3);
+  --shadow-glow-pink: 0 0 20px rgba(255, 183, 197, 0.4);
+  --shadow-glow-purple: 0 0 40px rgba(180, 140, 220, 0.25);
 
   /* ════ 圆角 ════ */
   --radius-btn: 12px;
@@ -54,9 +56,9 @@
   --duration-normal: 0.4s;
   --duration-slow: 0.6s;
 
-  /* ════ 字体 ════ */
-  --font-sans: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
-  --font-serif: 'Noto Serif SC', Georgia, serif;
+  /* ════ 字体 · fengge.txt 推荐衬线体 + 圆润无衬线 ════ */
+  --font-sans: 'Quicksand', 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Noto Serif SC', 'Playfair Display', Georgia, serif;
 
   /* ════ 布局 ════ */
   --sidebar-collapsed: 40px;

@@ -411,6 +411,55 @@ class HTTPChannel(Channel):
             ok = nudge._nudge_engine.ack_greeting(greeting_id)
             return {"status": "ok" if ok else "id_mismatch"}
 
+    # ── 背景图片 API ──
+
+    def _register_background_routes(self):
+        """注册背景图片 API 端点。"""
+        import json
+        import uuid
+        from pathlib import Path
+        from fastapi import UploadFile, File
+
+        photo_dir = Path(__file__).resolve().parent.parent.parent / "photo"
+        config_path = photo_dir / "background_config.json"
+
+        def _read_config():
+            if config_path.exists():
+                try:
+                    return json.loads(config_path.read_text())
+                except Exception:
+                    pass
+            return {"active": "xilian.png"}
+
+        def _write_config(cfg: dict):
+            config_path.write_text(json.dumps(cfg, ensure_ascii=False))
+
+        @self.app.get("/api/background/current")
+        async def background_current():
+            cfg = _read_config()
+            active = cfg.get("active", "xilian.png")
+            return {"filename": active, "url": f"/photo/{active}"}
+
+        @self.app.post("/api/background/upload")
+        async def background_upload(file: UploadFile = File(...)):
+            if not file.content_type or not file.content_type.startswith("image/"):
+                return {"error": "仅支持图片文件"}
+            # 限制 10MB
+            contents = await file.read()
+            if len(contents) > 10 * 1024 * 1024:
+                return {"error": "图片大小不能超过 10MB"}
+            # 保留扩展名
+            ext = Path(file.filename).suffix if file.filename else ".png"
+            if ext.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                ext = ".png"
+            filename = f"custom_{uuid.uuid4().hex[:8]}{ext}"
+            save_path = photo_dir / filename
+            save_path.write_bytes(contents)
+            # 设为活跃背景
+            _write_config({"active": filename})
+            logger.info("background.uploaded", filename=filename)
+            return {"filename": filename, "url": f"/photo/{filename}"}
+
     # ── 阶段 7b: Notebook API ──
 
     def _register_notebook_routes(self):
@@ -538,6 +587,9 @@ class HTTPChannel(Channel):
     async def start(self, handler: EventHandler) -> None:
         """启动 HTTP 服务器"""
         self._handler = handler
+
+        # 背景图片 API
+        self._register_background_routes()
 
         # 阶段 7b: 注册 Notebook API
         if self._agent and self._agent.notebook_manager:

@@ -1,8 +1,5 @@
 /**
  * MemoryTimeline — 情景记忆时间线
- *
- * 阶段 5 新增。纵向时间线布局，展示昔涟记住的片段。
- * 轮询 GET /api/memories/recent
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchMemoriesRecent } from '../../services/api';
@@ -50,8 +47,8 @@ export const MemoryTimeline: React.FC = () => {
   if (memories.length === 0) {
     return (
       <div>
-        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>📖 记忆碎片</h3>
-        <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: 40 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>记忆碎片</h3>
+        <p style={{ fontSize: 13, color: 'var(--color-text-muted)', textAlign: 'center', padding: 40 }}>
           还没有记忆呢<br />多聊几句，昔涟就会记住啦~
         </p>
       </div>
@@ -60,8 +57,8 @@ export const MemoryTimeline: React.FC = () => {
 
   return (
     <div>
-      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>📖 记忆碎片</h3>
-      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>记忆碎片</h3>
+      <p style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 16 }}>
         {memories.length} 段记忆
       </p>
 
@@ -74,16 +71,16 @@ export const MemoryTimeline: React.FC = () => {
               padding: '12px 12px 12px 20px',
               marginBottom: 6,
               borderRadius: 10,
-              background: 'rgba(255,179,179,0.04)',
-              borderLeft: i === 0 ? '2px solid #FFB3B3' : '1px solid rgba(255,255,255,0.06)',
-              transition: 'all 0.2s',
+              background: 'rgba(255, 183, 197, 0.06)',
+              borderLeft: i === 0 ? '2px solid var(--color-pink)' : '1px solid rgba(200, 180, 210, 0.15)',
+              transition: 'all var(--duration-normal) var(--ease-spring)',
             }}
           >
-            <p style={{ fontSize: 13, margin: '0 0 4px', lineHeight: 1.5, color: 'rgba(255,255,255,0.8)' }}>
+            <p style={{ fontSize: 13, margin: '0 0 4px', lineHeight: 1.5, color: 'var(--color-text)' }}>
               {m.summary.length > 100 ? m.summary.slice(0, 100) + '...' : m.summary}
             </p>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+              <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
                 {timeAgo(m.timestamp)}
               </span>
               <span style={{ fontSize: 11 }}>
