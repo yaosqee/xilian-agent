@@ -25,67 +25,28 @@ export const ChatInput: React.FC<Props> = ({ onSend, disabled }) => {
   };
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '16px 24px',
-        borderTop: '1px solid rgba(255,255,255,0.06)',
-      }}
-    >
+    <div className="chat-input-bar">
       <input
         ref={inputRef}
+        className="chat-input"
         type="text"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={disabled ? '昔涟正在整理记忆…' : '和昔涟说说话吧…'}
+        placeholder={disabled ? '昔涟正在整理记忆…' : '跟伙伴说点什么吧…'}
         disabled={disabled}
         autoFocus
-        style={{
-          flex: 1,
-          padding: '12px 18px',
-          borderRadius: 24,
-          border: '1px solid rgba(255,255,255,0.1)',
-          background: 'rgba(255,255,255,0.04)',
-          color: '#e0e0e0',
-          fontSize: 15,
-          outline: 'none',
-          transition: 'border-color 200ms',
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = 'rgba(100,140,220,0.4)';
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-        }}
       />
       <button
+        className="chat-send-btn"
         onClick={handleSend}
         disabled={disabled || !text.trim()}
         style={{
-          width: 44,
-          height: 44,
-          borderRadius: '50%',
-          border: 'none',
-          background:
-            disabled || !text.trim()
-              ? 'rgba(255,255,255,0.06)'
-              : 'rgba(100,140,220,0.3)',
-          color:
-            disabled || !text.trim()
-              ? 'rgba(255,255,255,0.25)'
-              : '#fff',
-          fontSize: 20,
+          opacity: disabled || !text.trim() ? 0.4 : 1,
           cursor: disabled || !text.trim() ? 'default' : 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'background 200ms, color 200ms',
         }}
       >
-        ✦
+        ↑
       </button>
     </div>
   );

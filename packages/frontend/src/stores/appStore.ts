@@ -1,20 +1,21 @@
 import { create } from 'zustand';
 
-export type PanelType = 'emotion' | 'memory' | 'memories' | 'autobiography' | 'settings' | null;
+export type PanelType = 'emotion' | 'memory' | 'notebook' | 'audit' | 'settings' | null;
 
 interface AppState {
   activePanel: PanelType;
-  iconExpanded: boolean;
+  sidebarExpanded: boolean;
+  sidebarLocked: boolean;
   setActivePanel: (panel: PanelType) => void;
-  togglePanel: (panel: PanelType) => void;
-  setIconExpanded: (expanded: boolean) => void;
+  setSidebarExpanded: (expanded: boolean) => void;
+  setSidebarLocked: (locked: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   activePanel: null,
-  iconExpanded: false,
+  sidebarExpanded: false,
+  sidebarLocked: false,
   setActivePanel: (panel) => set({ activePanel: panel }),
-  togglePanel: (panel) =>
-    set((s) => ({ activePanel: s.activePanel === panel ? null : panel })),
-  setIconExpanded: (expanded) => set({ iconExpanded: expanded }),
+  setSidebarExpanded: (expanded) => set({ sidebarExpanded: expanded }),
+  setSidebarLocked: (locked) => set({ sidebarLocked: locked }),
 }));

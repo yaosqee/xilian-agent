@@ -1,69 +1,120 @@
-/**
- * 昔涟品牌视觉系统 — V3.3
- *
- * 樱花粉 #FFB3B3 色系 · 圆角气泡 · 水波纹过渡
- * 在全局 CSS 或组件中引入此文件即可覆盖默认样式。
- */
+/* FILE: src/styles/theme.css */
+/* ── 昔涟 浅色梦幻风 CSS 变量 ── */
+
 :root {
-  --xilian-pink:        #FFB3B3;
-  --xilian-pink-dark:   #FF6B9D;
-  --xilian-pink-light:  #FFE0E0;
-  --xilian-bg:          #1A1218;
-  --xilian-card:        rgba(255,179,179,0.06);
-  --xilian-card-hover:  rgba(255,179,179,0.10);
-  --xilian-text:        rgba(255,255,255,0.85);
-  --xilian-text-dim:    rgba(255,255,255,0.4);
-  --xilian-border:      rgba(255,255,255,0.06);
+  /* ════ 色彩 · 禁止纯黑#000/纯白#FFF ════ */
+  --color-bg: #FFF5F8;
+  --color-bg-alt: #FFECF0;
+  --color-surface: #FFF9FB;
+
+  --color-text: #5E4B66;
+  --color-text-dim: #8E7B96;
+  --color-text-muted: #BAA8C4;
+
+  --color-pink: #E0A0B8;
+  --color-pink-light: #FCE4EC;
+  --color-pink-dark: #C4708A;
+  --color-pink-glow: rgba(224, 160, 184, 0.28);
+
+  --color-purple: #B4A0D0;
+  --color-purple-light: #EDE7F6;
+  --color-purple-dark: #8E78B0;
+  --color-purple-glow: rgba(180, 160, 208, 0.28);
+
+  --color-rose: #F0C8D4;
+  --color-lavender: #D8CCE8;
+
+  /* ════ 毛玻璃 ════ */
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-bg-strong: rgba(255, 255, 255, 0.78);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.35);
+  --glass-border: rgba(255, 255, 255, 0.8);
+  --glass-blur: blur(12px);
+  --glass-blur-strong: blur(20px);
+
+  /* ════ 弥散阴影 · 仅粉/紫色，禁止 rgba(0,0,0) ════ */
+  --shadow-xs: 0 1px 3px rgba(200, 160, 180, 0.15);
+  --shadow-sm: 0 2px 8px rgba(200, 160, 190, 0.18);
+  --shadow-md: 0 4px 16px rgba(200, 160, 190, 0.2);
+  --shadow-lg: 0 8px 32px rgba(200, 160, 190, 0.22);
+  --shadow-xl: 0 12px 48px rgba(190, 150, 190, 0.25);
+  --shadow-glow-pink: 0 0 40px rgba(224, 160, 184, 0.2);
+  --shadow-glow-purple: 0 0 40px rgba(180, 160, 208, 0.2);
+
+  /* ════ 圆角 ════ */
+  --radius-btn: 12px;
+  --radius-card: 20px;
+  --radius-modal: 32px;
+  --radius-bubble: 18px;
+  --radius-full: 9999px;
+
+  /* ════ 动效 0.4-0.6s cubic-bezier(0.4, 0, 0.2, 1) ════ */
+  --ease-spring: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 0.2s;
+  --duration-normal: 0.4s;
+  --duration-slow: 0.6s;
+
+  /* ════ 字体 ════ */
+  --font-sans: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Noto Serif SC', Georgia, serif;
+
+  /* ════ 布局 ════ */
+  --sidebar-collapsed: 40px;
+  --sidebar-expanded: 120px;
+  --panel-width: 360px;
 }
 
-/* 消息气泡 */
-.xilian-bubble {
-  border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+/* ── 毛玻璃卡片 · 强制检查点 1 ── */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
 }
 
-/* 卡片通用 */
-.xilian-card {
-  background: var(--xilian-card);
-  border-radius: 12px;
-  border: 1px solid var(--xilian-border);
+.glass-card-strong {
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
 }
 
-.xilian-card:hover {
-  background: var(--xilian-card-hover);
+/* ── 渐变文字 · 强制检查点 2 ── */
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-pink-dark), var(--color-purple-dark));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-/* 水波纹过渡 */
-.xilian-transition {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+/* ── body ── */
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Tab 按钮 */
-.xilian-tab {
-  border-radius: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-  border: none;
-  font-size: 13px;
-  background: transparent;
-  color: var(--xilian-text-dim);
-  transition: all 0.2s;
-}
-
-.xilian-tab.active {
-  background: rgba(255,179,179,0.15);
-  color: var(--xilian-pink);
-  font-weight: 600;
-}
-
-/* 滚动条（暗色主题） */
-::-webkit-scrollbar {
-  width: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* ── 滚动条 ── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.1);
-  border-radius: 2px;
+  background: rgba(200, 160, 190, 0.4);
+  border-radius: var(--radius-full);
 }
+::-webkit-scrollbar-thumb:hover { background: rgba(200, 160, 190, 0.6); }
+
+/* ── 选中 ── */
+::selection {
+  background: rgba(224, 160, 184, 0.25);
+  color: var(--color-text);
+}
+
+/* ── 焦点环 ── */
+*:focus-visible {
+  outline: 2px solid var(--color-pink);
+  outline-offset: 2px;
+}
+
+::placeholder { color: var(--color-text-muted); opacity: 1; }

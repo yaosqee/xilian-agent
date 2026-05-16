@@ -15,24 +15,17 @@ export const MessageList: React.FC<Props> = ({ messages }) => {
 
   if (messages.length === 0) {
     return (
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'rgba(255,255,255,0.2)',
-          fontSize: 18,
-          userSelect: 'none',
-        }}
-      >
-        <p>昔涟在这里，伙伴想说些什么呢？ ✨</p>
+      <div className="chat-messages" style={{
+        alignItems: 'center', justifyContent: 'center',
+        color: 'var(--color-text-dim)', fontSize: 18, userSelect: 'none',
+      }}>
+        <p>昔涟在这里，伙伴想说些什么呢？</p>
       </div>
     );
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+    <div className="chat-messages">
       {messages.map((msg) => (
         <MessageBubble key={msg.id} role={msg.role} content={msg.content} />
       ))}
