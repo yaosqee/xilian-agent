@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-16（阶段 7 完成）
+> 📅 最后更新：2026-05-16（阶段 8 完成，进入打磨期）
 
 ---
 
@@ -17,14 +17,14 @@ xilian-v3/
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
 │   ├── model_router.py              # ModelRouter：纯云端路由核心（Pro双Key轮询 + Flash后台 + 工具降级）
-│   ├── database.py                  # DatabaseManager：SQLite（9张表完整CRUD + Alembic优先）
+│   ├── database.py                  # DatabaseManager：SQLite（10张表完整CRUD + Alembic优先）
 │   ├── vector_store.py              # VectorStore：sqlite-vec 向量检索（零外部依赖）
 │   ├── backup.py                    # BackupManager：每日备份 + 清理 + 恢复（阶段 3）
 │   ├── marker_parser.py             # MarkerParser：5种标记流式解析 + SSML接口（阶段7c）
 │   └── logging_config.py            # loguru 结构化日志配置
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
-│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder(XML) + Marker管道 + Notebook钩子 + coding_delegate
+│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder(XML) + Marker管道 + Notebook钩子 + coding_delegate + 人格评分
 │   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器注册表
 │   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook/Identity 5模块）
@@ -219,20 +219,17 @@ NudgeEngine 自主问候流程（阶段 6）：
 
 ---
 
-## 当前已知 TODO / 空壳
+## 当前已知 TODO
 
-| 位置 | 说明 | 填充阶段 |
-|------|------|---------|
-| `gateway/mcp/adapter.py` | 只有接口签名，空实现 | 阶段 8+ |
-| 二层安全防御 | 紧急熔断 + 提示注入检测 + 人设评分 | 阶段 8 |
-| Web 管理面板完善 | 记忆浏览器/技能管理器/审计日志 | 阶段 8 |
-| 系统托盘后台驻留 | Windows 托盘图标 + 后台服务 | 阶段 8 |
-| Notebook 面板前端 | 目前只有 API，前端面板简版 | 阶段 8 |
-| 多模态感知 | 图像理解 + 多模态情感分析 | 阶段 9 |
-| AgentVisor 语义防火墙 | 工具调用语义审核 | 阶段 9 |
-| 语音管道完整实现 | STT + TTS + SSML | 阶段 9 |
+| 位置 | 说明 |
+|------|------|
+| 阶段 7-8 新增模块 | 需补自动化测试（Notebook/AttentionScheduler/MarkerParser/coding_delegate/审计/安全模式） |
+| `packages/voice/` | 语音管道接口占位，阶段 9 完整实现 |
+| `gateway/mcp/adapter.py` | MCP 适配器接口签名预埋 |
+| `markers_to_ssml()` | SSML 转换完整实现 |
+| 前端面板集成 | SkillsPanel/AuditPanel/NotebookPanel 已写，待挂 App 导航 |
 
-## 下一步：阶段 7
+## 下一步
 
-安全纵深防御 + Web 管理面板 + 系统托盘：二层防御（提示注入+人设评分）、记忆浏览器、技能管理、审计日志、Windows 托盘驻留。
-详细计划见 `/home/hezi/projects/xilian_plan/xilian-v3.md`
+打磨期 — 写 README 项目门面 + 补核心测试 + 前端面板集成 + 部署脚本更新。
+不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。

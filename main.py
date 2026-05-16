@@ -190,7 +190,62 @@ async def main():
             except Exception:
                 pass
 
-    # ── 5. 启动 ──
+    # ── 5. 阶段 8: 系统托盘（Windows only）──
+    tray_icon = None
+    if sys.platform == "win32":
+        try:
+            import pystray
+            from PIL import Image, ImageDraw
+
+            # 创建简单图标（16x16 樱花色圆点）
+            icon_img = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(icon_img)
+            draw.ellipse([4, 4, 28, 28], fill=(240, 180, 200, 255))
+
+            def on_open():
+                import webbrowser
+                webbrowser.open(f"http://{bind_host}:{http_port}")
+
+            def on_pause():
+                import urllib.request
+                try:
+                    urllib.request.urlopen(
+                        urllib.request.Request(
+                            f"http://{bind_host}:{http_port}/api/autonomy/pause",
+                            method="POST",
+                        )
+                    )
+                except Exception:
+                    pass
+
+            def on_exit(icon):
+                icon.stop()
+                asyncio.get_event_loop().call_soon_threadsafe(
+                    lambda: asyncio.ensure_future(shutdown_all())
+                )
+
+            menu = pystray.Menu(
+                pystray.MenuItem("打开昔涟", on_open, default=True),
+                pystray.MenuItem("暂停自主行为", on_pause),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("退出", on_exit),
+            )
+            tray_icon = pystray.Icon("xilian", icon_img, "昔涟", menu)
+            import threading
+            tray_thread = threading.Thread(target=tray_icon.run, daemon=True)
+            tray_thread.start()
+            logger.info("系统托盘已启动")
+        except ImportError:
+            logger.info("pystray 未安装，跳过系统托盘")
+
+    # ── 6. 启动 ──
+    async def shutdown_all():
+        scheduler.shutdown(wait=False)
+        await gateway.stop()
+        await agent.shutdown()
+        if tray_icon:
+            tray_icon.stop()
+
     try:
         await gateway.start()
     except KeyboardInterrupt:
@@ -198,7 +253,9 @@ async def main():
     finally:
         scheduler.shutdown(wait=False)
         await gateway.stop()
-        await agent.shutdown()  # 阶段 3: 记忆兜底 + DB 关闭
+        await agent.shutdown()
+        if tray_icon:
+            tray_icon.stop()
         logger.info("昔涟已休眠。晚安，伙伴 ♪")
 
 

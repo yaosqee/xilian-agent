@@ -464,6 +464,75 @@ class HTTPChannel(Channel):
             await agent.notebook_manager.cancel_task(task_id)
             return {"status": "ok"}
 
+    # ── 阶段 8: 审计 + 技能 + 安全状态 API ──
+
+    def _register_stage8_routes(self):
+        """注册阶段 8 管理面板 API 端点。"""
+        agent = self._agent
+
+        # ── 审计日志 ──
+        @self.app.get("/api/audit/logs")
+        async def audit_logs(
+            limit: int = 50, event_type: str | None = None,
+            severity: str | None = None,
+        ):
+            if not agent or not agent._db:
+                return []
+            return await agent._db.get_audit_logs(
+                limit=limit, event_type=event_type, severity=severity,
+            )
+
+        @self.app.get("/api/audit/stats")
+        async def audit_stats():
+            if not agent or not agent._db:
+                return {"total": 0, "by_type": {}}
+            return await agent._db.get_audit_stats()
+
+        # ── 技能管理 ──
+        @self.app.get("/api/skills")
+        async def skills_list():
+            if not agent or not hasattr(agent, '_skills_loader'):
+                return {"skills": {}}
+            from packages.agent.skills_loader import SkillsLoader
+            loader = SkillsLoader()
+            loader.load_all()
+            result = {}
+            for name, s in loader.skills.items():
+                result[name] = {
+                    "category": s.category,
+                    "description": s.description,
+                    "triggers": s.triggers,
+                    "safety": s.safety,
+                    "version": s.version,
+                }
+            return {"skills": result}
+
+        # ── 安全状态 ──
+        @self.app.get("/api/security/status")
+        async def security_status():
+            if not agent:
+                return {"error": "agent not available"}
+            return {
+                "safe_mode": agent.is_safe_mode,
+                "round_count": agent._round_count,
+            }
+
+        # ── 被遗忘权 ──
+        @self.app.post("/api/privacy/forget")
+        async def privacy_forget(request: Request):
+            """级联删除用户数据（需二次确认）。"""
+            if not agent or not agent._db:
+                return {"error": "agent not available"}
+            try:
+                body = await request.json()
+            except Exception:
+                return {"error": "invalid json"}
+            confirm = body.get("confirm", "")
+            if confirm != "我确认删除所有记忆":
+                return {"error": "请输入确认短语「我确认删除所有记忆」"}
+            result = await agent._db.forget_user_data()
+            return {"status": "ok", **result}
+
     # ── 启动/停止 ──
 
     async def start(self, handler: EventHandler) -> None:
@@ -473,6 +542,10 @@ class HTTPChannel(Channel):
         # 阶段 7b: 注册 Notebook API
         if self._agent and self._agent.notebook_manager:
             self._register_notebook_routes()
+
+        # 阶段 8: 注册审计 + 技能 + 安全状态 API
+        if self._agent and self._agent._db:
+            self._register_stage8_routes()
 
         config = uvicorn.Config(
             self.app,

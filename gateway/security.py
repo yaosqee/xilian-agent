@@ -4,9 +4,11 @@ SecurityFilter — 安全过滤层
 Gateway 第一道防线：
   · 主人白名单校验
   · 紧急熔断关键词
+  · 提示注入检测（阶段 8：正则初筛）
   · 消息长度限制
   · 频率限制（内存 Token Bucket）
 """
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -29,7 +31,7 @@ class SecurityFilter:
     Gateway 安全过滤层。
 
     阶段 1：硬编码白名单 + 简单频率限制
-    阶段 8：扩展为完整三层防御体系
+    阶段 8：扩展提示注入正则检测
     """
 
     # ── 紧急熔断关键词 ──
@@ -38,6 +40,17 @@ class SecurityFilter:
         "shutdown", "halt", "emergency_stop",
         "昔涟 停下", "昔涟 睡觉",
     }
+
+    # ── 阶段 8: 提示注入正则模式 ──
+    INJECTION_PATTERNS = [
+        re.compile(r"忽略.*(之前|上面|以上|一切|所有).*(指令|设定|提示|规则|约束)"),
+        re.compile(r"(你|妳)是.*(不是|不再是|不是).*(昔涟|xilian|小爪)"),
+        re.compile(r"从现在开始.*(扮演|假装|作为|变成)"),
+        re.compile(r"forget.*(instruction|prompt|rule|setting|memory)", re.I),
+        re.compile(r"system:\s*"),
+        re.compile(r"(假装|扮演|模拟).*(你|妳)是"),
+        re.compile(r"不要.*(自称|说).*(人家|伙伴)"),
+    ]
 
     # ── 常量 ──
     MAX_MESSAGE_LENGTH = 5000  # 单条消息最大字符数
@@ -79,6 +92,15 @@ class SecurityFilter:
                 )
                 return None
 
+        # 1b. 阶段 8: 提示注入正则初筛
+        if self._check_injection(event.payload):
+            logger.warning(
+                "security.injection_detected",
+                user_id=event.user_id,
+                preview=event.payload[:80],
+            )
+            return None
+
         # 2. 白名单校验
         if event.user_id != self.owner_id:
             logger.warning(
@@ -106,6 +128,13 @@ class SecurityFilter:
             return None
 
         return event
+
+    def _check_injection(self, payload: str) -> bool:
+        """阶段 8: 正则初筛 — 任何模式命中 → True（拒绝）。"""
+        for pattern in self.INJECTION_PATTERNS:
+            if pattern.search(payload):
+                return True
+        return False
 
     def _check_rate(self, user_id: str) -> bool:
         """Token Bucket 频率检查"""

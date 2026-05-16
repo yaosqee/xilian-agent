@@ -149,6 +149,21 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 );
 """
 
+# ── 阶段 8: 审计日志 ──
+
+_CREATE_AUDIT_LOGS = """
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp   REAL    NOT NULL,
+    event_type  TEXT    NOT NULL,
+    severity    TEXT    DEFAULT 'info',
+    source      TEXT    DEFAULT 'system',
+    detail      TEXT,
+    user_id     TEXT    DEFAULT 'hezi',
+    trace_id    TEXT
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -175,6 +190,9 @@ _CREATE_INDEXES_SQL = [
     # scheduled_tasks
     "CREATE INDEX IF NOT EXISTS idx_tasks_status ON scheduled_tasks(status, due_at);",
     "CREATE INDEX IF NOT EXISTS idx_tasks_due ON scheduled_tasks(due_at) WHERE status='pending';",
+    # audit_logs
+    "CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_logs(event_type, timestamp);",
 ]
 
 
@@ -224,13 +242,15 @@ class DatabaseManager:
     async def _try_alembic_migrate(self) -> bool:
         """尝试用 Alembic 迁移。成功返回 True，失败返回 False。"""
         try:
-            import subprocess
+            import subprocess, os as _os
             root = Path(__file__).resolve().parent.parent.parent
+            env = {**_os.environ, "SQLALCHEMY_URL": f"sqlite:///{self.db_path}"}
             result = subprocess.run(
                 ["uv", "run", "alembic", "upgrade", "head"],
                 cwd=str(root),
                 capture_output=True, text=True,
                 timeout=30,
+                env=env,
             )
             if result.returncode == 0:
                 logger.info("database.alembic_migrated")
@@ -252,6 +272,7 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_AUTONOMY_SETTINGS)
         await self._conn.execute(_CREATE_NOTEBOOK_ENTRIES)
         await self._conn.execute(_CREATE_SCHEDULED_TASKS)
+        await self._conn.execute(_CREATE_AUDIT_LOGS)
         for idx_sql in _CREATE_INDEXES_SQL:
             await self._conn.execute(idx_sql)
         await self._conn.commit()
@@ -1060,7 +1081,128 @@ class DatabaseManager:
         await self._conn.commit()
 
     # ============================================================
-    # 工具属性
+    # audit_logs CRUD（阶段 8 新增）
+    # ============================================================
+
+    async def insert_audit_log(
+        self, event_type: str, detail: str = "",
+        severity: str = "info", source: str = "system",
+        user_id: str = "hezi", trace_id: str = "",
+    ) -> int:
+        """写入一条审计日志。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            """INSERT INTO audit_logs
+               (timestamp, event_type, severity, source, detail, user_id, trace_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (time.time(), event_type, severity, source, detail, user_id, trace_id),
+        )
+        await self._conn.commit()
+        logger.debug("audit.logged", type=event_type, severity=severity)
+        return cursor.lastrowid
+
+    async def get_audit_logs(
+        self, limit: int = 50, event_type: str | None = None,
+        severity: str | None = None,
+    ) -> list[dict]:
+        """检索审计日志（按时间倒序）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        conditions = []
+        params: list = []
+        if event_type:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        if severity:
+            conditions.append("severity = ?")
+            params.append(severity)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        cursor = await self._conn.execute(
+            f"SELECT * FROM audit_logs{where} ORDER BY timestamp DESC LIMIT ?",
+            params + [limit],
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_audit_stats(self) -> dict:
+        """安全统计摘要。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT event_type, COUNT(*) as cnt FROM audit_logs "
+            "GROUP BY event_type ORDER BY cnt DESC"
+        )
+        rows = await cursor.fetchall()
+        return {
+            "total": sum(r[1] for r in rows),
+            "by_type": {r[0]: r[1] for r in rows},
+        }
+
+    # ============================================================
+    # 阶段 8: 被遗忘权 — 级联删除
+    # ============================================================
+
+    async def forget_user_data(self, user_id: str = "hezi") -> dict:
+        """
+        级联删除用户所有数据（SQL 事务内完成）。
+
+        删除顺序：
+          1. 收集 embedding_id → 删除 sqlite-vec 向量
+          2. 删除所有关联表中的数据
+          3. 记 audit_log
+
+        Returns:
+            {"deleted": {table: count}, "audit_id": int}
+        """
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        deleted = {}
+
+        # 1. 收集 embedding_id 列表（用于向量清理）
+        cursor = await self._conn.execute(
+            "SELECT embedding_id FROM episodic_memories "
+            "WHERE embedding_id IS NOT NULL"
+        )
+        embed_ids = [row[0] for row in await cursor.fetchall()]
+
+        # 2. 级联删除
+        tables = [
+            "conversation_logs", "episodic_memories", "message_queue",
+            "emotion_snapshots", "notebook_entries", "scheduled_tasks",
+        ]
+        for table in tables:
+            cursor = await self._conn.execute(
+                f"DELETE FROM {table}"
+            )
+            deleted[table] = cursor.rowcount
+
+        # 3. 清理向量存储
+        if embed_ids:
+            try:
+                import sqlite3 as _sync_sqlite
+                vec_conn = _sync_sqlite.connect(str(self.db_path))
+                for eid in embed_ids:
+                    vec_conn.execute(
+                        "DELETE FROM memories_vec WHERE rowid = ?", (eid,)
+                    )
+                vec_conn.commit()
+                vec_conn.close()
+                deleted["memories_vec"] = len(embed_ids)
+            except Exception as e:
+                logger.warning("forget.vec_cleanup_failed", error=str(e))
+
+        # 4. 记审计
+        await self._conn.commit()
+        await self.insert_audit_log(
+            "forgotten",
+            f"user={user_id} deleted={str(deleted)}",
+            severity="warning",
+        )
+
+        logger.info("privacy.forgotten", deleted=deleted)
+        return {"deleted": deleted}
     # ============================================================
 
     @property

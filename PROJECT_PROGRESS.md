@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-16 16:00 CST
-> 🔖 当前阶段：阶段 7 ✅ 完成 → 等待进入阶段 8
+> 📅 最后更新：2026-05-16 17:30 CST
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 项目进入打磨期
 
 ---
 
@@ -25,7 +25,8 @@
 | 阶段 5（自传体+前端全集成） | ✅ 完成 |
 | 阶段 6（自主生命节律+一键部署） | ✅ 完成 |
 | 阶段 7（内心世界+工具执行+表达管道） | ✅ 完成 |
-| 总进度 | 8/10 阶段 |
+| 阶段 8（安全纵深+管理面板+后台驻留） | ✅ 完成 |
+| 总进度 | 9/10 阶段（阶段9远期探索） |
 
 ---
 
@@ -145,6 +146,22 @@
 
 ---
 
+## 阶段 8 已完成的核心交付 🛡️ 安全纵深 + 管理面板 + 后台驻留
+
+| # | 交付物 | 文件 |
+|---|--------|------|
+| 一 | 提示注入检测（7 条正则初筛 + audit_log 记录） | `gateway/security.py` |
+| 二 | 人设一致性评分（每 5 轮 DS Pro 自检 + 安全回复模式） | `packages/agent/agent_core.py` |
+| 三 | 审计日志系统（audit_logs 表 + 8 种事件类型 + 检索 API） | `packages/shared/database.py` + Alembic 002 |
+| 四 | 工具权限分级（READ_ONLY / READ_WRITE / EXECUTE + safe_mode 禁用） | `packages/agent/tool_registry.py` |
+| 五 | Web 管理面板 API（audit/skills/security/privacy 7 个端点） | `gateway/channels/http_channel.py` |
+| 六 | 前端面板（SkillsPanel + AuditPanel + NotebookPanel） | `packages/frontend/src/components/panels/` |
+| 七 | 被遗忘权（SQL 事务级联删除 + 向量同步清理） | `packages/shared/database.py` |
+| 八 | 系统托盘驻留（pystray Windows 托盘 + 右键菜单） | `main.py` |
+| — | 测试：memory_integration 27/27 全绿 + 手动验证全部模块 | — |
+
+---
+
 ## 核心架构（V3.3 云端部署版）
 
 ```
@@ -152,7 +169,7 @@
     │
     ▼
 ┌──────────────┐
-│   Gateway    │  统一消息路由 + 主人校验 + 紧急熔断 + 频率限制
+│   Gateway    │  统一消息路由 + 主人校验 + 紧急熔断 + 提示注入检测(7正则) + 频率限制
 │  网关层      │  协议转换 → InternalEvent
 └──────┬───────┘
        │ InternalEvent（进程内异步，asyncio.Queue + SQLite 持久化）
@@ -173,8 +190,8 @@
 │ Storage       │  SQLite 单文件（含 sqlite-vec 向量扩展）
 │ 持久化层      │  表：conversation_logs / episodic_memories / emotion_snapshots
 │              │       autobiography_entries / reflection_crystals / autonomy_settings
-│              │       notebook_entries / scheduled_tasks（阶段7b）
-│              │  每日备份 + Alembic 版本化迁移（阶段7d）
+│              │       notebook_entries / scheduled_tasks / audit_logs
+│              │  每日备份 + Alembic 版本化迁移 + 被遗忘权级联删除
 └──────────────┘
 ```
 
@@ -223,7 +240,8 @@
 
 ## 最近决策
 
-- **2026-05-16**：阶段7完成。ContextBuilder 模块化（5 模块 XML 替代手工拼接）。Character Notebook 上线（auto_note + daily_diary + task_reminder）。AttentionScheduler 后台运行（5s tick + 5 层防打扰）。MarkerParser 5 种标记解析。Claude Code 编码委托工具 + Agent Skills 格式 + Alembic 迁移。语音管道接口占位（packages/voice/）。详细方案见 `xilian-phase7-design.md`。
+- **2026-05-16**：阶段8完成。安全纵深防御上线（7条正则提示注入 + 每5轮人格评分 + 安全回复模式 + 审计日志）。Web管理面板3个新前端面板（SkillsPanel/AuditPanel/NotebookPanel）+ 7个新API。被遗忘权（SQL事务级联删除）。系统托盘驻留（pystray Windows托盘+右键菜单）。项目进入打磨期（README/测试/前端集成）。
+- **2026-05-16**：阶段7完成。ContextBuilder 模块化（5 模块 XML 替代手工拼接）。Character Notebook 上线（auto_note + daily_diary + task_reminder）。AttentionScheduler 后台运行（5s tick + 5 层防打扰）。MarkerParser 5 种标记解析。Claude Code 编码委托工具 + Agent Skills 格式 + Alembic 迁移。语音管道接口占位（packages/voice/）。
 - **2026-05-16**：阶段6完成。自主问候上线（想念值计算 + Token Bucket ≤3条/h）。一键部署完成（setup.sh + start.sh + 前端嵌入后端单进程 serve）。Console TUI 美化（rich 库）。砍独立梦幻循环（与阶段5自传体重叠），改为在自传体结尾追加睡前感想。
 - **2026-05-15（大修订）**：V3.2 → V3.3 云端部署版。纯云端 DeepSeek（砍本地 Ollama/qwen3:14b）→ ChromaDB → sqlite-vec（零外部依赖）→ 砍 Redis（单用户过度设计）→ 砍微调（数据不足、面试难展示）→ 部署对标 OpenClaw：`uv run python main.py` 一键启动。
 - **2026-05-14**：前缀缓存优化。`_build_messages()` 重构：系统提示只含纯静态人格，记忆/共情注入从 system prompt 移到用户消息末尾。预期效果：DeepSeek prefix caching 命中率大幅提升，响应延迟降低 ~40%，月 token 消耗降低 ~60%。

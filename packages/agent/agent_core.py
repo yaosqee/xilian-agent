@@ -76,12 +76,14 @@ class AgentCore:
 
         # 阶段 7d: 注册编码委托工具
         from .tools.coding_delegate import coding_delegate as _cd
+        from .tool_registry import ToolPermission
         self.tool_registry.register(
             name="coding_delegate",
             description="委托 Claude Code 完成编码任务。适合写代码、调试、重构等编程需求。",
             schema={
                 "task_description": {"type": "string", "description": "编码任务描述"},
             },
+            permission=ToolPermission.EXECUTE,
         )(_cd)
 
         # 阶段 2: 情感分析
@@ -96,6 +98,11 @@ class AgentCore:
         # 阶段 5: 人格漂移检测 + 时间感知
         self._drift_counter: int = 0
         self._last_interaction_time: float = 0.0
+
+        # 阶段 8: 安全机制
+        self._round_count: int = 0
+        self._safe_mode: bool = False
+        self._safe_mode_score_count: int = 0  # 安全模式下评分次数
 
         # 阶段 2: 数据库预埋 → 阶段 3 实际写入
         self._db = DatabaseManager(db_path)
@@ -283,6 +290,9 @@ class AgentCore:
         # ── 6b. 阶段 7c: 标记后处理 ──
         reply, _markers = self._extract_markers(reply)
 
+        # ── 6c. 语音兜底：确保每次回复都有实际对话 ──
+        reply = self._enforce_speech_rule(reply)
+
         # ── 7. 后台情感分析 ──
         self._schedule_emotion_analysis(event.payload)
 
@@ -314,6 +324,11 @@ class AgentCore:
         # 阶段 5: 人格漂移检测 + 记录交互时间
         self._check_personality_drift(reply)
         self.mark_interaction()
+
+        # 阶段 8: 每 5 轮触发人设一致性评分
+        self._round_count += 1
+        if self._round_count % 5 == 0:
+            asyncio.create_task(self._score_personality_consistency())
 
         return reply
 
@@ -538,6 +553,38 @@ class AgentCore:
 
         return cleaned, markers
 
+    def _enforce_speech_rule(self, text: str) -> str:
+        """
+        语音兜底：确保回复包含实际对话。
+
+        如果回复只有括号动作（如「（轻轻翻开书）」）没有实际说话内容，
+        在前面补一句温柔的开场。
+
+        判断逻辑：去掉所有括号内容后，剩余有效对话文字 ≥ 3 字。
+        """
+        import re
+        # 去掉中英文括号、标记、空白
+        stripped = re.sub(r'[（(][^）)]*[）)]', '', text)
+        stripped = re.sub(r'\[[^\]]*\]', '', stripped)
+        stripped = re.sub(r'[~♪✨🌟⭐💕]', '', stripped)
+        stripped = stripped.strip()
+
+        # 剩余有效对话文字 ≥ 3 个中日韩文字符
+        cjk_chars = [c for c in stripped if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff']
+        if len(cjk_chars) >= 3:
+            return text
+
+        # 纯括号/无对话 → 补一句
+        fallbacks = [
+            "嗯……人家正在想呢～",
+            "人家听到了呢……让想想看。",
+            "唔，伙伴的话，人家收进书里了。",
+        ]
+        import random
+        prefix = random.choice(fallbacks)
+        logger.debug("speech_rule.enforced", prefix=prefix, original=text[:60])
+        return f"{prefix} {text}" if text.strip() else prefix
+
     def reset_session(self) -> None:
         """重置会话（取消 pending 分析 + 清空历史 + 上下文）"""
         if self._pending_analysis and not self._pending_analysis.done():
@@ -694,3 +741,112 @@ class AgentCore:
         """记录本次交互时间（每轮对话后调用）"""
         import time as _time
         self._last_interaction_time = _time.time()
+
+    # ============================================================
+    # 阶段 8: 人设一致性评分 + 安全回复模式
+    # ============================================================
+
+    PERSONALITY_SCORING_PROMPT = """请评估以下回复是否符合「昔涟」的人设。
+
+昔涟的关键特征：
+1. 自称「人家」，称呼对方「伙伴」
+2. 语气温柔轻盈，不机械化、不AI式
+3. 可能有涟漪/书页/花/秋千/星星等意象
+4. 拒绝时不说「作为AI」，说「人家担心……」「不行呢」
+5. 语气词自然（呢、呀、哦、~♪）
+
+回复内容：
+{replies}
+
+请打分 0.0-1.0 并简要说明理由（20字以内）。
+只返回 "分数|理由"，如 "0.85|语气温柔，有涟漪意象"。"""
+
+    async def _score_personality_consistency(self):
+        """
+        每 5 轮 fire-and-forget 评分。
+
+        流程：
+          取最近 3-5 条 assistant 回复 → DS Pro 评分 →
+          分数 < 0.7 → 告警 + 记 audit_log →
+          连续 3 次 < 0.7 → 进入安全回复模式
+        """
+        try:
+            # 取最近 3-5 条 assistant 回复
+            recent = [m["content"] for m in self.context.history
+                      if m["role"] == "assistant"][-5:]
+            if len(recent) < 3:
+                return
+
+            replies_text = "\n---\n".join(r[:200] for r in recent)
+            prompt = self.PERSONALITY_SCORING_PROMPT.format(replies=replies_text)
+
+            result = await self.router.route(
+                "personality_check",
+                [{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=40,
+            )
+            result = result.strip()
+
+            # 解析 "分数|理由"
+            if "|" in result:
+                score_str, reason = result.split("|", 1)
+                try:
+                    score = float(score_str.strip())
+                    if self._db and self._db._conn:
+                        await self._db.insert_audit_log(
+                            "personality_drift_warning" if score < 0.7 else "personality_check",
+                            f"score={score:.2f} reason={reason.strip()[:60]}",
+                            severity="warning" if score < 0.7 else "info",
+                        )
+
+                    if score < 0.7:
+                        logger.warning(
+                            "personality.drift",
+                            score=round(score, 2),
+                            reason=reason.strip()[:60],
+                        )
+                        self._safe_mode_score_count += 1
+                        if self._safe_mode_score_count >= 3:
+                            self._enter_safe_mode()
+                    else:
+                        # 评分正常 → 如果不在安全模式则重置计数
+                        if not self._safe_mode:
+                            self._safe_mode_score_count = 0
+                        else:
+                            # 在安全模式下评分回升 → 可能退出
+                            self._safe_mode_score_count = max(0, self._safe_mode_score_count - 1)
+                            if score > 0.75 and self._safe_mode_score_count <= 0:
+                                self._exit_safe_mode()
+                except ValueError:
+                    pass
+        except Exception as e:
+            logger.warning("personality.scoring_failed", error=str(e))
+
+    def _enter_safe_mode(self):
+        """进入安全回复模式。"""
+        if self._safe_mode:
+            return
+        self._safe_mode = True
+        self._safe_mode_count = 0
+        logger.warning("personality.safe_mode_entered")
+        if self._db and self._db._conn:
+            import asyncio
+            asyncio.ensure_future(
+                self._db.insert_audit_log("safe_mode_entered", severity="warning")
+            )
+
+    def _exit_safe_mode(self):
+        """退出安全回复模式。"""
+        self._safe_mode = False
+        self._safe_mode_score_count = 0
+        logger.info("personality.safe_mode_exited")
+        if self._db and self._db._conn:
+            import asyncio
+            asyncio.ensure_future(
+                self._db.insert_audit_log("safe_mode_exited", severity="info")
+            )
+
+    @property
+    def is_safe_mode(self) -> bool:
+        return self._safe_mode

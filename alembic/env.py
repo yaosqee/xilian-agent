@@ -5,9 +5,16 @@ from sqlalchemy import pool
 
 from alembic import context
 
+import os as _os
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# 阶段 8: 支持通过环境变量 SQLALCHEMY_URL 动态指定数据库路径
+_dynamic_url = _os.environ.get("SQLALCHEMY_URL")
+if _dynamic_url:
+    config.set_main_option("sqlalchemy.url", _dynamic_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
