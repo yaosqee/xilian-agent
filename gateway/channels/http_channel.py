@@ -411,11 +411,69 @@ class HTTPChannel(Channel):
             ok = nudge._nudge_engine.ack_greeting(greeting_id)
             return {"status": "ok" if ok else "id_mismatch"}
 
+    # ── 阶段 7b: Notebook API ──
+
+    def _register_notebook_routes(self):
+        """注册 Notebook API 端点（在 AgentCore 就绪后调用）。"""
+        agent = self._agent
+
+        @self.app.get("/api/notebook/notes")
+        async def notebook_notes(limit: int = 10):
+            """获取最近笔记"""
+            if not agent or not agent.notebook_manager:
+                return []
+            items = await agent.notebook_manager.get_recent_notes(limit)
+            return items
+
+        @self.app.get("/api/notebook/diary")
+        async def notebook_diary(date: str | None = None):
+            """获取指定日期或今日日记"""
+            if not agent or not agent.notebook_manager:
+                return {"error": "notebook not available"}
+            return await agent.notebook_manager.get_today_diary()
+
+        @self.app.get("/api/notebook/diary/list")
+        async def notebook_diary_list(limit: int = 30):
+            """获取日记列表"""
+            if not agent or not agent.notebook_manager:
+                return []
+            return await agent.notebook_manager.get_diary_list(limit)
+
+        @self.app.get("/api/notebook/tasks")
+        async def notebook_tasks(status: str = "pending"):
+            """获取任务列表"""
+            if not agent or not agent.notebook_manager:
+                return []
+            if status == "pending":
+                return await agent.notebook_manager.get_pending_tasks()
+            return []
+
+        @self.app.post("/api/notebook/tasks/{task_id}/complete")
+        async def notebook_task_complete(task_id: int):
+            """标记任务完成"""
+            if not agent or not agent.notebook_manager:
+                return {"error": "notebook not available"}
+            await agent.notebook_manager.complete_task(task_id)
+            return {"status": "ok"}
+
+        @self.app.post("/api/notebook/tasks/{task_id}/cancel")
+        async def notebook_task_cancel(task_id: int):
+            """取消任务"""
+            if not agent or not agent.notebook_manager:
+                return {"error": "notebook not available"}
+            await agent.notebook_manager.cancel_task(task_id)
+            return {"status": "ok"}
+
     # ── 启动/停止 ──
 
     async def start(self, handler: EventHandler) -> None:
         """启动 HTTP 服务器"""
         self._handler = handler
+
+        # 阶段 7b: 注册 Notebook API
+        if self._agent and self._agent.notebook_manager:
+            self._register_notebook_routes()
+
         config = uvicorn.Config(
             self.app,
             host=self.host,
@@ -432,6 +490,7 @@ class HTTPChannel(Channel):
                 "/api/chat", "/api/chat/stream", "/api/health",
                 "/api/emotion", "/api/emotion/history",
                 "/api/encoding-status", "/api/session/reset", "/api/status",
+                "/api/notebook/*",
             ],
         )
 

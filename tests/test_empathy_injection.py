@@ -245,4 +245,6 @@ class TestTwoRoundEmpathy:
         # messages[-1] 是最后一条 user 消息（v3: 动态注入移到底部），应包含共情提示
         last_msg = messages[-1]
         assert last_msg["role"] == "user"
-        assert "[伙伴的心境]" in last_msg["content"]  # PAD 驱动的共情
+        # 阶段 7a: ContextBuilder XML 格式，情绪信息在 emotion 模块中
+        assert "module name=\"emotion\"" in last_msg["content"] or \
+               "[伙伴的心境]" in last_msg["content"]

@@ -9,6 +9,7 @@
 import os
 import asyncio
 import itertools
+import time as _time_module
 from typing import Literal
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -24,6 +25,11 @@ TaskType = Literal[
     "emotion_analysis", "tool_result_wrap",
     "proactive_greeting", "image_response",
 ]
+
+
+class ToolRelatedError(Exception):
+    """工具调用相关错误——触发模型降级（移除 tools 参数重试）。"""
+    pass
 
 
 class ModelRouter:
@@ -86,6 +92,11 @@ class ModelRouter:
         ) if qwen_key else None
         self.qwen_model = "qwen3.6-plus"
 
+        # === 阶段 7a: 工具兼容性缓存 ===
+        self._tools_support_cache: dict[str, bool] = {}
+        self._tools_cache_reset_interval = 86400  # 24h
+        self._tools_cache_last_reset = _time_module.time()
+
         logger.info(
             "ModelRouter 就绪 (纯云端 mode)",
             ds_pro_keys=len(self._ds_pro_clients),
@@ -96,18 +107,58 @@ class ModelRouter:
 
     # ========== 路由 ==========
 
-    async def route(self, task_type: TaskType, messages: list, **kwargs):
-        # --- DS Pro ---
-        if task_type in self.ROUTE_DS_PRO:
+    # ========== 路由 ==========
+
+    async def route(
+        self,
+        task_type: TaskType,
+        messages: list,
+        tools: list | None = None,
+        tool_choice: str | None = None,
+        **kwargs,
+    ):
+        """
+        路由主入口。
+
+        阶段 7a 新增 tools/tool_choice 参数，自动降级：
+        - 若目标模型标记为不支持 tools → 自动移除 tools 参数
+        - 若调用时抛出 ToolRelatedError → 标记不兼容 + 无 tools 重试
+        """
+        model_key = self._get_model_key(task_type)
+
+        # 阶段 7a: 工具兼容性检查
+        if tools and not self._supports_tools(model_key):
+            logger.info("model_router.tools_degraded", model=model_key)
+            tools = None
+            tool_choice = None
+
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice
+
+        try:
+            # --- DS Pro ---
+            if task_type in self.ROUTE_DS_PRO:
+                return await self._call_ds_pro(messages, **kwargs)
+
+            # --- DS Flash ---
+            if task_type in self.ROUTE_DS_FLASH:
+                return await self._call_ds_flash(messages, **kwargs)
+
+            # fallback
+            logger.warning("未知任务类型，fallback DS Pro", task_type=task_type)
             return await self._call_ds_pro(messages, **kwargs)
 
-        # --- DS Flash ---
-        if task_type in self.ROUTE_DS_FLASH:
-            return await self._call_ds_flash(messages, **kwargs)
-
-        # fallback
-        logger.warning("未知任务类型，fallback DS Pro", task_type=task_type)
-        return await self._call_ds_pro(messages, **kwargs)
+        except ToolRelatedError as e:
+            logger.warning("model_router.tool_error", model=model_key, error=str(e))
+            self._tools_support_cache[model_key] = False
+            if tools:
+                # 移除 tools 重试
+                kwargs["tools"] = None
+                kwargs["tool_choice"] = None
+                if task_type in self.ROUTE_DS_PRO:
+                    return await self._call_ds_pro(messages, **kwargs)
+                return await self._call_ds_flash(messages, **kwargs)
+            raise
 
     # ========== 嵌入 ==========
 
@@ -195,6 +246,26 @@ class ModelRouter:
         if kwargs.get("stream"):
             return response
         return response.choices[0].message.content
+
+    # ========== 工具兼容性 ==========
+
+    def _get_model_key(self, task_type: str) -> str:
+        """根据 task_type 返回模型标识（用于缓存 key）。"""
+        if task_type in self.ROUTE_DS_PRO:
+            return "ds-pro"
+        return "ds-flash"
+
+    def _supports_tools(self, model_key: str) -> bool:
+        """
+        检查模型是否支持工具调用。
+        每日自动重置缓存（避免因临时故障永久禁用）。
+        """
+        now = _time_module.time()
+        if now - self._tools_cache_last_reset > self._tools_cache_reset_interval:
+            self._tools_support_cache.clear()
+            self._tools_cache_last_reset = now
+            logger.debug("model_router.tools_cache_reset")
+        return self._tools_support_cache.get(model_key, True)
 
     # ========== 手动覆盖 ==========
 

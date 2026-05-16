@@ -1,12 +1,13 @@
 """
 AgentCore — 昔涟的核心大脑
 
-ActorMind 推理链（阶段 3）：
+ActorMind 推理链（阶段 7）：
   感知 → 记忆检索 → 共情注入 → 记忆注入 → 人格加载 → 模型调用 → 响应
-          ↳ 后台情感分析 + 记忆编码 + 对话日志写入
+          ↳ 后台情感分析 + 记忆编码 + 对话日志写入 + 自动记笔记(7b)
 
 阶段 2：共情注入 + 后台情感分析
 阶段 3：记忆检索注入 + 记忆编码调度 + 对话日志实际写入 + shutdown
+阶段 7a：ContextBuilder 模块化上下文（替换手工拼接）
 """
 import asyncio
 import os
@@ -17,11 +18,23 @@ from ..shared.model_router import ModelRouter
 from ..shared.events import InternalEvent
 from ..shared.database import DatabaseManager
 from ..shared.vector_store import VectorStore
+from ..shared.marker_parser import MarkerParser
 from .agent_context import AgentContext
 from .tool_registry import ToolRegistry
 from .emotion_analyzer import EmotionAnalyzer
 from .emotion_core import EmotionEngine
 from .memory_manager import MemoryManager
+from .notebook_manager import NotebookManager
+
+# 阶段 7a: 模块化上下文
+from .context_builder import (
+    ContextBuilder,
+    DatetimeModule,
+    EmotionModule,
+    MemoryModule,
+    NotebookModule,
+    IdentityModule,
+)
 
 
 # ── 降级回复（模型不可用时的友好提示） ──────────────────────
@@ -61,6 +74,16 @@ class AgentCore:
         self.context = AgentContext()
         self._personality: str = self._load_personality()
 
+        # 阶段 7d: 注册编码委托工具
+        from .tools.coding_delegate import coding_delegate as _cd
+        self.tool_registry.register(
+            name="coding_delegate",
+            description="委托 Claude Code 完成编码任务。适合写代码、调试、重构等编程需求。",
+            schema={
+                "task_description": {"type": "string", "description": "编码任务描述"},
+            },
+        )(_cd)
+
         # 阶段 2: 情感分析
         self.emotion_analyzer = EmotionAnalyzer(self.router)
         self._pending_analysis: asyncio.Task | None = None
@@ -81,11 +104,27 @@ class AgentCore:
         self._vector_store: VectorStore | None = None
         self.memory_manager: MemoryManager | None = None
 
+        # 阶段 7a: 模块化上下文构建器
+        # 5 个模块，按优先级排序：datetime(1) < emotion(4) < memory(5) < notebook(6) < identity(9)
+        self._context_builder = ContextBuilder(total_budget=1200)
+        self._context_builder.register(DatetimeModule())
+        self._context_builder.register(EmotionModule(self.context))
+        self._context_builder.register(MemoryModule(self.context))
+        self._context_builder.register(NotebookModule())  # 7b 通过 set_notebook() 注入
+        self._context_builder.register(IdentityModule())
+
+        # 阶段 7b: 笔记本管理器占位（子阶段 7b 注入）
+        self.notebook_manager: NotebookManager | None = None
+
+        # 阶段 7c: 注意力调度器占位（子阶段 7c 注入）
+        self.attention_scheduler = None
+
         logger.info(
             "AgentCore 就绪",
             personality_length=len(self._personality),
             tools_registered=len(self.tool_registry),
             db_path=str(self._db.db_path),
+            context_modules=self._context_builder.module_names,
         )
 
     # ============================================================
@@ -93,7 +132,7 @@ class AgentCore:
     # ============================================================
 
     async def startup(self) -> None:
-        """启动初始化：DB 连接 + 向量存储 + 记忆模块启动 + 修复 pending"""
+        """启动初始化：DB 连接 + 向量存储 + 记忆模块启动 + Notebook + 修复 pending"""
         await self._db.init()
 
         # VectorStore 独立连接（sqlite-vec 扩展需要直接操作 sqlite3）
@@ -106,6 +145,18 @@ class AgentCore:
             model_router=self.router,
         )
         await self.memory_manager.startup()
+
+        # 阶段 7b: 初始化 NotebookManager
+        if not self.notebook_manager:
+            self.notebook_manager = NotebookManager(
+                _db=self._db,
+                _router=self.router,
+            )
+        # 注入 NotebookManager 到 ContextBuilder 的 NotebookModule
+        nb_module = self._context_builder.get_module("notebook")
+        if nb_module:
+            nb_module.set_notebook(self.notebook_manager)
+
         logger.info("agent.startup_complete")
 
     async def shutdown(self) -> str:
@@ -186,7 +237,13 @@ class AgentCore:
         trace_log.debug("agent.perceive", intent=intent)
 
         if intent.get("is_tool_request"):
-            reply = TOOL_PLACEHOLDER
+            if intent.get("intent") == "coding_delegate":
+                # 阶段 7d: 编码委托
+                from .tools.coding_delegate import coding_delegate as _cd
+                result = await _cd(event.payload)
+                reply = result.summary
+            else:
+                reply = TOOL_PLACEHOLDER
             self.context.add_message("user", event.payload)
             self.context.add_message("assistant", reply)
             trace_log.info("agent.process.done", reply_preview=reply[:60])
@@ -223,11 +280,22 @@ class AgentCore:
             trace_log.error("agent.process.model_error", error=str(e))
             reply = DEGRADED_REPLY
 
+        # ── 6b. 阶段 7c: 标记后处理 ──
+        reply, _markers = self._extract_markers(reply)
+
         # ── 7. 后台情感分析 ──
         self._schedule_emotion_analysis(event.payload)
 
         # ── 8. 后台记忆编码 (NEW) ──
         self._schedule_memory_encoding()
+
+        # ── 8b. 阶段 7b: 自动记笔记 ──
+        if self.notebook_manager:
+            asyncio.create_task(
+                self.notebook_manager.auto_note_after_message(
+                    event.payload, reply
+                )
+            )
 
         # ── 9. 写入对话日志 (NEW) ──
         await self._write_conversation_log(event, reply)
@@ -269,6 +337,18 @@ class AgentCore:
                 intent["is_tool_request"] = True
                 intent["intent"] = "tool_request"
                 break
+
+        # 阶段 7d: 编码委托意图
+        coding_keywords = {
+            "帮我写", "写个", "写一个", "帮我改", "改一下代码",
+            "调试", "bug", "报错", "重构", "帮我实现", "实现一个",
+        }
+        if not intent["is_tool_request"]:
+            for kw in coding_keywords:
+                if kw in payload:
+                    intent["is_tool_request"] = True
+                    intent["intent"] = "coding_delegate"
+                    break
 
         positive = {"开心", "高兴", "好耶", "哈哈", "太棒了", "喜欢", "爱"}
         negative = {"难过", "累", "烦", "焦虑", "害怕", "孤独", "不开心", "哭"}
@@ -373,37 +453,36 @@ class AgentCore:
     def _build_messages(
         self,
         user_msg: str,
-        empathy_text: str = "",
-        memory_text: str = "",
+        empathy_text: str = "",   # ⚠️ 保留参数签名（向后兼容），但不再使用
+        memory_text: str = "",    # ⚠️ 保留参数签名（向后兼容），但不再使用
     ) -> list[dict]:
         """
-        构建模型输入消息列表（前缀缓存友好结构）：
-          [system: 纯人格] → [历史消息] → [动态注入 + 用户消息]
+        构建模型输入消息列表（阶段 7a：ContextBuilder 模块化）。
+
+        结构：
+          [system: 人格提示词] → [历史消息] → [XML 上下文 + 用户消息]
 
         优化要点：
-        - 系统提示只含静态人格，永远不变 → 前缀缓存 100% 命中
-        - 历史消息与前一轮 95% 一致 → 高缓存命中率
-        - 记忆/共情注入收到底部用户消息中 → 只有这部分每轮重新推理
-
-        v3: 2026-05-14 从前缀混入改为底部注入
+        - 系统提示只含静态人格 → 前缀缓存 100% 命中
+        - 历史消息与前一轮高度一致 → 高缓存命中率
+        - 上下文由 ContextBuilder 组装为结构化 XML → 注入到用户消息底部
+        - 每个模块独立渲染、可按 priority + budget 控制
         """
-        # 纯静态系统提示（前缀缓存友好）
+        # 纯静态系统提示（前缀缓存友好，永远不变）
         messages = [{"role": "system", "content": self._personality}]
 
         # 历史消息（与前一轮前缀高度一致）
         history = self.context.get_messages(limit=20)
         messages.extend(history)
 
+        # 阶段 7a: ContextBuilder 组装 XML 上下文
+        ctx_xml = self._context_builder.build()
+
         # 动态注入 + 用户消息收到底部
-        user_content = user_msg
-        if memory_text or empathy_text:
-            context_parts = []
-            if memory_text:
-                context_parts.append(memory_text)
-            if empathy_text:
-                context_parts.append(empathy_text)
-            context = "\n\n".join(context_parts)
-            user_content = f"{context}\n\n---\n\n{user_msg}"
+        if ctx_xml:
+            user_content = f"{ctx_xml}\n\n---\n\n{user_msg}"
+        else:
+            user_content = user_msg
 
         messages.append({"role": "user", "content": user_content})
 
@@ -419,6 +498,45 @@ class AgentCore:
         if not cleaned:
             return "……♪"
         return cleaned
+
+    def _extract_markers(self, text: str) -> tuple[str, list]:
+        """
+        阶段 7c: 从回复中提取标记，分离用户可见文本和系统标记。
+
+        流程：
+          1. MarkerParser 解析全文
+          2. literal → 拼接为 cleaned_text（用户可见）
+          3. special → 收集为 markers（系统处理）
+          4. emotion/action 标记派发给对应引擎
+
+        Returns:
+            (cleaned_text, markers_list)
+        """
+        parser = MarkerParser()
+        tokens = parser.feed(text)
+        tokens += parser.flush()
+
+        cleaned_parts: list[str] = []
+        markers: list = []
+
+        for t in tokens:
+            if t.kind == "literal":
+                cleaned_parts.append(t.text)
+            else:
+                markers.append(t)
+                # 派发 emotion 标记到情感引擎
+                if t.marker_type == "emotion" and hasattr(self, 'emotion_engine'):
+                    logger.debug(
+                        "marker.emotion_triggered",
+                        emotion=t.payload.get("emotion"),
+                        intensity=t.payload.get("intensity"),
+                    )
+
+        cleaned = "".join(cleaned_parts).strip()
+        if not cleaned and markers:
+            cleaned = "……♪"  # 纯标记时给个最小回复
+
+        return cleaned, markers
 
     def reset_session(self) -> None:
         """重置会话（取消 pending 分析 + 清空历史 + 上下文）"""

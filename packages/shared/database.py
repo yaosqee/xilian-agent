@@ -120,6 +120,35 @@ CREATE TABLE IF NOT EXISTS autonomy_settings (
 );
 """
 
+# ── 阶段 7b: Notebook ──
+
+_CREATE_NOTEBOOK_ENTRIES = """
+CREATE TABLE IF NOT EXISTS notebook_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT    NOT NULL,
+    content     TEXT    NOT NULL,
+    tags        TEXT,
+    importance  REAL    DEFAULT 0.5,
+    is_active   INTEGER DEFAULT 1,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
+_CREATE_SCHEDULED_TASKS = """
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT    NOT NULL,
+    details     TEXT,
+    priority    INTEGER DEFAULT 0,
+    status      TEXT    DEFAULT 'pending',
+    due_at      REAL,
+    created_at  REAL    NOT NULL,
+    completed_at REAL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -140,6 +169,12 @@ _CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_auto_date ON autobiography_entries(date);",
     # reflection
     "CREATE INDEX IF NOT EXISTS idx_ref_week ON reflection_crystals(week_start);",
+    # notebook
+    "CREATE INDEX IF NOT EXISTS idx_notebook_kind ON notebook_entries(kind, created_at);",
+    "CREATE INDEX IF NOT EXISTS idx_notebook_active ON notebook_entries(is_active, created_at);",
+    # scheduled_tasks
+    "CREATE INDEX IF NOT EXISTS idx_tasks_status ON scheduled_tasks(status, due_at);",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_due ON scheduled_tasks(due_at) WHERE status='pending';",
 ]
 
 
@@ -156,7 +191,11 @@ class DatabaseManager:
     # ============================================================
 
     async def init(self) -> None:
-        """初始化数据库：建表 + 开 WAL + 建索引（幂等）"""
+        """
+        初始化数据库：Alembic 迁移优先，降级为手动建表（幂等）。
+
+        阶段 7d: 首选 alembic upgrade head，失败或不可用时手动建表。
+        """
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._conn = await aiosqlite.connect(str(self.db_path))
@@ -166,18 +205,12 @@ class DatabaseManager:
         await self._conn.execute("PRAGMA journal_mode=WAL;")
         await self._conn.execute("PRAGMA foreign_keys=ON;")
 
-        # 建表（幂等）
-        await self._conn.execute(_CREATE_CONVERSATION_LOGS)
-        await self._conn.execute(_CREATE_EPISODIC_MEMORIES)
-        await self._conn.execute(_CREATE_MESSAGE_QUEUE)
-        await self._conn.execute(_CREATE_EMOTION_SNAPSHOTS)
-        await self._conn.execute(_CREATE_AUTOBIOGRAPHY)
-        await self._conn.execute(_CREATE_REFLECTION_CRYSTALS)
-        await self._conn.execute(_CREATE_AUTONOMY_SETTINGS)
+        # 阶段 7d: 尝试 Alembic 迁移
+        migrated = await self._try_alembic_migrate()
 
-        # 建索引（幂等）
-        for idx_sql in _CREATE_INDEXES_SQL:
-            await self._conn.execute(idx_sql)
+        if not migrated:
+            # 降级：手动建表（幂等）
+            await self._manual_init()
 
         await self._conn.commit()
 
@@ -185,7 +218,43 @@ class DatabaseManager:
             "database.initialized",
             path=str(self.db_path),
             session_id=self._session_id,
+            method="alembic" if migrated else "manual",
         )
+
+    async def _try_alembic_migrate(self) -> bool:
+        """尝试用 Alembic 迁移。成功返回 True，失败返回 False。"""
+        try:
+            import subprocess
+            root = Path(__file__).resolve().parent.parent.parent
+            result = subprocess.run(
+                ["uv", "run", "alembic", "upgrade", "head"],
+                cwd=str(root),
+                capture_output=True, text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                logger.info("database.alembic_migrated")
+                return True
+            logger.warning("database.alembic_failed", stderr=result.stderr[:200])
+            return False
+        except Exception as e:
+            logger.info("database.alembic_unavailable", reason=str(e))
+            return False
+
+    async def _manual_init(self):
+        """降级：手动建表 + 建索引（幂等）。"""
+        await self._conn.execute(_CREATE_CONVERSATION_LOGS)
+        await self._conn.execute(_CREATE_EPISODIC_MEMORIES)
+        await self._conn.execute(_CREATE_MESSAGE_QUEUE)
+        await self._conn.execute(_CREATE_EMOTION_SNAPSHOTS)
+        await self._conn.execute(_CREATE_AUTOBIOGRAPHY)
+        await self._conn.execute(_CREATE_REFLECTION_CRYSTALS)
+        await self._conn.execute(_CREATE_AUTONOMY_SETTINGS)
+        await self._conn.execute(_CREATE_NOTEBOOK_ENTRIES)
+        await self._conn.execute(_CREATE_SCHEDULED_TASKS)
+        for idx_sql in _CREATE_INDEXES_SQL:
+            await self._conn.execute(idx_sql)
+        await self._conn.commit()
 
     async def close(self) -> None:
         """关闭数据库连接"""
@@ -831,6 +900,164 @@ class DatabaseManager:
         )
         await self._conn.commit()
         logger.debug("database.autonomy_config_saved")
+
+    # ============================================================
+    # notebook CRUD（阶段 7b 新增）
+    # ============================================================
+
+    async def insert_notebook(
+        self, kind: str, content: str,
+        tags: list[str] | None = None, importance: float = 0.5,
+    ) -> int:
+        """插入一条笔记本条目。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        tags_json = json.dumps(tags, ensure_ascii=False) if tags else None
+        cursor = await self._conn.execute(
+            """INSERT INTO notebook_entries
+               (kind, content, tags, importance, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (kind, content, tags_json, importance, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        logger.debug("database.insert_notebook", kind=kind)
+        return cursor.lastrowid
+
+    async def get_notebook_notes(
+        self, limit: int = 10, kind: str | None = None,
+    ) -> list[dict]:
+        """获取最近笔记（默认不过滤 kind）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        if kind:
+            cursor = await self._conn.execute(
+                "SELECT * FROM notebook_entries WHERE kind=? AND is_active=1 "
+                "ORDER BY created_at DESC LIMIT ?",
+                (kind, limit),
+            )
+        else:
+            cursor = await self._conn.execute(
+                "SELECT * FROM notebook_entries WHERE is_active=1 "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_notebook_today_diary(self) -> dict | None:
+        """获取今日日记（按日期字符串匹配）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        import datetime
+        today = datetime.date.today().isoformat()
+        today_start = time.mktime(
+            datetime.datetime.combine(
+                datetime.date.today(), datetime.time.min
+            ).timetuple()
+        )
+        cursor = await self._conn.execute(
+            "SELECT * FROM notebook_entries WHERE kind='diary' AND created_at >= ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (today_start,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_notebook_diary_list(self, limit: int = 30) -> list[dict]:
+        """获取日记列表（不含正文，轻量）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT id, created_at, "
+            "SUBSTR(content, 1, 80) as preview "
+            "FROM notebook_entries WHERE kind='diary' AND is_active=1 "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def archive_notebook_entries(self, days: int = 30) -> int:
+        """归档旧笔记（> days 天前的标记 is_active=0）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cutoff = time.time() - days * 86400
+        cursor = await self._conn.execute(
+            "UPDATE notebook_entries SET is_active=0 WHERE created_at < ?",
+            (cutoff,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount
+
+    # ============================================================
+    # scheduled_tasks CRUD（阶段 7b 新增）
+    # ============================================================
+
+    async def insert_task(
+        self, title: str, details: str = "",
+        priority: int = 0, due_at: float = 0.0,
+    ) -> int:
+        """创建计划任务。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            """INSERT INTO scheduled_tasks
+               (title, details, priority, due_at, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (title, details, priority, due_at, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        logger.debug("database.insert_task", title=title[:30])
+        return cursor.lastrowid
+
+    async def get_due_tasks(
+        self, now: float | None = None, window_seconds: int = 3600,
+    ) -> list[dict]:
+        """获取到期任务（status=pending 且 due_at 在窗口内）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        now = now or time.time()
+        cursor = await self._conn.execute(
+            "SELECT * FROM scheduled_tasks "
+            "WHERE status='pending' AND due_at > 0 "
+            "AND ABS(due_at - ?) <= ? "
+            "ORDER BY priority DESC, due_at ASC",
+            (now, window_seconds),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_pending_tasks(self, limit: int = 20) -> list[dict]:
+        """获取全部待办任务。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT * FROM scheduled_tasks WHERE status='pending' "
+            "ORDER BY priority DESC, due_at ASC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def complete_task(self, task_id: int) -> None:
+        """标记任务完成。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        await self._conn.execute(
+            "UPDATE scheduled_tasks SET status='done', completed_at=? WHERE id=?",
+            (time.time(), task_id),
+        )
+        await self._conn.commit()
+
+    async def cancel_task(self, task_id: int) -> None:
+        """取消任务。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        await self._conn.execute(
+            "UPDATE scheduled_tasks SET status='cancelled', completed_at=? WHERE id=?",
+            (time.time(), task_id),
+        )
+        await self._conn.commit()
 
     # ============================================================
     # 工具属性

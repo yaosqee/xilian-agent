@@ -23,7 +23,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from packages.shared import ModelRouter, BackupManager
 from packages.shared.logging_config import setup_logging
-from packages.agent import AgentCore, NudgeEngine, TokenBucket, AutonomyConfig
+from packages.agent import (
+    AgentCore, NudgeEngine, TokenBucket, AutonomyConfig,
+    AttentionScheduler, AttentionEvent, AttentionUrgency,
+)
 from packages.agent.autobiography_writer import run_daily_autobiography, run_weekly_reflection
 from gateway import Gateway, SecurityFilter
 from gateway.channels import ConsoleChannel, HTTPChannel
@@ -99,6 +102,50 @@ async def main():
         trigger="interval", minutes=20, id="token_bucket_refill",
     )
     logger.info("自主生命节律调度已启动 (每15min 想念检查, 每20min 令牌补充)")
+
+    # ── 阶段 7b: Notebook 定时任务 ──
+    async def notebook_daily_diary():
+        """每天 23:50 生成今日日记"""
+        if agent.notebook_manager:
+            diary = await agent.notebook_manager.generate_daily_diary()
+            if diary:
+                logger.info("notebook.diary_generated", length=len(diary))
+
+    async def check_due_tasks():
+        """检查到期任务 → enqueue 到 AttentionScheduler"""
+        if agent.notebook_manager and agent.attention_scheduler:
+            due = await agent.notebook_manager.get_due_tasks(window_seconds=1800)
+            for task in due:
+                urgency = (
+                    AttentionUrgency.IMMEDIATE if task.get("priority", 0) >= 2
+                    else AttentionUrgency.SOON
+                )
+                agent.attention_scheduler.enqueue(AttentionEvent(
+                    kind="task_reminder",
+                    urgency=urgency,
+                    payload={"task_id": task["id"], "title": task["title"]},
+                ))
+            if due:
+                logger.info("notebook.due_tasks_found", count=len(due))
+
+    scheduler.add_job(
+        lambda: asyncio.create_task(notebook_daily_diary()),
+        trigger="cron", hour=23, minute=50, id="notebook_daily_diary",
+    )
+    scheduler.add_job(
+        lambda: asyncio.create_task(check_due_tasks()),
+        trigger="cron", hour="8,12,18", minute=0, id="check_due_tasks",
+    )
+    logger.info("Notebook 调度已启动 (每日 23:50 日记, 8:00/12:00/18:00 任务检查)")
+
+    # ── 阶段 7c: AttentionScheduler 初始化 ──
+    attention = AttentionScheduler()
+    attention._router = agent.router
+    attention._db = agent._db
+    attention._agent = agent
+    agent.attention_scheduler = attention
+    asyncio.create_task(attention.start())
+    logger.info("AttentionScheduler 已启动 (5s tick)")
 
     # ── 3. 安全过滤层 ──
     security = SecurityFilter(owner_id="hezi")

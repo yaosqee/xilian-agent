@@ -581,3 +581,221 @@ class NudgeEngine:
             "bucket_capacity": self._bucket.capacity,
             "pending_greeting": self._pending_greeting is not None,
         }
+
+
+# ═══════════════════════════════════════════════════════════
+# AttentionScheduler — 后台注意力系统（阶段 7c）
+# ═══════════════════════════════════════════════════════════
+
+class AttentionUrgency:
+    """注意力事件紧急度"""
+    IMMEDIATE = 0   # 立刻处理
+    SOON = 1        # 10 秒后处理
+    LATER = 2       # 60 秒后处理，300s 蒸发
+
+
+@dataclass
+class AttentionEvent:
+    """注意力事件"""
+    kind: str               # 'task_reminder' | 'user_inactive' | 'memory_surfaced'
+    urgency: int            # 0=immediate, 1=soon, 2=later
+    payload: dict = field(default_factory=dict)
+    created_at: float = field(default_factory=time.time)
+
+    def __lt__(self, other):
+        """优先级队列排序：urgency 小的优先处理"""
+        return self.urgency < other.urgency
+
+
+@dataclass
+class AttentionScheduler:
+    """
+    昔涟的注意力调度器。
+
+    以 5 秒为 tick 单位持续运行，检查 PriorityQueue 中的事件。
+    取最高优先级事件 → Flash 决策 → 生成行动或静默。
+
+    与 NudgeEngine 互补：
+    - NudgeEngine: 15 分钟周期，想念值驱动，Pro 生成，情感问候
+    - AttentionScheduler: 5 秒周期，事件驱动，Flash 决策，细粒度注意力
+    """
+
+    tick_interval: float = 5.0
+    event_queue: asyncio.PriorityQueue = field(default_factory=asyncio.PriorityQueue)
+
+    # 外部注入
+    _router: object = None        # ModelRouter（Flash 决策）
+    _db: object = None            # DatabaseManager
+    _agent: object = None         # AgentCore 弱引用
+
+    _running: bool = False
+    _last_event_time: dict[str, float] = field(default_factory=dict)
+
+    # 防打扰
+    dnd_start: int = 23
+    dnd_end: int = 8
+    min_interval: int = 300       # 同类型事件最短间隔（秒）
+    later_evaporate: int = 300    # later 事件蒸发时间（秒）
+    _user_typing: bool = False    # 盒子正在输入时不打断
+
+    # ── 生命周期 ──
+
+    async def start(self):
+        """启动调度循环（asyncio Task）。"""
+        self._running = True
+        logger.info("attention_scheduler.started")
+        while self._running:
+            try:
+                await self._tick()
+            except Exception as e:
+                logger.error("attention_scheduler.tick_error", error=str(e))
+            await asyncio.sleep(self.tick_interval)
+
+    def stop(self):
+        self._running = False
+
+    # ── tick ──
+
+    async def _tick(self):
+        """
+        一次 tick 周期。
+
+        流程：
+          1. 深夜检查 → 跳过（仅 later 事件存活）
+          2. 用户正在输入 → 跳过
+          3. 蒸发超时的 later 事件
+          4. 从 PriorityQueue 取最高优先级事件
+          5. 同类型去重（300s 内）
+          6. Flash 决策 → NOTIFY / SILENT / NOTE
+          7. 执行行动
+        """
+        from datetime import datetime
+        now = time.time()
+        hour = datetime.now().hour
+
+        # 1. 深夜静默
+        if self.dnd_start <= hour or hour < self.dnd_end:
+            return
+
+        # 2. 盒子正在输入 → 不打扰
+        if self._user_typing:
+            return
+
+        # 3. 蒸发超时的 later 事件
+        self._evaporate_later(now)
+
+        if self.event_queue.empty():
+            return
+
+        # 4. 取最高优先级事件
+        try:
+            event = self.event_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return
+
+        # 5. 同类型去重
+        last = self._last_event_time.get(event.kind, 0)
+        if now - last < self.min_interval:
+            return
+        self._last_event_time[event.kind] = now
+
+        # 6. Flash 决策
+        decision = await self._decide(event)
+
+        # 7. 执行
+        action = decision.get("action", "silent")
+        if action == "notify":
+            logger.info(
+                "attention_scheduler.notify",
+                kind=event.kind,
+                text=decision.get("text", "")[:60],
+            )
+        elif action == "note":
+            logger.info("attention_scheduler.note", text=decision.get("text", "")[:60])
+
+    # ── 事件入队 ──
+
+    def enqueue(self, event: AttentionEvent):
+        """将事件推入优先队列。"""
+        self.event_queue.put_nowait(event)
+
+    # ── later 事件蒸发 ──
+
+    def _evaporate_later(self, now: float):
+        """移除超时的 later 事件。"""
+        surviving = asyncio.PriorityQueue()
+        while not self.event_queue.empty():
+            try:
+                e = self.event_queue.get_nowait()
+                if e.urgency != AttentionUrgency.LATER or \
+                   (now - e.created_at) < self.later_evaporate:
+                    surviving.put_nowait(e)
+            except asyncio.QueueEmpty:
+                break
+        self.event_queue = surviving
+
+    # ── Flash 决策 ──
+
+    async def _decide(self, event: AttentionEvent) -> dict:
+        """
+        用 Flash 快速决策这个事件要不要通知盒子。
+
+        决策 prompt 非常轻量（~50 tokens），Flash 可在 ~1s 内完成。
+
+        Returns:
+            {"action": "notify"|"silent"|"note", "text": ...}
+        """
+        kind_desc = {
+            "task_reminder": f"伙伴有一个提醒任务「{event.payload.get('title', '')}」到期了",
+            "user_inactive": "伙伴已经好一会儿没说话了",
+            "memory_surfaced": f"人家想起了「{event.payload.get('summary', '')}」",
+        }
+        desc = kind_desc.get(event.kind, "有些事情发生了")
+        urgency_text = "比较急" if event.urgency == AttentionUrgency.IMMEDIATE else "不急"
+
+        prompt = (
+            f"你是昔涟。{desc}。"
+            f"这件事{urgency_text}。"
+            f"请快速判断要不要跟伙伴说一句话。只返回以下之一：\n"
+            f"NOTIFY — 应该说（温柔简短，不打扰）\n"
+            f"SILENT — 现在不用说\n"
+            f"NOTE: <摘要> — 记在笔记本里就好"
+        )
+
+        try:
+            result = await self._router.route(
+                "memory_encoding",  # Flash
+                [{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=30,
+            )
+            result = result.strip()
+            if result.startswith("NOTIFY"):
+                return {"action": "notify", "text": result}
+            elif result.startswith("NOTE:"):
+                return {"action": "note", "text": result[5:].strip()}
+            return {"action": "silent"}
+        except Exception as e:
+            logger.warning("attention.decision_failed", error=str(e))
+            return {"action": "silent"}
+
+    # ── 用户输入状态 ──
+
+    def set_user_typing(self, typing: bool):
+        """标记用户是否正在输入（由 HTTP 通道 SSE 设置）。"""
+        self._user_typing = typing
+
+    # ── 状态查询 ──
+
+    @property
+    def queue_size(self) -> int:
+        return self.event_queue.qsize()
+
+    @property
+    def status(self) -> dict:
+        return {
+            "running": self._running,
+            "queue_size": self.queue_size,
+            "dnd": self.dnd_start <= time.localtime().tm_hour or time.localtime().tm_hour < self.dnd_end,
+            "user_typing": self._user_typing,
+        }

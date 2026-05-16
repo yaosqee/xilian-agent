@@ -45,3 +45,14 @@ button:hover {
   0%, 100% { opacity: 0.4; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.3); }
 }
+
+/* 阶段 7c: 昔涟思考动画 */
+@keyframes xilian-thinking {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.03); opacity: 0.85; }
+}
+
+.xilian-thinking {
+  animation: xilian-thinking 1.5s ease-in-out;
+  animation-iteration-count: 2;
+}
