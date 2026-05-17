@@ -176,6 +176,17 @@ class AgentCore:
         except Exception:
             logger.debug("affection.load_skipped")
 
+        # 恢复最近对话历史到 context（跨会话记忆连续性）
+        try:
+            logs = await self._db.get_conversation_history(limit=20)
+            for row in reversed(logs):
+                self.context.history.append({"role": "user", "content": row["user_message"]})
+                self.context.history.append({"role": "assistant", "content": row["assistant_reply"]})
+            if logs:
+                logger.info("agent.context_restored", rounds=len(logs))
+        except Exception as e:
+            logger.warning("agent.context_restore_failed", error=str(e))
+
         logger.info("agent.startup_complete")
 
     async def shutdown(self) -> str:

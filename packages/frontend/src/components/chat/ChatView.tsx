@@ -72,44 +72,253 @@ const Bubble: React.FC<{ msg: ChatMessage }> = React.memo(({ msg }) => {
   );
 });
 
-/* ── 消息列表 ── */
-const MessageList: React.FC<{ messages: ChatMessage[] }> = ({ messages }) => {
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  if (messages.length === 0) {
+/* ── 加载历史按钮 ── */
+const LoadMoreButton: React.FC<{
+  hasMore: boolean; isLoading: boolean; onClick: () => void;
+}> = ({ hasMore, isLoading, onClick }) => {
+  if (!hasMore) {
     return (
-      <div
-        style={{
-          flex: 1,
-        }}
-      />
+      <div style={{ textAlign: 'center', padding: '16px 0 8px' }}>
+        <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+          —— 没有更多了 ——
+        </span>
+      </div>
     );
   }
 
   return (
+    <div style={{ textAlign: 'center', padding: '12px 0 8px' }}>
+      <button
+        onClick={onClick}
+        disabled={isLoading}
+        style={{
+          padding: '8px 24px',
+          borderRadius: 'var(--radius-full)',
+          border: '1px solid rgba(200, 175, 220, 0.3)',
+          background: 'rgba(255, 255, 255, 0.4)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          color: 'var(--color-text)',
+          fontSize: 13,
+          cursor: isLoading ? 'default' : 'pointer',
+          transition: `all var(--duration-fast) var(--ease-spring)`,
+          boxShadow: '0 2px 8px rgba(180, 140, 220, 0.08)',
+          opacity: isLoading ? 0.6 : 1,
+        }}
+        onMouseEnter={(e) => {
+          if (!isLoading) {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.65)';
+            e.currentTarget.style.boxShadow = '0 4px 16px rgba(255, 183, 197, 0.18)';
+            e.currentTarget.style.borderColor = 'rgba(255, 183, 197, 0.5)';
+          }
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.4)';
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(180, 140, 220, 0.08)';
+          e.currentTarget.style.borderColor = 'rgba(200, 175, 220, 0.3)';
+        }}
+      >
+        {isLoading ? (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              display: 'inline-block', width: 12, height: 12,
+              border: '2px solid rgba(200, 175, 220, 0.3)',
+              borderTopColor: 'var(--color-pink)',
+              borderRadius: '50%',
+              animation: 'spin 0.6s linear infinite',
+            }} />
+            加载中...
+          </span>
+        ) : (
+          '加载历史对话'
+        )}
+      </button>
+    </div>
+  );
+};
+
+/* ── 消息列表 ── */
+const MessageList: React.FC<{
+  messages: ChatMessage[];
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  onLoadMore: () => void;
+}> = ({ messages, hasMore, isLoadingMore, onLoadMore }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const prevMsgCount = useRef(messages.length);
+  const prevFirstId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const wasPrepend =
+      messages.length > prevMsgCount.current &&
+      prevFirstId.current !== null &&
+      messages.length > 0 &&
+      messages[0].id !== prevFirstId.current;
+
+    if (wasPrepend) {
+      // 保持滚动位置：记录当前 scrollHeight，渲染后恢复
+      const prevHeight = container.scrollHeight;
+      requestAnimationFrame(() => {
+        const newHeight = container.scrollHeight;
+        container.scrollTop += newHeight - prevHeight;
+      });
+    } else {
+      // 正常追加 → 滚到底部
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    prevMsgCount.current = messages.length;
+    if (messages.length > 0) prevFirstId.current = messages[0].id;
+  }, [messages]);
+
+  if (messages.length === 0) {
+    return <div style={{ flex: 1 }} />;
+  }
+
+  const showEndMarker = !hasMore && messages.length > 0;
+
+  return (
     <div
+      ref={containerRef}
       style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '16px 0',
+        padding: '8px 0 16px',
         display: 'flex',
         flexDirection: 'column',
         gap: 12,
       }}
     >
+      {/* 加载更多按钮（顶部） */}
+      <LoadMoreButton
+        hasMore={hasMore}
+        isLoading={isLoadingMore}
+        onClick={onLoadMore}
+      />
+
       {messages.map((m) => (
         <Bubble key={m.id} msg={m} />
       ))}
+
+      {/* 底部终点标记 */}
+      {showEndMarker && (
+        <div style={{ textAlign: 'center', padding: '4px 0 0' }}>
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+            —— 最近的消息 ——
+          </span>
+        </div>
+      )}
+
       <div ref={bottomRef} />
     </div>
   );
 };
 
-/* ── 输入区 · 大 textarea 毛玻璃 ── */
+/* ══════════════════════════════════════════════
+   ChatView
+   ══════════════════════════════════════════════ */
+export const ChatView: React.FC = () => {
+  const { messages, isLoading, send, cancel, loadHistory, hasMore, isLoadingMore } = useChat();
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
+      {/* 头部 */}
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '14px 20px',
+          flexShrink: 0,
+          zIndex: 10,
+        }}
+      >
+        <h1
+          className="gradient-text"
+          style={{
+            fontSize: 15,
+            fontWeight: 600,
+            letterSpacing: 3,
+            margin: 0,
+            fontFamily: 'var(--font-serif)',
+          }}
+        >
+          昔涟
+        </h1>
+      </header>
+
+      {/* 消息区 */}
+      <div
+        style={{
+          flex: 1,
+          margin: '0 8px 8px',
+          borderRadius: 'var(--radius-card)',
+          background: 'transparent',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <MessageList
+          messages={messages}
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          onLoadMore={loadHistory}
+        />
+
+        {/* 加载指示 */}
+        {isLoading && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              padding: '0 20px 8px',
+            }}
+          >
+            {[0, 0.2, 0.4].map((delay, i) => (
+              <span
+                key={i}
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: i % 2 === 0 ? 'var(--color-pink)' : 'var(--color-purple)',
+                  animation: `pulseGlow 0.8s var(--ease-spring) ${delay}s infinite`,
+                }}
+              />
+            ))}
+            <button
+              onClick={cancel}
+              style={{
+                marginLeft: 8,
+                padding: '4px 14px',
+                borderRadius: 'var(--radius-full)',
+                border: '1px solid rgba(200, 160, 190, 0.3)',
+                background: 'var(--glass-bg)',
+                color: 'var(--color-text-dim)',
+                fontSize: 12,
+                cursor: 'pointer',
+                transition: `all var(--duration-fast) var(--ease-spring)`,
+              }}
+            >
+              取消
+            </button>
+          </div>
+        )}
+      </div>
+
+      <ChatInput onSend={send} disabled={isLoading} />
+    </div>
+  );
+};
+
+/* ── 输入区 ── */
 const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean }> = ({
   onSend,
   disabled,
@@ -121,7 +330,6 @@ const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean }> = 
     if (!disabled) textareaRef.current?.focus();
   }, [disabled]);
 
-  // 自动调整高度
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -207,7 +415,6 @@ const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean }> = 
         />
       </div>
 
-      {/* 发送按钮 */}
       <button
         onClick={send}
         disabled={!canSend}
@@ -239,101 +446,6 @@ const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean }> = 
           <polyline points="5 12 12 5 19 12" />
         </svg>
       </button>
-    </div>
-  );
-};
-
-/* ══════════════════════════════════════════════
-   ChatView
-   ══════════════════════════════════════════════ */
-export const ChatView: React.FC = () => {
-  const { messages, isLoading, send, cancel } = useChat();
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-      {/* 头部 — 更轻盈 */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '14px 20px',
-          flexShrink: 0,
-          zIndex: 10,
-        }}
-      >
-        <h1
-          className="gradient-text"
-          style={{
-            fontSize: 15,
-            fontWeight: 600,
-            letterSpacing: 3,
-            margin: 0,
-            fontFamily: 'var(--font-serif)',
-          }}
-        >
-          昔涟
-        </h1>
-      </header>
-
-      {/* 消息区 — 半透玻璃底 */}
-      <div
-        style={{
-          flex: 1,
-          margin: '0 8px 8px',
-          borderRadius: 'var(--radius-card)',
-          background: 'transparent',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-      >
-        <MessageList messages={messages} />
-
-        {/* 加载指示 */}
-        {isLoading && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              padding: '0 20px 8px',
-            }}
-          >
-            {[0, 0.2, 0.4].map((delay, i) => (
-              <span
-                key={i}
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: i % 2 === 0 ? 'var(--color-pink)' : 'var(--color-purple)',
-                  animation: `pulseGlow 0.8s var(--ease-spring) ${delay}s infinite`,
-                }}
-              />
-            ))}
-            <button
-              onClick={cancel}
-              style={{
-                marginLeft: 8,
-                padding: '4px 14px',
-                borderRadius: 'var(--radius-full)',
-                border: '1px solid rgba(200, 160, 190, 0.3)',
-                background: 'var(--glass-bg)',
-                color: 'var(--color-text-dim)',
-                fontSize: 12,
-                cursor: 'pointer',
-                transition: `all var(--duration-fast) var(--ease-spring)`,
-              }}
-            >
-              取消
-            </button>
-          </div>
-        )}
-      </div>
-
-      <ChatInput onSend={send} disabled={isLoading} />
     </div>
   );
 };

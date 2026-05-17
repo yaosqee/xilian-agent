@@ -111,6 +111,30 @@ export async function fetchAutobiographyList(limit = 30): Promise<any> {
   return res.json();
 }
 
+/** 对话历史分页 */
+export interface ConversationHistoryItem {
+  id: number;
+  timestamp: number;
+  user_message: string;
+  assistant_reply: string;
+}
+
+export async function fetchConversationHistory(
+  beforeId?: number, limit = 10,
+): Promise<{
+  items: ConversationHistoryItem[];
+  total: number;
+  has_more: boolean;
+  oldest_id: number | null;
+}> {
+  const params = new URLSearchParams();
+  if (beforeId) params.set('before_id', String(beforeId));
+  params.set('limit', String(limit));
+  const res = await fetch(`${BASE}/conversation/history?${params}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 /** 阶段5: 获取时间问候 */
 export async function fetchGreeting(): Promise<any> {
   const res = await fetch(`${BASE}/greeting`);

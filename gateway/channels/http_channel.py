@@ -5,6 +5,7 @@ HTTPChannel — FastAPI HTTP 通道
   · POST /api/chat           同步回复
   · POST /api/chat/stream    SSE 流式回复
   · GET  /api/health         健康检查
+  · GET  /api/conversation/history 对话历史分页
   · GET  /api/emotion        当前情绪快照（阶段 3 新增）
   · GET  /api/emotion/history 情绪历史（阶段 3 新增）
   · GET  /api/encoding-status 记忆编码状态（阶段 3 新增）
@@ -149,6 +150,36 @@ class HTTPChannel(Channel):
                     "X-Accel-Buffering": "no",
                 },
             )
+
+        # ── 对话历史 ──
+
+        @self.app.get("/api/conversation/history")
+        async def conversation_history(before_id: int | None = None, limit: int = 10):
+            """游标分页查询历史对话。首次不传 before_id 取最新，后续传 oldest_id 向前翻页。"""
+            if self._agent is None:
+                return {"error": "agent not available"}
+            try:
+                limit = min(limit, 20)
+                rows = await self._agent._db.get_conversation_history(
+                    before_id=before_id, limit=limit,
+                )
+                total = await self._agent._db.get_conversation_total()
+                # DB 返回 DESC → 逆转为 ASC 给前端
+                items = [{
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "user_message": row["user_message"],
+                    "assistant_reply": row["assistant_reply"],
+                } for row in reversed(rows)]
+                return {
+                    "items": items,
+                    "total": total,
+                    "has_more": len(rows) >= limit,
+                    "oldest_id": rows[-1]["id"] if rows else None,
+                }
+            except Exception as e:
+                logger.warning("api.conversation_history_failed", error=str(e))
+                return {"items": [], "total": 0, "has_more": False, "oldest_id": None, "error": str(e)}
 
         # ── 阶段 3-4 情感端点 ──
 
@@ -654,6 +685,7 @@ class HTTPChannel(Channel):
             port=self.port,
             endpoints=[
                 "/api/chat", "/api/chat/stream", "/api/health",
+                "/api/conversation/history",
                 "/api/emotion", "/api/emotion/history",
                 "/api/encoding-status", "/api/session/reset", "/api/status",
                 "/api/notebook/*",

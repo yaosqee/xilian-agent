@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-17（v4 提示词重写 + SSE 真流式 + 纯括号三层防护 + 对话质量系统提升）
+> 📅 最后更新：2026-05-17（对话历史持久化）（v4 提示词重写 + SSE 真流式 + 纯括号三层防护 + 对话质量系统提升）
 
 ---
 
@@ -23,14 +23,14 @@ xilian-v3/
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
 │   ├── model_router.py              # ModelRouter：纯云端路由核心（Pro双Key轮询 + Flash后台 + 工具降级）
-│   ├── database.py                  # DatabaseManager：SQLite（10张表完整CRUD + Alembic优先）
+│   ├── database.py                  # DatabaseManager：SQLite（10张表CRUD + 游标分页 + Alembic优先）
 │   ├── vector_store.py              # VectorStore：sqlite-vec 向量检索（零外部依赖）
 │   ├── backup.py                    # BackupManager：每日备份 + 清理 + 恢复（阶段 3）
 │   ├── marker_parser.py             # MarkerParser：5种标记流式解析 + SSML接口（阶段7c）
 │   └── logging_config.py            # loguru 结构化日志配置
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
-│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder(XML) + Marker管道 + Notebook钩子 + coding_delegate + 人格评分
+│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + Notebook钩子 + coding_delegate + 启动上下文恢复
 │   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器注册表
 │   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook 4模块，自然语言段落）
@@ -51,7 +51,7 @@ xilian-v3/
 │   ├── channels/
 │   │   ├── base.py                  # Channel 抽象基类
 │   │   ├── console_channel.py       # ConsoleChannel：终端交互（rich 美化）
-│   │   └── http_channel.py          # HTTPChannel：FastAPI SSE API（~20个端点）
+│   │   └── http_channel.py          # HTTPChannel：FastAPI SSE API（~22个端点，含对话历史分页）
 │   └── mcp/
 │       └── adapter.py               # MCPAdapter：接口签名预埋（阶段7实现）
 │

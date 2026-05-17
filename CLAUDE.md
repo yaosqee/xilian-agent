@@ -16,7 +16,8 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `main.py` — 启动入口
 - `packages/agent/agent_core.py` — AgentCore 核心大脑
 - `packages/shared/events.py` — InternalEvent 统一消息结构
-- `gateway/channels/http_channel.py` — FastAPI 所有 API 端点
+- `gateway/channels/http_channel.py` — FastAPI 所有 API 端点（含对话历史分页 /api/conversation/history）
+- `packages/shared/database.py` — SQLite 10 表 CRUD + 游标分页查询
 - `packages/frontend/src/` — React 前端
 
 ## 技术约定

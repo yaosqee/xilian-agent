@@ -380,6 +380,45 @@ class DatabaseManager:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def get_conversation_history(
+        self, before_id: int | None = None, limit: int = 10,
+        user_id: str = "hezi",
+    ) -> list[dict]:
+        """
+        游标分页查询历史对话（按 id 倒序，最新在前）。
+
+        不传 before_id → 返回最新 N 条。
+        传 before_id → 返回 id < before_id 的 N 条（更早的记录）。
+        """
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        if before_id:
+            cursor = await self._conn.execute(
+                "SELECT * FROM conversation_logs WHERE id < ? AND user_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (before_id, user_id, limit),
+            )
+        else:
+            cursor = await self._conn.execute(
+                "SELECT * FROM conversation_logs WHERE user_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (user_id, limit),
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_conversation_total(self, user_id: str = "hezi") -> int:
+        """获取历史对话总轮数"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM conversation_logs WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
     async def get_emotion_history(self, limit: int = 50) -> list[dict]:
         """查询有情绪标注的记录（用于情绪趋势）"""
         if not self._conn:

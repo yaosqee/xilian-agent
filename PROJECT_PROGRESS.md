@@ -251,18 +251,21 @@
 | 七 | 项目文档 + Memory | PROJECT_PROGRESS/CONTEXT/README更新，~/.claude memory写入（project-vision+architecture+conventions+overview） |
 | 八 | 对话质量系统提升 | 提示词 v3→v3.1（删除短约束+对话节奏+话题延续+标记降级），上下文 XML→自然语言段落，NotebookModule 实现话题注入，max_tokens=600+temperature=0.65，_enforce_speech_rule 上下文感知三层兜底 |
 | 九 | SSE 真流式 + 纯括号防护 | 后端逐 3 字符 50ms 间隔推送，前端 ReadableStream 流式读取替代 await res.text()。纯括号检测：括号外 CJK≥2 放行 + 括号占比检测 + _clean_reply 内置兜底 |
-| 十 | 提示词 v4 风格指南重写 | 句式铁律（短句分行+……节奏+不超三行）、意象约束（0-2个/轮）、固定口头禅注入（5个锚点短语）、情感调色盘（6情绪×形式变化）、10条OOC红线、6场景示例。agent_core加载路径v3→v4 |
+| 十 | 提示词 v4 风格指南重写
+| 十一 | 对话历史持久化与分页加载 | 游标分页API(GET /api/conversation/history)+启动恢复20轮到AgentContext+前端LoadMoreButton(毛玻璃居中按钮+spin动画)+chatStore分页状态(historyCursor/hasMore/loadedRounds最多40轮)+滚动位置保持 | 句式铁律（短句分行+……节奏+不超三行）、意象约束（0-2个/轮）、固定口头禅注入（5个锚点短语）、情感调色盘（6情绪×形式变化）、10条OOC红线、6场景示例。agent_core加载路径v3→v4 |
 | — | Git commits: 6237a81, ... | — |
 
 ## 下一步
 
 打磨期继续 — v4 提示词验证与微调 + 前端体验打磨 + 记忆/情感精度持续提升。
+对话历史持久化已交付（跨会话记忆连续性 + 前端分页加载 最多40轮）。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
 ---
 
 ## 最近决策
 
+- **2026-05-17**：对话历史持久化与分页加载。新增 GET /api/conversation/history 游标分页端点（before_id 向前翻页），AgentCore.startup() 从 DB 恢复最近 20 轮对话到 AgentContext（跨会话记忆连续性），前端 chatStore 新增分页状态（historyCursor/hasMore/isLoadingMore/loadedRounds），ChatView 顶部 LoadMoreButton 毛玻璃居中按钮（spin 加载动画 + 最多 40 轮上限 + 滚动位置保持）。
 - **2026-05-17**：提示词 v4 全面重写。以角色说话风格指南为骨架，解决三大根因：① 句式从"2-4句流动"→"短句分行不超三行"+"……"为节奏控制器；② 意象从无约束→"盐不是饭，0-2个/轮"；③ 情感从"说什么"→"怎么说"（形式变化表）。新增固定口头禅（5个锚点）、对话行为模式（主动发起/先接纳再推进/温柔说不）、10条OOC红线（含禁止连续三行、禁止堆砌意象）。agent_core 加载路径 v3→v4。
 - **2026-05-17**：SSE 真流式 + 纯括号三层防护。后端逐 3 字符 50ms 间隔推送（之前整个 reply 作为单个 data: 事件）。前端 ReadableStream 流式读取替代 await res.text()。纯括号检测改进为括号外 CJK≥2 放行 + 括号占比检测，_clean_reply 内置兜底。解决「一次性返回所有文本、等待时间长」和「（纯括号回复）无声音」两个前端可见 bug。
 - **2026-05-17**：对话质量系统提升。提示词 v3→v3.1（删除短约束+对话节奏+话题延续+标记降级）。上下文 ContextBuilder XML→自然语言段落，NotebookModule 实现话题注入。模型参数 max_tokens=600+temperature 0.65。_enforce_speech_rule 上下文感知三层兜底。移除 _safe_mode 死代码。
