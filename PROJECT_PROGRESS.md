@@ -1,7 +1,7 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-17 14:30 CST
+> 📅 最后更新：2026-05-18 01:30 CST
 > 🔖 当前阶段：阶段 8 ✅ 完成 → 项目进入打磨期 → v4 提示词 + SSE 真流式上线
 
 ---
@@ -260,12 +260,15 @@
 
 打磨期继续 — v4 提示词验证与微调 + 前端体验打磨 + 记忆/情感精度持续提升。
 对话历史持久化已交付。用户记忆系统已交付（叙事性印象文档 + 破冰主动问候 + 每日凌晨重写 + 前端伙伴印象面板）。
+好感度显示修复 + cron调度迁移asyncio已完成。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
 ---
 
 ## 最近决策
 
+- **2026-05-18**：好感度API端点修复 + 前端显示精度。GET /api/affection 从 _register_stage8_routes 移到 _setup_routes（同上次 portrait 端点的路由注册bug，只在 __init__ 内注册的端点才生效）。前端 AffectionBar Math.round→toFixed(1) 显示小数点后一位。
+- **2026-05-18**：Cron调度全面修复。所有异步定时任务从 APScheduler lambda+asyncio.create_task 迁移到 asyncio 后台循环（nudge_loop/token_refill + _cron_loop/_cron_weekly_loop/_cron_multi_loop）。根因：APScheduler 在线程池执行 lambda，线程池无 running event loop，asyncio.create_task() 抛出 RuntimeError 被静默吞掉，导致自主问候/自传体/反思/日记/任务检查/印象重写等所有异步定时任务从未执行。同步备份任务仍用 APScheduler（不受影响）。
 - **2026-05-17**：用户记忆系统上线。新增 user_portrait 表 + PortraitManager 定期重写（每日凌晨 5:00，Flash LLM 叙事性印象文档）+ PortraitModule（ContextBuilder 优先级 3，版本号门控，首条消息完整注入）+ 破冰主动问候（consume_icebreaker_greeting + _tick_icebreaker 轮数追踪 + 强制编码）+ 冷启动兜底（阈值 4 轮）+ 前端 PortraitPanel（侧栏星形图标入口，空状态 5s 轮询）。核心设计：重写即遗忘，结构化知识退化为叙事索引，印象优于事实。
 - **2026-05-17**：对话历史持久化与分页加载。新增 GET /api/conversation/history 游标分页端点（before_id 向前翻页），AgentCore.startup() 从 DB 恢复最近 20 轮对话到 AgentContext（跨会话记忆连续性），前端 chatStore 新增分页状态（historyCursor/hasMore/isLoadingMore/loadedRounds），ChatView 顶部 LoadMoreButton 毛玻璃居中按钮（spin 加载动画 + 最多 40 轮上限 + 滚动位置保持）。
 - **2026-05-17**：提示词 v4 全面重写。以角色说话风格指南为骨架，解决三大根因：① 句式从"2-4句流动"→"短句分行不超三行"+"……"为节奏控制器；② 意象从无约束→"盐不是饭，0-2个/轮"；③ 情感从"说什么"→"怎么说"（形式变化表）。新增固定口头禅（5个锚点）、对话行为模式（主动发起/先接纳再推进/温柔说不）、10条OOC红线（含禁止连续三行、禁止堆砌意象）。agent_core 加载路径 v3→v4。

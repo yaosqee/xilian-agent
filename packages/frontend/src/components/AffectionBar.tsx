@@ -48,7 +48,7 @@ export const AffectionBar: React.FC = () => {
           {info.icon} {info.label}
         </span>
         <span style={{ fontSize: 12, color: 'var(--color-pink-dark)', fontWeight: 600 }}>
-          好感度 {Math.round(score)}
+          好感度 {score.toFixed(1)}
         </span>
       </div>
       <div style={{ height: 4, borderRadius: 2, background: 'rgba(200, 180, 210, 0.15)', overflow: 'hidden' }}>

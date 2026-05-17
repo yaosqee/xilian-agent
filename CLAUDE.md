@@ -19,7 +19,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点（含对话历史分页 /api/conversation/history）
 - `packages/shared/database.py` — SQLite 11 表 CRUD + 游标分页查询
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器（定期重写 + 冷启动）
-- `gateway/channels/http_channel.py` — FastAPI 所有 API 端点（含 /api/user/portrait 等 ~24 个端点）
+- `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值计算 + 主动问候 + AttentionScheduler）
 - `packages/frontend/src/` — React 前端
 
 ## 技术约定

@@ -335,6 +335,40 @@ class HTTPChannel(Channel):
                 logger.warning("api.portrait_failed", error=str(e))
                 return {"error": str(e)}
 
+        # ── 好感度 ──
+        @self.app.get("/api/affection")
+        async def get_affection():
+            _agent = self._agent
+            if not _agent or not _agent._db:
+                return {"error": "agent not available"}
+            try:
+                latest = await _agent._db.get_latest_affection()
+                level_labels = {
+                    1: "昔涟喜欢你",
+                    2: "昔涟非常喜欢你",
+                    3: "昔涟特别喜欢你",
+                    4: "你永远喜欢昔涟",
+                }
+                if not latest:
+                    return {
+                        "score": 0.0,
+                        "level": 1,
+                        "level_label": level_labels[1],
+                        "total_conversations": 0,
+                    }
+                score = latest["score"]
+                level = latest["level"]
+                return {
+                    "score": score,
+                    "level": level,
+                    "level_label": level_labels.get(level, level_labels[1]),
+                    "total_conversations": latest["total_conversations"],
+                    "updated_at": latest["updated_at"],
+                }
+            except Exception as e:
+                logger.warning("api.affection_failed", error=str(e))
+                return {"error": str(e)}
+
         @self.app.get("/api/encoding-status")
         async def get_encoding_status():
             """获取记忆编码状态"""
@@ -628,39 +662,6 @@ class HTTPChannel(Channel):
                 "round_count": agent._round_count,
             }
 
-        # ── 好感度 ──
-        @self.app.get("/api/affection")
-        async def get_affection():
-            """获取当前好感度状态"""
-            if not agent or not agent._db:
-                return {"error": "agent not available"}
-            try:
-                latest = await agent._db.get_latest_affection()
-                level_labels = {
-                    1: "昔涟喜欢你",
-                    2: "昔涟非常喜欢你",
-                    3: "昔涟特别喜欢你",
-                    4: "你永远喜欢昔涟",
-                }
-                if not latest:
-                    return {
-                        "score": 0.0,
-                        "level": 1,
-                        "level_label": level_labels[1],
-                        "total_conversations": 0,
-                    }
-                score = latest["score"]
-                level = latest["level"]
-                return {
-                    "score": score,
-                    "level": level,
-                    "level_label": level_labels.get(level, level_labels[1]),
-                    "total_conversations": latest["total_conversations"],
-                    "updated_at": latest["updated_at"],
-                }
-            except Exception as e:
-                logger.warning("api.affection_failed", error=str(e))
-                return {"error": str(e)}
 
         # ── 被遗忘权 ──
         @self.app.post("/api/privacy/forget")

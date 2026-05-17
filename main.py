@@ -70,38 +70,109 @@ async def main():
     scheduler.start()
     logger.info("备份调度已启动 (每日 3:00 备份, 3:30 清理)")
 
+    # ── cron 辅助函数 ──
+    async def _cron_loop(hour: int, minute: int, job_func, job_name: str):
+        """每日在指定时间运行 job_func。"""
+        import datetime
+        while True:
+            now = datetime.datetime.now()
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                target += datetime.timedelta(days=1)
+            wait = (target - now).total_seconds()
+            logger.debug("cron.sleep", job=job_name, wait_minutes=round(wait / 60, 1))
+            await asyncio.sleep(wait)
+            try:
+                await job_func()
+            except Exception as e:
+                logger.error(f"cron.{job_name}_error", error=str(e))
+
+    async def _cron_multi_loop(hours: list[int], minute: int, job_func, job_name: str):
+        """每日在多个整点运行 job_func。"""
+        import datetime
+        while True:
+            now = datetime.datetime.now()
+            candidates = []
+            for h in hours:
+                t = now.replace(hour=h, minute=minute, second=0, microsecond=0)
+                if t <= now:
+                    t += datetime.timedelta(days=1)
+                candidates.append(t)
+            target = min(candidates)
+            wait = (target - now).total_seconds()
+            logger.debug("cron.sleep", job=job_name, wait_minutes=round(wait / 60, 1))
+            await asyncio.sleep(wait)
+            try:
+                await job_func()
+            except Exception as e:
+                logger.error(f"cron.{job_name}_error", error=str(e))
+
     # ── 阶段 5: 自传体 + 反思定时任务 ──
-    scheduler.add_job(
-        lambda: asyncio.create_task(run_daily_autobiography(agent._db, agent.router)),
-        trigger="cron", hour=4, minute=0, id="daily_autobiography",
-    )
-    scheduler.add_job(
-        lambda: asyncio.create_task(run_weekly_reflection(agent._db, agent.router)),
-        trigger="cron", day_of_week="sun", hour=4, minute=30, id="weekly_reflection",
-    )
+    async def daily_autobiography_job():
+        await run_daily_autobiography(agent._db, agent.router)
+
+    async def weekly_reflection_job():
+        await run_weekly_reflection(agent._db, agent.router)
+
+    asyncio.create_task(_cron_loop(4, 0, daily_autobiography_job, "daily_autobiography"))
+
+    # 每周日 4:30
+    async def _cron_weekly_loop(dow: int, hour: int, minute: int, job_func, job_name: str):
+        """每周指定星期几运行 job_func（dow: 0=Mon, 6=Sun）。"""
+        import datetime
+        while True:
+            now = datetime.datetime.now()
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            # 回退到最近的指定星期几
+            days_ahead = dow - target.weekday()
+            if days_ahead < 0:
+                days_ahead += 7
+            target += datetime.timedelta(days=days_ahead)
+            if target <= now:
+                target += datetime.timedelta(days=7)
+            wait = (target - now).total_seconds()
+            logger.debug("cron.sleep", job=job_name, wait_hours=round(wait / 3600, 1))
+            await asyncio.sleep(wait)
+            try:
+                await job_func()
+            except Exception as e:
+                logger.error(f"cron.{job_name}_error", error=str(e))
+
+    asyncio.create_task(_cron_weekly_loop(6, 4, 30, weekly_reflection_job, "weekly_reflection"))
     logger.info("自传体写作调度已启动 (每日 4:00 自传体, 每周日 4:30 反思)")
 
     # ── 阶段 6: 自主问候 + 令牌补充调度 ──
-    async def nudge_tick():
-        decision = await nudge.tick()
-        if decision.action == "greet":
-            logger.info(
-                "nudge.greeting_scheduled",
-                missing=round(nudge._current_missing_value, 2),
-                preview=decision.greeting[:60] if decision.greeting else "",
-            )
-        elif decision.action == "silent":
-            logger.debug("nudge.silent", reason=decision.reason)
+    async def nudge_loop():
+        """每 15 分钟检查一次想念值"""
+        while True:
+            await asyncio.sleep(900)  # 15 分钟
+            try:
+                decision = await nudge.tick()
+                if decision.action == "greet":
+                    logger.info(
+                        "nudge.greeting_scheduled",
+                        missing=round(nudge._current_missing_value, 2),
+                        preview=decision.greeting[:60] if decision.greeting else "",
+                    )
+                elif decision.action == "silent":
+                    logger.info("nudge.silent", reason=decision.reason)
+                elif decision.action == "paused":
+                    logger.info("nudge.paused", reason=decision.reason)
+            except Exception as e:
+                logger.error("nudge.tick_error", error=str(e))
 
-    scheduler.add_job(
-        lambda: asyncio.create_task(nudge_tick()),
-        trigger="interval", minutes=15, id="proactive_check",
-    )
-    scheduler.add_job(
-        nudge_bucket.refill,
-        trigger="interval", minutes=20, id="token_bucket_refill",
-    )
-    logger.info("自主生命节律调度已启动 (每15min 想念检查, 每20min 令牌补充)")
+    async def token_refill_loop():
+        """每 20 分钟补充令牌"""
+        while True:
+            await asyncio.sleep(1200)  # 20 分钟
+            try:
+                nudge_bucket.refill()
+            except Exception as e:
+                logger.error("token_refill.error", error=str(e))
+
+    asyncio.create_task(nudge_loop())
+    asyncio.create_task(token_refill_loop())
+    logger.info("自主生命节律已启动 (每15min 想念检查, 每20min 令牌补充)")
 
     # ── 阶段 7b: Notebook 定时任务 ──
     async def notebook_daily_diary():
@@ -128,14 +199,8 @@ async def main():
             if due:
                 logger.info("notebook.due_tasks_found", count=len(due))
 
-    scheduler.add_job(
-        lambda: asyncio.create_task(notebook_daily_diary()),
-        trigger="cron", hour=23, minute=50, id="notebook_daily_diary",
-    )
-    scheduler.add_job(
-        lambda: asyncio.create_task(check_due_tasks()),
-        trigger="cron", hour="8,12,18", minute=0, id="check_due_tasks",
-    )
+    asyncio.create_task(_cron_loop(23, 50, notebook_daily_diary, "notebook_diary"))
+    asyncio.create_task(_cron_multi_loop([8, 12, 18], 0, check_due_tasks, "check_due_tasks"))
     logger.info("Notebook 调度已启动 (每日 23:50 日记, 8:00/12:00/18:00 任务检查)")
 
     # ── 阶段 8+: 用户印象文档定期重写（每日凌晨 5:00，自传体之后）──
@@ -150,10 +215,7 @@ async def main():
                     agent.context._current_portrait_version = latest.get("version", 1)
                 logger.info("portrait.cron_consolidated", length=len(result))
 
-    scheduler.add_job(
-        lambda: asyncio.create_task(consolidate_user_portrait()),
-        trigger="cron", hour=5, minute=0, id="consolidate_user_portrait",
-    )
+    asyncio.create_task(_cron_loop(5, 0, consolidate_user_portrait, "portrait_consolidate"))
     logger.info("用户印象重写调度已启动 (每日 5:00)")
 
     # ── 阶段 7c: AttentionScheduler 初始化 ──
