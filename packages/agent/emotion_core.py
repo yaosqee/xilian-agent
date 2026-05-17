@@ -110,10 +110,12 @@ class EmotionState:
         decay_factor = math.exp(-dt / tau)
         decay_factor = max(decay_factor, DECAY_CLIP)
 
-        # PAD 衰减
-        self.pad_p *= decay_factor
-        self.pad_a *= decay_factor
-        self.pad_d *= decay_factor
+        # 衰减：向基线回归而非向零
+        # PAD = PAD × e^(-Δt/τ) + baseline × (1 - e^(-Δt/τ))
+        baseline_p, baseline_a, baseline_d = DEFAULT_BASELINE
+        self.pad_p = self.pad_p * decay_factor + baseline_p * (1 - decay_factor)
+        self.pad_a = self.pad_a * decay_factor + baseline_a * (1 - decay_factor)
+        self.pad_d = self.pad_d * decay_factor + baseline_d * (1 - decay_factor)
 
         self.timestamp = now
         self._invalidate_cache()
@@ -140,9 +142,14 @@ class EmotionState:
         """
         情绪更新公式（核心）：
 
-            PAD_new = PAD_old × decay + event_impact × (1 - decay)
+            PAD_new = PAD_old × e^(-Δt/τ)
+                    + event_impact × (1 - e^(-Δt/τ))
 
         event_impact = event_pad × sensitivity
+
+        直觉：旧情绪随时间衰减 → 基线，新事件占据「新信息」份额。
+        dt→0 时 event 几乎不生效（短时间第一条消息还未被充分理解）；
+        dt→∞ 时旧情绪清空，event 全额生效。
 
         Args:
             event_pad: 本次事件的 (P, A, D) 偏移量
@@ -156,12 +163,12 @@ class EmotionState:
         now = time.time()
         dt = now - self.timestamp
         if dt > LONG_INACTIVITY_SECONDS:
-            # 太久没对话 → 从基线开始
+            # 太久没对话 → 从基线重新开始，decay_factor=0 表示旧情绪完全释放
             baseline_p, baseline_a, baseline_d = DEFAULT_BASELINE
             old_p = baseline_p
             old_a = baseline_a
             old_d = baseline_d
-            decay_factor = 1.0  # 基线不需要衰减
+            decay_factor = 0.0
         else:
             old_p = self.pad_p
             old_a = self.pad_a
@@ -175,11 +182,12 @@ class EmotionState:
         impact_a = ea * sensitivity
         impact_d = ed * sensitivity
 
-        # 3. 核心公式：PAD_new = PAD_old × e^(-Δt/τ) + event_impact
-        #    旧情绪随时间衰减，新事件即时全额加入，之后一起衰减
-        self.pad_p = old_p * decay_factor + impact_p
-        self.pad_a = old_a * decay_factor + impact_a
-        self.pad_d = old_d * decay_factor + impact_d
+        # 3. 核心公式
+        #    PAD_new = old × decay + impact × (1 - decay)
+        #    旧情绪随时间衰减，新事件按「新信息」比例加入
+        self.pad_p = old_p * decay_factor + impact_p * (1 - decay_factor)
+        self.pad_a = old_a * decay_factor + impact_a * (1 - decay_factor)
+        self.pad_d = old_d * decay_factor + impact_d * (1 - decay_factor)
 
         # 4. clamp [-1, 1]，但保留一点余量防止锁死
         self.pad_p = max(-0.95, min(0.95, self.pad_p))
@@ -225,28 +233,44 @@ class EmotionState:
             )
             distances[name] = dist
 
-        # 高斯核：越近强度越高
+        # 高斯核：越近强度越高，原始值即为可信度
         sigma2 = 2 * PAD_SIGMA ** 2
         intensities = {
             name: math.exp(-dist ** 2 / sigma2)
             for name, dist in distances.items()
         }
 
-        # 归一化
-        max_intensity = max(intensities.values()) or 1.0
-        intensities = {k: v / max_intensity for k, v in intensities.items()}
-
         # 最近的是主情绪
         primary = min(distances, key=distances.get)
+        primary_intensity = intensities[primary]
+
+        # 最低强度门槛：微弱信号 → 降级为「平静」，避免基线误判为「期待」
+        # 基线 (0.15,0.05,0.10) → 期待 intensity=0.78，远超阈值，需要特殊处理
+        # 改用距离阈值：距基线越近越倾向「平静」
+        base_p, base_a, base_d = DEFAULT_BASELINE
+        dist_from_baseline = math.sqrt(
+            (self.pad_p - base_p) ** 2
+            + (self.pad_a - base_a) ** 2
+            + (self.pad_d - base_d) ** 2
+        )
+        MIN_DEVIATION = 0.25  # PAD 偏离基线超过此值才算有效情绪
+        if dist_from_baseline < MIN_DEVIATION and primary_intensity < 0.85:
+            primary = "平静"
+            primary_intensity = intensities.get("平静", 0.3)
+
+        # 归一化到 [0,1] 用于前端展示（保持相对关系），
+        # 但 primary_intensity 保留原始高斯值（真实可信度）
+        max_intensity = max(intensities.values()) or 1.0
+        display_intensities = {k: v / max_intensity for k, v in intensities.items()}
 
         self.primary_emotion = primary
-        self.primary_intensity = intensities[primary]
-        self.dimensions = intensities
+        self.primary_intensity = primary_intensity
+        self.dimensions = display_intensities
 
         return {
             "primary_emotion": primary,
             "primary_intensity": self.primary_intensity,
-            "dimensions": intensities,
+            "dimensions": display_intensities,
         }
 
     # ── 轨迹 ──────────────────────────────────────────
@@ -361,8 +385,10 @@ _POSITIVE_KEYWORDS = {
 }
 _NEGATIVE_KEYWORDS = {
     "难过", "伤心", "哭", "累", "疲惫", "困", "烦", "焦虑", "紧张",
-    "害怕", "担心", "生气", "愤怒", "讨厌", "失望", "失败", "挂了",
+    "害怕", "恐惧", "恐怖", "吓人", "吓", "诡异", "血腥", "担心",
+    "生气", "愤怒", "讨厌", "失望", "失败", "挂了", "痛苦", "窒息",
     "加班", "熬夜", "压力", "崩溃", "不要", "算了", "唉", "哎",
+    "绝望", "无助", "孤独", "寂寞", "空虚", "迷茫", "后悔", "愧疚",
 }
 _COPING_KEYWORDS = {
     "没问题", "我能", "可以", "搞定", "简单", "小事", "没事", "随便",
@@ -414,8 +440,9 @@ class AppraisalExtractor:
         if self._router:
             try:
                 return await self._extract_llm(user_message)
-            except Exception:
-                pass  # fall through to heuristic
+            except Exception as e:
+                from loguru import logger
+                logger.debug("appraisal.llm_failed_fallback_to_heuristic", error=str(e))
 
         # 降级到启发式
         return self._extract_heuristic(user_message)
@@ -593,6 +620,8 @@ class EmotionEngine:
         sensitivity: float = DEFAULT_SENSITIVITY,
     ):
         self.state = EmotionState()
+        # 时间戳置为 0 确保首条消息的 decay_factor≈0，事件全额生效
+        self.state.timestamp = 0.0
         self.appraisal_extractor = AppraisalExtractor(model_router)
         self.modulator = PersonalityModulator()
         self.tau = tau

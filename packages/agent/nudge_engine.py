@@ -328,7 +328,8 @@ class NudgeEngine:
             if row:
                 return (now - row[0]) / 3600.0
             return 0.0
-        except Exception:
+        except Exception as e:
+            logger.warning("nudge.get_hours_since_last_failed", error=str(e))
             return 0.0
 
     def _get_urgency_mod(self) -> float:
@@ -571,7 +572,12 @@ class NudgeEngine:
 
     @property
     def status(self) -> dict:
-        """当前状态快照（供 API 返回）"""
+        """当前状态快照（供 API 返回）— 每次调用时实时计算想念值"""
+        # 实时计算而非依赖 tick() 的缓存值，确保前端看到最新数据
+        try:
+            self._current_missing_value = self.calculate_missing_value()
+        except Exception:
+            pass  # 计算失败时保留旧值
         return {
             "greeting_enabled": self._config.greeting_enabled,
             "do_not_disturb": self._config.do_not_disturb,

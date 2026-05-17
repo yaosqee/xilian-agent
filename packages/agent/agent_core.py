@@ -104,6 +104,11 @@ class AgentCore:
         self._safe_mode: bool = False
         self._safe_mode_score_count: int = 0  # 安全模式下评分次数
 
+        # 好感度系统
+        self._affection_score: float = 0.0
+        self._affection_level: int = 1
+        self._total_conversations: int = 0
+
         # 阶段 2: 数据库预埋 → 阶段 3 实际写入
         self._db = DatabaseManager(db_path)
 
@@ -163,6 +168,17 @@ class AgentCore:
         nb_module = self._context_builder.get_module("notebook")
         if nb_module:
             nb_module.set_notebook(self.notebook_manager)
+
+        # 加载最近好感度
+        try:
+            latest = await self._db.get_latest_affection()
+            if latest:
+                self._affection_score = latest["score"]
+                self._affection_level = latest["level"]
+                self._total_conversations = latest["total_conversations"]
+                logger.info("affection.loaded", score=self._affection_score, level=self._affection_level)
+        except Exception:
+            logger.debug("affection.load_skipped")
 
         logger.info("agent.startup_complete")
 
@@ -261,14 +277,8 @@ class AgentCore:
             self.memory_manager.signal_new_message()
         self.context.memory_retrieval = await self._retrieve_memories(event.payload)
 
-        # ── 3. 共情注入 ──
-        empathy_text = self._inject_empathy()
-
-        # ── 4. 记忆注入 (NEW) ──
-        memory_text = self.context.inject_memory_context()
-
-        # ── 5. 构建消息 ──
-        messages = self._build_messages(event.payload, empathy_text, memory_text)
+        # ── 3. 构建消息（情感+记忆由 ContextBuilder EmotionModule/MemoryModule 注入）──
+        messages = self._build_messages(event.payload)
 
         # ── 6. 模型调用 ──
         try:
@@ -667,10 +677,123 @@ class AgentCore:
                     pad=f"({self.emotion_engine.state.pad_p:.2f},{self.emotion_engine.state.pad_a:.2f},{self.emotion_engine.state.pad_d:.2f})",
                     emotion=pad_profile.get("primary_emotion"),
                 )
+
+                # 更新好感度
+                await self._update_affection(pad_profile)
         except asyncio.CancelledError:
             logger.debug("emotion.analysis_cancelled")
         except Exception as e:
             logger.warning("emotion.analysis_failed", error=str(e))
+
+    # ============================================================
+    # 好感度系统
+    # ============================================================
+
+    async def _update_affection(self, pad_profile: dict) -> None:
+        """
+        根据本轮情绪更新好感度。
+
+        规则：
+          - 基础增长 0.05/轮
+          - 积极情绪加成：快乐/信任/期待 +0.10, 平静 +0.05
+          - 红线扣减：人格漂移 OR 强烈负面(愤怒/厌恶/恐惧,intensity>0.5) → -0.50
+          - 单轮上限：+0.30 max, -0.50 max
+          - 100 分锁定：score>=100 时只增不减
+        """
+        try:
+            old_score = self._affection_score
+
+            # 0. 已满 100 → locked
+            if old_score >= 100.0:
+                self._total_conversations += 1
+                await self._db.insert_affection_snapshot(
+                    score=100.0, level=4,
+                    total_conversations=self._total_conversations,
+                    reason="locked_at_max",
+                )
+                return
+
+            # 1. 基础增长
+            delta = 0.05
+            reason = "base_increment"
+
+            # 2. 积极情绪加成
+            primary = pad_profile.get("primary_emotion", "")
+            intensity = pad_profile.get("primary_intensity", 0.0)
+            positive_high = {"快乐", "信任", "期待"}
+            positive_low = {"平静"}
+
+            if primary in positive_high:
+                delta += 0.10
+                reason = f"{primary}_bonus"
+            elif primary in positive_low:
+                delta += 0.05
+                reason = f"{primary}_bonus"
+
+            # 3. 红线扣减
+            negative_strong = {"愤怒", "厌恶", "恐惧"}
+            red_line_hit = False
+            if self._drift_counter > 0:
+                red_line_hit = True
+            if primary in negative_strong and intensity > 0.5:
+                red_line_hit = True
+
+            if red_line_hit:
+                delta = -0.50
+                reason = "red_line_hit"
+
+            # 4. 钳制
+            delta = max(-0.50, min(0.30, delta))
+
+            # 5. 应用
+            new_score = old_score + delta
+            new_score = max(0.0, min(100.0, new_score))
+            new_score = round(new_score, 2)
+
+            # 6. 锁定检查
+            if new_score >= 100.0:
+                new_score = 100.0
+                reason = f"{reason}_max_locked"
+
+            # 7. 等级计算
+            if new_score >= 75:
+                level = 4 if new_score >= 100 else 3
+            elif new_score >= 50:
+                level = 2
+            else:
+                level = 1
+
+            self._affection_score = new_score
+            self._affection_level = level
+            self._total_conversations += 1
+
+            # 8. 持久化
+            await self._db.insert_affection_snapshot(
+                score=new_score,
+                level=level,
+                total_conversations=self._total_conversations,
+                reason=reason,
+            )
+
+            if abs(delta) > 0.01:
+                logger.debug(
+                    "affection.updated",
+                    old=round(old_score, 2),
+                    new=new_score,
+                    delta=round(delta, 3),
+                    level=level,
+                    reason=reason,
+                )
+        except Exception as e:
+            logger.warning("affection.update_failed", error=str(e))
+
+    @property
+    def affection_score(self) -> float:
+        return self._affection_score
+
+    @property
+    def affection_level(self) -> int:
+        return self._affection_level
 
     @property
     def personality_preview(self) -> str:

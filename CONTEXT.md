@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-16 22:00（前端全面重构完成，面板集成完毕）
+> 📅 最后更新：2026-05-17（好感度系统重构 + 核心bug修复 + 测试补全150条）
 
 ---
 
@@ -78,7 +78,7 @@ xilian-v3/
 │   │   │   ├── status/              # EncodingStatusBar（轮询编码状态）
 │   │   │   └── AffectionBar.tsx     # 4级好感度/羁绊值指示器（阶段5）
 │   │   ├── hooks/                   # useChat + useEmotionData
-│   │   ├── stores/                  # Zustand: appStore + chatStore + emotionStore + autonomyStore + notebookStore
+│   │   ├── stores/                  # Zustand: appStore + chatStore + emotionStore + autonomyStore + notebookStore + affectionStore
 │   │   ├── services/api.ts          # API 封装（fetch + SSE 流式，含 autonomy + notebook 端点）
 │   │   ├── types/                   # chat.ts + emotion.ts + memory.ts + autonomy.ts + voice.ts
 │   │   ├── styles/                  # globals.css（含 thinking 动画） + theme.css（品牌视觉：樱花粉系）
@@ -93,7 +93,9 @@ xilian-v3/
 │   ├── alembic.ini
 │   ├── env.py
 │   └── versions/
-│       └── 001_initial.py           # 9 表全量 schema
+│       ├── 001_initial.py           # 9 表全量 schema（阶段7d）
+│       ├── 002_audit_logs.py        # 审计日志表（阶段8）
+│       └── 003_affection.py         # 好感度状态表（打磨期）
 │
 ├── packages/voice/                  # 🎤 语音管道（阶段7e 接口占位）
 │   ├── __init__.py
@@ -230,12 +232,11 @@ NudgeEngine 自主问候流程（阶段 6）：
 
 | 位置 | 说明 |
 |------|------|
-| 阶段 7-8 新增模块 | 需补自动化测试（Notebook/AttentionScheduler/MarkerParser/coding_delegate/审计/安全模式） |
 | `packages/voice/` | 语音管道接口占位，阶段 9 完整实现 |
 | `gateway/mcp/adapter.py` | MCP 适配器接口签名预埋 |
 | `markers_to_ssml()` | SSML 转换完整实现 |
 
 ## 下一步
 
-打磨期继续 — 补核心测试（阶段7-8模块）+ 部署脚本更新。
+打磨期继续 — 记忆/情感精度提升（对齐角色人格）+ 前端体验打磨。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。

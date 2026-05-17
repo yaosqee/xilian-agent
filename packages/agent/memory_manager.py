@@ -212,11 +212,18 @@ class MemoryManager:
         exchange_count = len(exchanges)
         scores["exchange_count"] = min(exchange_count / 10.0, 1.0)
 
-        # 话题显著性
+        # 话题显著性 — 排除否定形式（不X / 没X / 没有X）
         all_text = " ".join(
             e.get("content", "") for e in exchanges
         )
-        keyword_hits = sum(1 for kw in TOPIC_KEYWORDS if kw in all_text)
+        import re as _re
+        keyword_hits = 0
+        for kw in TOPIC_KEYWORDS:
+            for m in _re.finditer(_re.escape(kw), all_text):
+                # 检查前 1-2 字符是否含否定词
+                prefix = all_text[max(0, m.start() - 2):m.start()]
+                if not _re.search(r'(?:不|没|没有|不是|不太|别)', prefix):
+                    keyword_hits += 1
         scores["topic_significance"] = min(keyword_hits / 3.0, 1.0)
 
         # 情感多样性
@@ -286,6 +293,7 @@ class MemoryManager:
         self,
         user_message: str,
         k: int = 3,
+        max_distance: float = 1.2,
     ) -> list[dict]:
         """
         检索与当前消息相似的历史记忆。
@@ -293,6 +301,7 @@ class MemoryManager:
         Args:
             user_message: 用户消息文本
             k: 返回 top-k 结果
+            max_distance: L2 距离阈值，超过此值的记忆视为不相关（bge-m3 1024维经验值）
 
         Returns:
             [{summary, distance, importance, episodic_id, ...}]
@@ -301,23 +310,25 @@ class MemoryManager:
             # Step 1: 云端嵌入用户消息
             query_vector = await self._embed_text(user_message)
 
-            # Step 2: sqlite-vec 检索
-            results = await self._vs.search(query_vector, top_k=k)
+            # Step 2: sqlite-vec 检索，多取一些用于阈值过滤后仍有 k 条
+            results = await self._vs.search(query_vector, top_k=max(k * 2, 10))
 
             if not results:
                 return []
 
-            # Step 3: SQLite 读取完整摘要（rowid = episodic_id）
+            # Step 3: SQLite 读取完整摘要，过滤超出距离阈值的记忆
             row_ids = [r[0] for r in results]
             now = time.time()
             LAMBDA_FORGET = 0.099  # ln(2)/7，7天半衰期
 
             memories = []
             for row_id, distance in results:
+                if distance > max_distance:
+                    continue  # 距离太远，跳过不相关记忆
                 mem = await self._db.get_episodic_memory(row_id)
                 if mem:
                     # 艾宾浩斯遗忘衰减（阶段 5 新增）
-                    # 越久没被访问的记忆，乘性惩罚越大
+                    # 越久没被访问的记忆，adjusted_score 越大（=被推远）
                     days_since_access = max(0, (now - (mem.get("last_accessed") or mem.get("timestamp", now))) / 86400)
                     decay = max(0.1, math.exp(-LAMBDA_FORGET * days_since_access))
                     adjusted_score = distance / decay  # 旧记忆分值被放大（=被推远）
@@ -334,9 +345,11 @@ class MemoryManager:
                     # 更新访问计数
                     await self._db.increment_access_count(row_id)
 
-            # 按调整后分数排序（融合向量距离 + 艾宾浩斯衰减）
+            # 按调整后分数排序（融合向量距离 × 艾宾浩斯衰减惩罚）
+            # adjusted_score → 越低越相关（距离近 + 近期访问 → 更小）
             memories.sort(key=lambda r: r["adjusted_score"])
-            memories.sort(key=lambda r: r["distance"])
+            # 截断到 k 条
+            memories = memories[:k]
             logger.debug(
                 "memory.retrieved",
                 count=len(memories),

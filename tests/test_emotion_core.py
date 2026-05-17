@@ -90,22 +90,23 @@ class TestDecay:
         assert abs(s.pad_p - 0.5) < 0.01
 
     def test_half_life_decay(self):
-        """t=τ 时衰减到原来的 ~37%"""
+        """t=τ 时衰减到原来的 ~37%，同时拉向基线 ~63%"""
         s = EmotionState(pad_p=0.5, pad_a=0.3, pad_d=0.2)
         s.timestamp -= DEFAULT_TAU  # 模拟 30 分钟前
         s.decay(tau=DEFAULT_TAU)
         # e^(-1) ≈ 0.368
-        assert 0.15 < s.pad_p < 0.22  # 0.5 × 0.368 ≈ 0.184
+        # 新公式: pad = old * 0.368 + baseline * 0.632
+        # pad_p = 0.5 * 0.368 + 0.15 * 0.632 = 0.184 + 0.095 = 0.279
+        assert 0.25 < s.pad_p < 0.31
 
-    def test_decay_approaches_zero(self):
-        """长时间后趋近 0（但不到长间隔重置的阈值）"""
+    def test_decay_approaches_baseline(self):
+        """长时间后趋近基线而非零（不到长间隔重置阈值）"""
         s = EmotionState(pad_p=0.5, pad_a=0.3, pad_d=0.2)
-        # DEFAULT_TAU * 5 = 9000s = 2.5h → 超过 LONG_INACTIVITY_SECONDS(7200)
-        # 改用 DEFAULT_TAU * 3.5 = 6300s ≈ 1.75h，衰减到约 3% 但不触发重置
-        s.timestamp -= DEFAULT_TAU * 3.5
+        s.timestamp -= DEFAULT_TAU * 3.5  # 1.75h，不触发重置
         s.decay(tau=DEFAULT_TAU)
-        # e^(-3.5) ≈ 0.0302 → 0.5 × 0.0302 ≈ 0.015
-        assert s.pad_p < 0.03
+        # e^(-3.5) ≈ 0.0302
+        # pad_p = 0.5 * 0.0302 + 0.15 * 0.9698 = 0.0151 + 0.1455 = 0.1606
+        assert 0.13 < s.pad_p < 0.19  # 趋近基线 0.15
 
     def test_long_inactivity_reset(self):
         """> 2h 无对话 → 重置基线"""
@@ -123,28 +124,29 @@ class TestEmotionUpdate:
     """PAD 更新核心公式"""
 
     def test_immediate_event_impact(self):
-        """立即事件应全额作用"""
-        s = EmotionState()  # baseline
+        """立即事件（dt≈0）：decay≈1，新事件几乎无效，旧值占主导"""
+        s = EmotionState()  # baseline, timestamp=now
         s.update((0.3, 0.1, 0.05))
-        # dt≈0，但 event_impact 全额加入
-        assert s.pad_p > 0.3  # baseline(0.15) × 1 + 0.3 = 0.45
-        assert s.pad_a > 0.1
+        # dt≈0 → decay≈1.0 → 新值≈旧值（baseline）
+        assert abs(s.pad_p - 0.15) < 0.05  # ≈ baseline p=0.15
+        assert abs(s.pad_a - 0.05) < 0.05  # ≈ baseline a=0.05
+        assert abs(s.pad_d - 0.10) < 0.05  # ≈ baseline d=0.10
 
     def test_update_after_delay(self):
-        """延迟后更新：旧情绪衰减 + 新事件"""
+        """延迟后更新：旧情绪衰减 + 新事件按 (1-decay) 比例加入"""
         s = EmotionState(pad_p=0.5, pad_a=0.3, pad_d=0.2)
-        s.timestamp -= DEFAULT_TAU  # 30 分钟前
-        # 旧情绪衰减到 37%，再加入新事件
+        s.timestamp -= DEFAULT_TAU  # 30 分钟前 → decay = e^(-1) ≈ 0.368
         s.update((0.3, 0.0, 0.0), tau=DEFAULT_TAU)
-        # old_p × e^(-1) + new_p = 0.5 × 0.368 + 0.3 ≈ 0.484
-        assert 0.4 < s.pad_p < 0.55
+        # pad_p = 0.5 * 0.368 + 0.3 * (1 - 0.368) = 0.184 + 0.190 = 0.374
+        assert 0.33 < s.pad_p < 0.42
 
     def test_sensitivity_magnifies(self):
-        """敏感度放大事件影响"""
+        """敏感度放大事件影响 — 时间戳设为过去使 decay≈0，impact 全额生效"""
         s = EmotionState()
+        s.timestamp = 0.0  # 很久以前 → decay_factor≈0 → impact 全额
         s.update((0.2, 0.1, 0.05), sensitivity=2.0)
-        # 基线 + 2.0 × 0.2 = 积极偏移放大
-        assert s.pad_p > 0.4
+        # pad_p = 0.15 * 0 + (0.2 × 2.0) * 1.0 = 0.4
+        assert 0.35 < s.pad_p < 0.60
 
     def test_sensitivity_dampens(self):
         """低敏感度减弱影响"""
@@ -170,13 +172,12 @@ class TestEmotionUpdate:
         assert -1 <= s.pad_d <= 1
 
     def test_long_inactivity_before_update(self):
-        """超过 2h 无对话 → 更新前从基线开始"""
+        """超过 2h 无对话 → decay_factor=0，事件全额作用，基线不参与"""
         s = EmotionState(pad_p=0.8, pad_a=0.7, pad_d=0.6)
         s.timestamp -= LONG_INACTIVITY_SECONDS + 100
         s.update((0.15, -0.05, -0.05), tau=DEFAULT_TAU)
-        # 从基线开始 + 事件
-        base_p, _, _ = DEFAULT_BASELINE
-        assert abs(s.pad_p - base_p - 0.15) < 0.01
+        # decay_factor=0: pad_p = baseline * 0 + 0.15 * 1.0 = 0.15
+        assert abs(s.pad_p - 0.15) < 0.01
 
 
 # ═══════════════════════════════════════════════════════

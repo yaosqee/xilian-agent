@@ -171,3 +171,13 @@ export async function uploadBackground(file: File): Promise<{ filename: string; 
   if (data.error) throw new Error(data.error);
   return data;
 }
+
+/** 获取好感度状态 */
+export async function fetchAffection(): Promise<{
+  score: number; level: number; level_label: string;
+  total_conversations: number; updated_at: number;
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/affection`);
+  return res.json();
+}

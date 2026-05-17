@@ -1,6 +1,12 @@
-"""MarkerParser 单元测试 — 阶段 7c"""
+"""MarkerParser 单元测试 — 阶段 7c + 打磨期补全
+
+覆盖：5 种标记类型 · 跨 chunk 边界 · flush · SSML 接口 · 边界情况
+"""
+import sys
+sys.path.insert(0, ".")
+
 import pytest
-from packages.shared.marker_parser import MarkerParser, ParsedToken
+from packages.shared.marker_parser import MarkerParser, ParsedToken, markers_to_ssml
 
 
 class TestMarkerTypes:
@@ -117,3 +123,83 @@ class TestEdgeCases:
         assert len(tokens) == 1
         assert tokens[0].kind == 'literal'
         assert '[unclosed' in tokens[0].text
+
+
+class TestSSMLInterface:
+    """SSML 转换接口（阶段 7c 占位，阶段 9 实现）"""
+
+    def test_not_implemented_yet(self):
+        with pytest.raises(NotImplementedError):
+            markers_to_ssml([])
+
+    def test_not_implemented_with_voice_param(self):
+        with pytest.raises(NotImplementedError):
+            markers_to_ssml([], voice="xilian")
+
+
+class TestParsedToken:
+    """ParsedToken dataclass 基础属性"""
+
+    def test_literal_token_defaults(self):
+        t = ParsedToken(kind="literal", text="hello")
+        assert t.marker_type == ""
+        assert t.payload == {}
+
+    def test_special_token_payload(self):
+        t = ParsedToken(kind="special", text="[action:smile]", marker_type="action",
+                        payload={"action": "smile"})
+        assert t.kind == "special"
+        assert t.marker_type == "action"
+
+    def test_special_token_stores_raw_text(self):
+        parser = MarkerParser()
+        tokens = parser.feed("[emotion:joy:0.8]") + parser.flush()
+        assert tokens[0].text == "[emotion:joy:0.8]"
+
+
+class TestEmotionMarkers:
+    """emotion 标记变体"""
+
+    def test_emotion_with_underscore(self):
+        parser = MarkerParser()
+        tokens = parser.feed("[emotion:slight_sadness:0.3]") + parser.flush()
+        assert tokens[0].marker_type == "emotion"
+        assert tokens[0].payload["emotion"] == "slight_sadness"
+        assert tokens[0].payload["intensity"] == 0.3
+
+    def test_emotion_intensity_float(self):
+        parser = MarkerParser()
+        tokens = parser.feed("[emotion:calm:0.55]") + parser.flush()
+        assert isinstance(tokens[0].payload["intensity"], float)
+
+
+class TestPauseMarkers:
+    """pause 标记变体"""
+
+    def test_pause_integer(self):
+        parser = MarkerParser()
+        tokens = parser.feed("[pause:3]") + parser.flush()
+        assert tokens[0].payload["seconds"] == 3.0
+
+    def test_pause_fraction(self):
+        parser = MarkerParser()
+        tokens = parser.feed("[pause:0.25]") + parser.flush()
+        assert tokens[0].payload["seconds"] == 0.25
+
+
+class TestLargeInput:
+    """大数据量输入"""
+
+    def test_long_literal(self):
+        parser = MarkerParser()
+        long_text = "今" * 5000
+        tokens = parser.feed(long_text) + parser.flush()
+        assert len(tokens) == 1
+        assert tokens[0].text == long_text
+
+    def test_many_markers(self):
+        parser = MarkerParser()
+        markers = "".join(f"[emotion:joy:{i * 0.1:.1f}]" for i in range(1, 26))
+        tokens = parser.feed(markers) + parser.flush()
+        assert len(tokens) == 25
+        assert all(t.kind == "special" for t in tokens)

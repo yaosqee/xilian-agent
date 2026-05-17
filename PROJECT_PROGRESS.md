@@ -245,17 +245,24 @@
 | 一 | 前端全面重构 | 背景图系统（默认photo/xilian.png+上传API）、毛玻璃输入区（textarea自适应高度）、SVG侧栏图标（8面板入口）、全站浅色主题（对齐photo/fengge.txt色板） |
 | 二 | 面板集成 + 暗→浅迁移 | SkillsPanel/AutobiographyPanel 接入侧栏导航，全部10个面板完成暗色→浅色改写，防崩溃 ErrorBoundary+SafePanel |
 | 三 | 项目基础设施 | CLAUDE.md + Agent skills（mattpocock/skills 14技能+GitHub Issues配置）、python-multipart依赖 |
-| — | Git commits: 4df8dee, 110c651 | — |
+| 四 | 核心系统 bug 修复 | 记忆检索排序修复（艾宾浩斯衰减生效）、PAD衰减向基线回归、长间隔PAD叠加修复、共情注入need字段回退、自主问候想念值实时计算、情绪基线误判期待修复 |
+| 五 | 测试补全（阶段7-8） | 5个新测试文件150条：Notebook(29)/MarkerParser(24新增)/AttentionScheduler(18新增)/Security(36)/CodingDelegate(23)，总计402/402全绿 |
+| 六 | 好感度系统重构 | 从纯前端假值改为后端驱动：affection_state表+Alembic迁移003+AgentCore._update_affection()+GET /api/affection+affectionStore+AffectionBar重写(❤️💕💖💝) |
+| 七 | 项目文档 + Memory | PROJECT_PROGRESS/CONTEXT/README更新，~/.claude memory写入（project-vision+architecture+conventions+overview） |
+| — | Git commits: 6237a81, ... | — |
 
 ## 下一步
 
-打磨期继续 — 补核心测试（阶段7-8模块）+ 部署脚本更新。
+打磨期继续 — 记忆/情感精度提升（让昔涟的反应更贴切角色人格）+ 前端体验打磨。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
 ---
 
 ## 最近决策
 
+- **2026-05-17**：好感度系统从纯前端假值重写为后端驱动。affection_state 表 + 003 迁移 + AgentCore._update_affection() 每轮更新（基础+0.05，正面情绪加成+0.05~0.10，红线-0.50，100锁定）。前端 AffectionBar 改为 Zustand store + 15s 轮询，等级标签改为「昔涟喜欢你→你永远喜欢昔涟」，图标统一小爱心。
+- **2026-05-17**：核心系统深度检查+修复。记忆检索双重sort覆盖艾宾浩斯衰减→删除第二个sort。PAD衰减从向零衰减→向基线回归。长间隔PAD更新基线叠加→decay_factor=0修复。自主问候status改为实时计算。情绪基线误判期待→距基线<0.25时降级为平静。
+- **2026-05-17**：阶段7-8测试补全。150条新测试（Notebook/MarkerParser/AttentionScheduler/Security/CodingDelegate），402/402全绿。项目memory写入（project-vision.md定义核心目标：让昔涟像活人一样陪伴）。PROJECT_PROGRESS/CONTEXT/README文档同步。
 - **2026-05-16**：前端全面重构。背景图系统上线（全页背景+上传API+交叉淡入淡出），聊天区透底+毛玻璃大输入框，侧栏SVG线性图标（8面板），全站暗→浅主题迁移（10面板+4个Canvas组件对齐photo/fengge.txt色板），ErrorBoundary防崩溃。SkillsPanel/AutobiographyPanel接入导航。CLAUDE.md+Agent skills+python-multipart。打磨期前端面板集成项完成。
 - **2026-05-16**：阶段7完成。ContextBuilder 模块化（5 模块 XML 替代手工拼接）。Character Notebook 上线（auto_note + daily_diary + task_reminder）。AttentionScheduler 后台运行（5s tick + 5 层防打扰）。MarkerParser 5 种标记解析。Claude Code 编码委托工具 + Agent Skills 格式 + Alembic 迁移。语音管道接口占位（packages/voice/）。
 - **2026-05-16**：阶段6完成。自主问候上线（想念值计算 + Token Bucket ≤3条/h）。一键部署完成（setup.sh + start.sh + 前端嵌入后端单进程 serve）。Console TUI 美化（rich 库）。砍独立梦幻循环（与阶段5自传体重叠），改为在自传体结尾追加睡前感想。

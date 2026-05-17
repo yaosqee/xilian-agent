@@ -54,7 +54,7 @@ class AgentContext:
     def inject_emotion_context(self) -> str:
         """
         将情绪快照转为系统提示动态注入段落。
-        阶段 2 实现：从上一轮情感分析结果生成昔涟风格共情文本。
+        兼容阶段2 EmotionAnalyzer 和阶段4 PAD 引擎两种格式。
         """
         snap = self.emotion_snapshot
         if not snap:
@@ -62,6 +62,13 @@ class AgentContext:
 
         emotion = snap.get("primary_emotion", "")
         need = snap.get("need", "")
+
+        # PAD 引擎不提供 need 字段 → 从 appraisal.reason 中提取线索
+        if not need:
+            appraisal = snap.get("appraisal", {})
+            reason = appraisal.get("reason", "")
+            if reason and len(reason) <= 20:
+                need = reason
 
         if not emotion:
             return ""

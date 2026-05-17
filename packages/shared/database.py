@@ -164,6 +164,17 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 """
 
+_CREATE_AFFECTION = """
+CREATE TABLE IF NOT EXISTS affection_state (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    score               REAL    NOT NULL DEFAULT 0.0,
+    level               INTEGER NOT NULL DEFAULT 1,
+    total_conversations INTEGER NOT NULL DEFAULT 0,
+    reason              TEXT,
+    updated_at          REAL    NOT NULL
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -193,6 +204,8 @@ _CREATE_INDEXES_SQL = [
     # audit_logs
     "CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);",
     "CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_logs(event_type, timestamp);",
+    # affection
+    "CREATE INDEX IF NOT EXISTS idx_affection_updated ON affection_state(updated_at);",
 ]
 
 
@@ -273,6 +286,7 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_NOTEBOOK_ENTRIES)
         await self._conn.execute(_CREATE_SCHEDULED_TASKS)
         await self._conn.execute(_CREATE_AUDIT_LOGS)
+        await self._conn.execute(_CREATE_AFFECTION)
         for idx_sql in _CREATE_INDEXES_SQL:
             await self._conn.execute(idx_sql)
         await self._conn.commit()
@@ -1140,6 +1154,48 @@ class DatabaseManager:
         }
 
     # ============================================================
+    # 好感度系统
+    # ============================================================
+
+    async def insert_affection_snapshot(
+        self, score: float, level: int,
+        total_conversations: int, reason: str = "",
+    ) -> int:
+        """写入一条好感度快照"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            """INSERT INTO affection_state
+               (score, level, total_conversations, reason, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (score, level, total_conversations, reason, time.time()),
+        )
+        await self._conn.commit()
+        logger.debug("affection.snapshot", score=score, level=level, reason=reason)
+        return cursor.lastrowid
+
+    async def get_latest_affection(self) -> dict | None:
+        """获取最新好感度快照"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT * FROM affection_state ORDER BY updated_at DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_affection_history(self, limit: int = 50) -> list[dict]:
+        """获取好感度历史（按时间倒序）"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT * FROM affection_state ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ============================================================
     # 阶段 8: 被遗忘权 — 级联删除
     # ============================================================
 
@@ -1170,7 +1226,8 @@ class DatabaseManager:
         # 2. 级联删除
         tables = [
             "conversation_logs", "episodic_memories", "message_queue",
-            "emotion_snapshots", "notebook_entries", "scheduled_tasks",
+            "emotion_snapshots", "affection_state", "notebook_entries",
+            "scheduled_tasks",
         ]
         for table in tables:
             cursor = await self._conn.execute(

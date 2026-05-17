@@ -1,49 +1,42 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { fetchEmotionStats } from '../services/api';
+import React, { useEffect, useCallback } from 'react';
+import { useAffectionStore } from '../stores/affectionStore';
 
-interface AffectionData {
-  score: number; level: number; label: string; emoji: string;
+interface LevelInfo {
+  threshold: number;
+  level: number;
+  label: string;
+  icon: string;
 }
 
-const LEVELS: AffectionData[] = [
-  { score: 25, level: 1, label: '初遇', emoji: '🌱' },
-  { score: 50, level: 2, label: '相识', emoji: '🌿' },
-  { score: 75, level: 3, label: '老友', emoji: '🌳' },
-  { score: 100, level: 4, label: '羁绊', emoji: '💎' },
+const LEVELS: LevelInfo[] = [
+  { threshold: 25,  level: 1, label: '昔涟喜欢你',     icon: '❤️' },
+  { threshold: 50,  level: 2, label: '昔涟非常喜欢你', icon: '💕' },
+  { threshold: 75,  level: 3, label: '昔涟特别喜欢你', icon: '💖' },
+  { threshold: 100, level: 4, label: '你永远喜欢昔涟', icon: '💝' },
 ];
 
-function getLevel(score: number): AffectionData {
+function getLevelInfo(score: number): LevelInfo {
   for (let i = LEVELS.length - 1; i >= 0; i--) {
-    if (score >= LEVELS[i].score) return LEVELS[i];
+    if (score >= LEVELS[i].threshold) return LEVELS[i];
   }
   return LEVELS[0];
 }
 
 export const AffectionBar: React.FC = () => {
-  const [affection, setAffection] = useState(50);
-  const level = getLevel(affection);
+  const { data, refresh } = useAffectionStore();
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetchEmotionStats(30);
-      if (res) {
-        let score = 50;
-        score += Math.min(30, (res.snapshot_count || 0) * 0.5);
-        if (res.emotion_distribution) {
-          const pos = (res.emotion_distribution['快乐'] || 0) + (res.emotion_distribution['平静'] || 0) * 0.5;
-          score += pos * 30;
-        }
-        if (res.emotional_volatility) score -= Math.min(15, res.emotional_volatility * 20);
-        setAffection(Math.max(5, Math.min(100, Math.round(score))));
-      }
-    } catch {}
-  }, []);
+  const doRefresh = useCallback(() => {
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 30000);
-    return () => clearInterval(t);
-  }, [refresh]);
+    const interval = setInterval(doRefresh, 15000);
+    return () => clearInterval(interval);
+  }, [doRefresh]);
+
+  const score = data?.score ?? 0;
+  const info = getLevelInfo(score);
 
   return (
     <div style={{
@@ -52,16 +45,18 @@ export const AffectionBar: React.FC = () => {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
         <span style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>
-          {level.emoji} {level.label}
+          {info.icon} {info.label}
         </span>
         <span style={{ fontSize: 12, color: 'var(--color-pink-dark)', fontWeight: 600 }}>
-          羁绊值 {affection}
+          好感度 {Math.round(score)}
         </span>
       </div>
       <div style={{ height: 4, borderRadius: 2, background: 'rgba(200, 180, 210, 0.15)', overflow: 'hidden' }}>
         <div style={{
-          height: '100%', borderRadius: 2, width: `${affection}%`,
-          background: 'linear-gradient(90deg, var(--color-pink), var(--color-pink-dark))',
+          height: '100%', borderRadius: 2, width: `${Math.min(100, score)}%`,
+          background: score >= 100
+            ? 'linear-gradient(90deg, #ff6b9d, #ff3366)'
+            : 'linear-gradient(90deg, var(--color-pink), var(--color-pink-dark))',
           transition: 'width 0.5s var(--ease-spring)',
         }} />
       </div>
