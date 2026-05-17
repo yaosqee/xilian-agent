@@ -215,3 +215,13 @@ export async function fetchAffection(): Promise<{
   const res = await fetch(`${BASE}/affection`);
   return res.json();
 }
+
+/** 获取用户印象文档 */
+export async function fetchUserPortrait(): Promise<{
+  portrait: string | null; version: number;
+  updated_at: number; changes: string;
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/user/portrait`);
+  return res.json();
+}

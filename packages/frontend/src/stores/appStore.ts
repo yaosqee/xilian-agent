@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type PanelType = 'emotion' | 'memory' | 'autobiography' | 'notebook' | 'audit' | 'skills' | 'settings' | null;
+export type PanelType = 'emotion' | 'memory' | 'autobiography' | 'notebook' | 'audit' | 'skills' | 'settings' | 'portrait' | null;
 
 interface AppState {
   activePanel: PanelType;

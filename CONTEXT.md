@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-17（对话历史持久化）（v4 提示词重写 + SSE 真流式 + 纯括号三层防护 + 对话质量系统提升）
+> 📅 最后更新：2026-05-17（用户记忆系统：印象文档 + 破冰主动问候 + 前端伙伴印象面板）
 
 ---
 
@@ -23,18 +23,19 @@ xilian-v3/
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
 │   ├── model_router.py              # ModelRouter：纯云端路由核心（Pro双Key轮询 + Flash后台 + 工具降级）
-│   ├── database.py                  # DatabaseManager：SQLite（10张表CRUD + 游标分页 + Alembic优先）
+│   ├── database.py                  # DatabaseManager：SQLite（11张表CRUD + 游标分页 + Alembic优先）
 │   ├── vector_store.py              # VectorStore：sqlite-vec 向量检索（零外部依赖）
 │   ├── backup.py                    # BackupManager：每日备份 + 清理 + 恢复（阶段 3）
 │   ├── marker_parser.py             # MarkerParser：5种标记流式解析 + SSML接口（阶段7c）
 │   └── logging_config.py            # loguru 结构化日志配置
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
-│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + Notebook钩子 + coding_delegate + 启动上下文恢复
+│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + Notebook钩子 + coding_delegate + 破冰追踪 + 启动上下文恢复
 │   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器注册表
 │   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook 4模块，自然语言段落）
 │   ├── notebook_manager.py          # NotebookManager：笔记/日记/关注/任务 + 自动记笔记（阶段7b）
+│   ├── portrait_manager.py          # PortraitManager：用户印象文档定期重写 + 破冰冷启动（阶段8+）
 │   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载 + 质量双门控（阶段7d）
 │   ├── emotion_analyzer.py          # EmotionAnalyzer：DeepSeek 11维情感分析（阶段2，被PAD增强）
 │   ├── emotion_core.py              # EmotionEngine：PAD情感引擎（阶段4）
@@ -51,7 +52,7 @@ xilian-v3/
 │   ├── channels/
 │   │   ├── base.py                  # Channel 抽象基类
 │   │   ├── console_channel.py       # ConsoleChannel：终端交互（rich 美化）
-│   │   └── http_channel.py          # HTTPChannel：FastAPI SSE API（~22个端点，含对话历史分页）
+│   │   └── http_channel.py          # HTTPChannel：FastAPI SSE API（~24个端点，含对话历史分页 + 用户印象）
 │   └── mcp/
 │       └── adapter.py               # MCPAdapter：接口签名预埋（阶段7实现）
 │
@@ -73,13 +74,13 @@ xilian-v3/
 │   │   │   ├── chat/                # ChatView + MessageBubble + Textarea毛玻璃输入
 │   │   │   ├── panels/              # SlidePanel(absolute+SafePanel) + EmotionPanel + MemoryTimeline
 │   │   │   │                       #   + AutobiographyPanel + NotebookPanel + AuditPanel
-│   │   │   │                       #   + SkillsPanel + SettingsPanel(含背景上传) + PADTrajectory
+│   │   │   │                       #   + SkillsPanel + SettingsPanel(含背景上传) + PADTrajectory + PortraitPanel
 │   │   │   ├── EmotionGauge/        # Canvas 11维雷达图(浅色) + 图例 + 情绪历史线图
 │   │   │   ├── status/              # EncodingStatusBar（轮询编码状态）
 │   │   │   └── AffectionBar.tsx     # 4级好感度/羁绊值指示器（阶段5）
 │   │   ├── hooks/                   # useChat + useEmotionData
 │   │   ├── stores/                  # Zustand: appStore + chatStore + emotionStore + autonomyStore + notebookStore + affectionStore
-│   │   ├── services/api.ts          # API 封装（fetch + SSE 流式，含 autonomy + notebook 端点）
+│   │   ├── services/api.ts          # API 封装（fetch + SSE 流式，含 autonomy + notebook + portrait 端点）
 │   │   ├── types/                   # chat.ts + emotion.ts + memory.ts + autonomy.ts + voice.ts
 │   │   ├── styles/                  # globals.css（含 thinking 动画） + theme.css（品牌视觉：樱花粉系）
 │   │   ├── utils/                   # radarMath.ts + markers.ts（标记提取 + triggerAction）
@@ -137,7 +138,7 @@ main.py 启动
   │     ├─ 加载 personality_v3.md → self._personality
   │     ├─ 初始化 ToolRegistry + 注册 coding_delegate
   │     ├─ 初始化 AgentContext（对话历史容器）
-  │     ├─ 初始化 ContextBuilder（Datetime/Emotion/Memory/Notebook/Identity 5模块）
+  │     ├─ 初始化 ContextBuilder（Datetime/Portrait/Emotion/Memory/Notebook 5模块）
   │     ├─ 初始化 ModelRouter（纯云端 DeepSeek Pro双Key + Flash + 工具降级）
   │     ├─ 初始化 EmotionEngine（PAD 情感引擎，常驻内存）
   │     ├─ 初始化 MemoryManager（sqlite-vec 向量检索）
@@ -170,7 +171,7 @@ main.py 启动
 agent.process(event) 内部（阶段 7）：
   _perceive() → 意图/编码委托检测
   _retrieve_memories() → sqlite-vec 向量化 → top-3 + 艾宾浩斯衰减权重
-  _build_messages() → ContextBuilder 自然语言上下文组装（4模块）
+  _build_messages() → ContextBuilder 自然语言上下文组装（5模块：DateTime/Portrait/Emotion/Memory/Notebook）
   router.route("chat") → 模型调用 → MarkerParser 后处理 → 返回
   _schedule_emotion_analysis() → fire-and-forget 后台 PAD 更新
   _schedule_memory_encoding() → 三层调度
@@ -194,15 +195,16 @@ NudgeEngine 自主问候流程（阶段 6）：
 |------|---------|---------|
 | `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, payload, is_owner)` |
 | `model_router.py` | 纯云端 DeepSeek 路由（Pro双Key + Flash + 工具降级） | `route(task_type, messages, tools, tool_choice)` |
-| `database.py` | SQLite 9张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
+| `database.py` | SQLite 11张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
 | `vector_store.py` | sqlite-vec 向量插入 + 精确检索 | `insert(row_id, embedding)`, `search(query_vec, top_k)` |
 | `backup.py` | 每日备份+清理+恢复 | `run_backup()`, `cleanup_old()`, `verify_backup()`, `restore()` |
-| `agent_core.py` | 昔涟的"大脑"，ActorMind + 全管线调度 | `process(event)`, `_retrieve_memories()`, `_inject_empathy_pad()`, `get_time_greeting()`, `shutdown()` |
+| `agent_core.py` | 昔涟的"大脑"，ActorMind + 全管线调度 + 破冰追踪 + 印象冷启动 | `process(event)`, `_retrieve_memories()`, `_inject_empathy_pad()`, `consume_icebreaker_greeting()`, `_tick_icebreaker()`, `get_time_greeting()`, `shutdown()` |
 | `agent_context.py` | 对话历史容器 + 情绪快照 + 记忆注入 | `add_message()`, `inject_emotion_context()`, `inject_memory_context()` |
 | `emotion_core.py` | PAD 情感引擎：评价→PAD→惯性衰减→情绪标签 | `AppraisalExtractor.analyze()`, `EmotionState.update()`, `PersonalityModulator.modulate()`, `pad_to_emotion_profile()` |
 | `memory_manager.py` | 情景记忆全管线：编码/检索/艾宾浩斯衰减/调度/容量 | `encode_memory()`, `retrieve_memories()`, `schedule_encoding()`, `manage_capacity()` |
 | `autobiography_writer.py` | 每日自传体 + 每周反思结晶 | `write_daily()`, `reflect_weekly()` |
-| `context_builder.py` | 模块化上下文组装（4模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
+| `portrait_manager.py` | 用户印象文档定期重写 + 破冰主动问候 + 冷启动 | `consolidate()`, `ensure_exists()` |
+| `context_builder.py` | 模块化上下文组装（5模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
 | `notebook_manager.py` | 笔记/日记/关注/任务 + 自动记笔记 | `add_note()`, `generate_daily_diary()`, `auto_note_after_message()` |
 | `skills_loader.py` | Agent Skills 加载 + 质量双门控 | `load_all()`, `match()` |
 | `marker_parser.py` | 5种标记流式解析 + SSML接口 | `MarkerParser.feed()`, `flush()` |
@@ -238,5 +240,6 @@ NudgeEngine 自主问候流程（阶段 6）：
 
 ## 下一步
 
-打磨期继续 — v4 提示词验证 + 前端体验打磨 + 记忆/情感精度持续提升。
+打磨期继续 — v4 提示词验证与微调 + 前端体验打磨 + 记忆/情感精度持续提升。
+用户记忆系统已交付（叙事性印象文档 + 破冰主动问候 + 每日重写 + 前端伙伴印象面板）。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。

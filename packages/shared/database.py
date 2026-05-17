@@ -175,6 +175,18 @@ CREATE TABLE IF NOT EXISTS affection_state (
 );
 """
 
+_CREATE_USER_PORTRAIT = """
+CREATE TABLE IF NOT EXISTS user_portrait (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    content     TEXT    NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    source_ids  TEXT,
+    change_log  TEXT,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -206,6 +218,8 @@ _CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_logs(event_type, timestamp);",
     # affection
     "CREATE INDEX IF NOT EXISTS idx_affection_updated ON affection_state(updated_at);",
+    # user_portrait
+    "CREATE INDEX IF NOT EXISTS idx_portrait_version ON user_portrait(version);",
 ]
 
 
@@ -242,6 +256,12 @@ class DatabaseManager:
         if not migrated:
             # 降级：手动建表（幂等）
             await self._manual_init()
+        else:
+            # Alembic 路径：确保新增表也创建（Alembic 迁移未覆盖时兜底）
+            await self._conn.execute(_CREATE_USER_PORTRAIT)
+            for idx_sql in _CREATE_INDEXES_SQL:
+                if "user_portrait" in idx_sql or "portrait_version" in idx_sql:
+                    await self._conn.execute(idx_sql)
 
         await self._conn.commit()
 
@@ -287,6 +307,7 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_SCHEDULED_TASKS)
         await self._conn.execute(_CREATE_AUDIT_LOGS)
         await self._conn.execute(_CREATE_AFFECTION)
+        await self._conn.execute(_CREATE_USER_PORTRAIT)
         for idx_sql in _CREATE_INDEXES_SQL:
             await self._conn.execute(idx_sql)
         await self._conn.commit()
@@ -1235,6 +1256,71 @@ class DatabaseManager:
         return [dict(r) for r in rows]
 
     # ============================================================
+    # user_portrait CRUD（阶段 8+: 用户印象文档）
+    # ============================================================
+
+    async def insert_portrait(
+        self,
+        content: str,
+        version: int = 1,
+        source_ids: str | None = None,
+        change_log: str = "",
+    ) -> int:
+        """写入新版用户印象文档。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT INTO user_portrait
+               (content, version, source_ids, change_log, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (content, version, source_ids, change_log, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        logger.debug("database.insert_portrait", version=version, length=len(content))
+        return cursor.lastrowid
+
+    async def get_latest_portrait(self) -> dict | None:
+        """获取最新版用户印象文档。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM user_portrait ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        if row:
+            result = dict(row)
+            logger.debug("database.get_latest_portrait", id=result.get("id"), version=result.get("version"), content_len=len(result.get("content", "")))
+            return result
+        logger.debug("database.get_latest_portrait.empty")
+        return None
+
+    async def get_portrait_history(self, limit: int = 10) -> list[dict]:
+        """获取印象文档版本历史（轻量，不含正文）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT id, version, change_log, created_at "
+            "FROM user_portrait ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_portrait_count(self) -> int:
+        """获取印象文档版本总数。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM user_portrait"
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    # ============================================================
     # 阶段 8: 被遗忘权 — 级联删除
     # ============================================================
 
@@ -1266,7 +1352,7 @@ class DatabaseManager:
         tables = [
             "conversation_logs", "episodic_memories", "message_queue",
             "emotion_snapshots", "affection_state", "notebook_entries",
-            "scheduled_tasks",
+            "scheduled_tasks", "user_portrait",
         ]
         for table in tables:
             cursor = await self._conn.execute(

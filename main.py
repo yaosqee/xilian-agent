@@ -138,6 +138,24 @@ async def main():
     )
     logger.info("Notebook 调度已启动 (每日 23:50 日记, 8:00/12:00/18:00 任务检查)")
 
+    # ── 阶段 8+: 用户印象文档定期重写（每日凌晨 5:00，自传体之后）──
+    async def consolidate_user_portrait():
+        if agent.portrait_manager:
+            result = await agent.portrait_manager.consolidate()
+            if result:
+                agent.context.user_portrait = result
+                # 更新版本号（触发下次对话重新注入）
+                latest = await agent._db.get_latest_portrait()
+                if latest:
+                    agent.context._current_portrait_version = latest.get("version", 1)
+                logger.info("portrait.cron_consolidated", length=len(result))
+
+    scheduler.add_job(
+        lambda: asyncio.create_task(consolidate_user_portrait()),
+        trigger="cron", hour=5, minute=0, id="consolidate_user_portrait",
+    )
+    logger.info("用户印象重写调度已启动 (每日 5:00)")
+
     # ── 阶段 7c: AttentionScheduler 初始化 ──
     attention = AttentionScheduler()
     attention._router = agent.router

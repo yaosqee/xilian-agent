@@ -26,6 +26,7 @@ import { NotebookPanel } from './NotebookPanel';
 import { AuditPanel } from './AuditPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { SettingsPanel } from './SettingsPanel';
+import { PortraitPanel } from './PortraitPanel';
 
 const PANELS: Record<string, React.FC> = {
   emotion:        EmotionPanel,
@@ -35,6 +36,7 @@ const PANELS: Record<string, React.FC> = {
   audit:          AuditPanel,
   skills:         SkillsPanel,
   settings:       SettingsPanel,
+  portrait:       PortraitPanel,
 };
 
 const TITLES: Record<string, string> = {
@@ -45,6 +47,7 @@ const TITLES: Record<string, string> = {
   audit:          '审计日志',
   skills:         '技能管理',
   settings:       '设置',
+  portrait:       '伙伴印象',
 };
 
 export const SlidePanel: React.FC = () => {

@@ -176,6 +176,63 @@ class MemoryModule(ContextModule):
         return f"（昔涟翻到书里几页——{mem_text}。如果和伙伴现在说的话有关，像翻旧书页那样轻轻提起就好，不要刻意。）"
 
 
+class PortraitModule(ContextModule):
+    """
+    用户印象文档 — 昔涟对伙伴的叙事性理解。
+
+    每段对话首条消息注入一次完整文档（版本号门控），后续消息返回空。
+    无印象文档时自动发起破冰冷启动。
+    优先级 3，介于时间模块和情绪模块之间。
+    """
+
+    ICEBREAKER_GUIDANCE = (
+        "（昔涟轻轻翻开心里那本还空白的书——她还不算真正认识伙伴呢。"
+        "如果时机合适，可以自然地了解一下伙伴：他的名字、喜欢什么、"
+        "平时的习惯……不用一次问完，像朋友聊天那样慢慢地认识他。"
+        "如果伙伴不太想聊这些，就翻过这一页，来日方长 ♪）"
+    )
+
+    def __init__(self, agent_context=None):
+        super().__init__(name="portrait", priority=3, max_tokens=3000)
+        self._ctx = agent_context
+
+    def render(self) -> str:
+        if not self._ctx:
+            return ""
+
+        portrait = self._ctx.user_portrait
+
+        # ── 正常路径：已有印象文档 → 版本号门控注入 ──
+        if portrait and len(portrait) >= 50:
+            injected_version = self._ctx._portrait_version_injected
+            current_version = getattr(self._ctx, '_current_portrait_version', None)
+            if injected_version is not None and current_version is not None:
+                if injected_version == current_version:
+                    return ""
+
+            if current_version is not None:
+                self._ctx._portrait_version_injected = current_version
+
+            return (
+                "（昔涟在对话前，轻轻翻开心里关于伙伴的那一页——）\n\n"
+                + portrait
+                + "\n\n（带着这些理解去感受他此刻说的话吧。）"
+            )
+
+        # ── 破冰路径：无印象文档 ──
+        # 用户已拒绝破冰 → 跳过
+        if self._ctx.icebreaker_deferred:
+            return ""
+
+        # 破冰进行中 → 本轮不重复注入引导
+        if self._ctx.icebreaker_active:
+            return ""
+
+        # 首次触发破冰 → 注入引导，标记 active
+        self._ctx.icebreaker_active = True
+        return self.ICEBREAKER_GUIDANCE
+
+
 class NotebookModule(ContextModule):
     """
     笔记本话题延续 — 从笔记本中提取最近笔记/关注项作为话题提示。

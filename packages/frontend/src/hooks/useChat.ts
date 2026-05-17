@@ -1,6 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
-import { postChat, postChatStream, fetchConversationHistory } from '../services/api';
+import { postChat, postChatStream, fetchConversationHistory, fetchGreeting } from '../services/api';
 import type { ChatMessage } from '../types/chat';
 
 let msgId = 0;
@@ -56,6 +56,20 @@ export function useChat() {
       loadHistory();
     }
   }, [loadHistory]);
+
+  // 首次挂载：检查破冰问候
+  useEffect(() => {
+    fetchGreeting().then((data: any) => {
+      if (data.is_first_meeting && data.greeting) {
+        addMessage({
+          id: nextId(),
+          role: 'assistant',
+          content: data.greeting,
+          timestamp: Date.now(),
+        });
+      }
+    }).catch(() => { /* 静默失败，不影响正常使用 */ });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = useCallback((text: string, stream: boolean = true) => {
     const userMsg: ChatMessage = {

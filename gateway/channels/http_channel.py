@@ -309,7 +309,31 @@ class HTTPChannel(Channel):
         async def get_greeting():
             if self._agent is None:
                 return {"error": "agent not available"}
+            icebreaker = self._agent.consume_icebreaker_greeting()
+            if icebreaker:
+                return {"greeting": icebreaker, "is_first_meeting": True}
             return {"greeting": self._agent.get_time_greeting()}
+
+        # ── 用户印象文档 ──
+        @self.app.get("/api/user/portrait")
+        async def get_user_portrait():
+            """获取昔涟对伙伴的当前印象文档。"""
+            _agent = self._agent
+            if not _agent or not _agent._db:
+                return {"portrait": None, "version": 0}
+            try:
+                portrait = await _agent._db.get_latest_portrait()
+                if not portrait:
+                    return {"portrait": None, "version": 0}
+                return {
+                    "portrait": portrait["content"],
+                    "version": portrait["version"],
+                    "updated_at": portrait["created_at"],
+                    "changes": portrait.get("change_log", ""),
+                }
+            except Exception as e:
+                logger.warning("api.portrait_failed", error=str(e))
+                return {"error": str(e)}
 
         @self.app.get("/api/encoding-status")
         async def get_encoding_status():

@@ -25,6 +25,7 @@ from .emotion_analyzer import EmotionAnalyzer
 from .emotion_core import EmotionEngine
 from .memory_manager import MemoryManager
 from .notebook_manager import NotebookManager
+from .portrait_manager import PortraitManager
 
 # 阶段 7a: 模块化上下文
 from .context_builder import (
@@ -33,6 +34,7 @@ from .context_builder import (
     EmotionModule,
     MemoryModule,
     NotebookModule,
+    PortraitModule,
 )
 
 
@@ -117,12 +119,19 @@ class AgentCore:
         # 4 个模块，按优先级：datetime(1) < emotion(4) < memory(5) < notebook(6)
         self._context_builder = ContextBuilder(total_budget=800)
         self._context_builder.register(DatetimeModule())
+        self._context_builder.register(PortraitModule(self.context))
         self._context_builder.register(EmotionModule(self.context))
         self._context_builder.register(MemoryModule(self.context))
         self._context_builder.register(NotebookModule())  # 7b 通过 set_notebook() 注入
 
         # 阶段 7b: 笔记本管理器占位（子阶段 7b 注入）
         self.notebook_manager: NotebookManager | None = None
+
+        # 阶段 8+: 用户印象管理器
+        self.portrait_manager: PortraitManager | None = None
+
+        # 阶段 8+: 破冰主动问候（仅内存）
+        self._icebreaker_pending: bool = False
 
         # 阶段 7c: 注意力调度器占位（子阶段 7c 注入）
         self.attention_scheduler = None
@@ -164,6 +173,44 @@ class AgentCore:
         nb_module = self._context_builder.get_module("notebook")
         if nb_module:
             nb_module.set_notebook(self.notebook_manager)
+
+        # 阶段 8+: 初始化用户印象管理器 + 加载当前印象
+        if not self.portrait_manager:
+            self.portrait_manager = PortraitManager(
+                db=self._db,
+                model_router=self.router,
+            )
+        if not self.context.user_portrait:
+            try:
+                latest = await self._db.get_latest_portrait()
+                if latest:
+                    content = latest.get("content")
+                    if content and len(content) >= 50:
+                        self.context.user_portrait = content
+                        self.context._current_portrait_version = latest.get("version", 1)
+                        logger.info("portrait.loaded", version=latest.get("version"), len=len(content))
+                    else:
+                        logger.warning("portrait.loaded_but_content_invalid", has_content=bool(content), length=len(content or ""))
+                else:
+                    logger.info("portrait.not_found_in_db")
+            except Exception as e:
+                logger.warning("portrait.load_failed", error=str(e))
+
+        # 检查破冰是否已被用户拒绝
+        try:
+            notes = await self._db.get_notebook_notes(kind="focus", limit=5)
+            for n in notes:
+                if n.get("content") == "icebreaker_deferred":
+                    self.context.icebreaker_deferred = True
+                    logger.debug("icebreaker.deferred_loaded")
+                    break
+        except Exception:
+            pass
+
+        # 无印象文档 → 准备破冰主动问候
+        if not self.context.user_portrait:
+            self._icebreaker_pending = True
+            logger.info("icebreaker.pending_greeting")
 
         # 加载最近好感度
         try:
@@ -325,6 +372,12 @@ class AgentCore:
                 )
             )
 
+        # ── 8c. 阶段 8+: 冷启动印象文档 ──
+        self._schedule_portrait_cold_start()
+
+        # ── 8d. 阶段 8+: 破冰进度追踪 ──
+        self._tick_icebreaker(reply)
+
         # ── 9. 写入对话日志 (NEW) ──
         await self._write_conversation_log(event, reply)
 
@@ -423,6 +476,114 @@ class AgentCore:
         except Exception as e:
             logger.warning("memory.retrieval_failed", error=str(e))
             return None
+
+    def _schedule_portrait_cold_start(self):
+        """
+        冷启动检查：有足够记忆但尚无印象文档 → 立即生成第一版。
+        fire-and-forget，不阻塞主回复。
+        """
+        if not self.portrait_manager:
+            return
+        # 对话轮数达到 4 条时触发兜底生成
+        if len(self.context.history) < 4:
+            return
+        asyncio.create_task(self._portrait_cold_start_task())
+
+    async def _portrait_cold_start_task(self):
+        """冷启动任务：如果尚无印象文档且有足够材料 → 生成第一版。"""
+        try:
+            result = await self.portrait_manager.ensure_exists()
+            if result:
+                self.context.user_portrait = result
+                # 从 DB 读取版本号
+                latest = await self._db.get_latest_portrait()
+                if latest:
+                    self.context._current_portrait_version = latest.get("version", 1)
+                logger.info("portrait.cold_start_done", length=len(result))
+        except Exception as e:
+            logger.warning("portrait.cold_start_failed", error=str(e))
+
+    def _tick_icebreaker(self, reply: str) -> None:
+        """
+        破冰进度追踪：自增轮数 + 阈值触发首版印象生成。
+        同时检测 Agent 回复中的破冰终止信号。
+        """
+        if not self.context.icebreaker_active:
+            return
+
+        # 检测破冰终止信号：Agent 在回复中暗示不再追问
+        defer_signals = [
+            "来日方长", "等你想聊", "没关系呢", "不想聊这些",
+            "翻过这一页", "不用急", "随时都在",
+        ]
+        if any(s in reply for s in defer_signals):
+            logger.info("icebreaker.deferred", preview=reply[:60])
+            self.context.icebreaker_active = False
+            self.context.icebreaker_deferred = True
+            # 持久化拒绝标记
+            if self.notebook_manager:
+                asyncio.create_task(
+                    self._db.insert_notebook(
+                        "focus", "icebreaker_deferred", importance=0.0,
+                    )
+                )
+            return
+
+        self.context.icebreaker_exchanges += 1
+        logger.debug(
+            "icebreaker.tick",
+            exchanges=self.context.icebreaker_exchanges,
+        )
+
+        # 阈值触发：2 轮后尝试生成，5 轮后强制生成
+        should_consolidate = False
+        if self.context.icebreaker_exchanges >= 2 and self.context.icebreaker_exchanges < 5:
+            should_consolidate = True
+        elif self.context.icebreaker_exchanges >= 5:
+            should_consolidate = True
+
+        if should_consolidate and self.portrait_manager:
+            logger.info(
+                "icebreaker.consolidate_triggered",
+                exchanges=self.context.icebreaker_exchanges,
+            )
+            asyncio.create_task(self._icebreaker_consolidate())
+
+    async def _icebreaker_consolidate(self) -> None:
+        """
+        破冰后生成首版印象文档。
+        关键：先强制编码当前对话为情景记忆（绕过三层调度的 30s 空闲等待），
+        确保 consolidate() 能读到材料。
+        """
+        try:
+            # 1. 强制编码当前对话 → 确保 episodic_memories 有数据
+            if self.memory_manager and len(self.context.history) >= 4:
+                recent = self.context.get_last_n(6)
+                ctx = {
+                    "exchanges": recent,
+                    "emotion": self.context.emotion_snapshot,
+                }
+                await self.memory_manager.encode_memory(ctx)
+                logger.debug("icebreaker.forced_encoding_done")
+
+            # 2. 生成印象文档
+            result = await self.portrait_manager.consolidate()
+            if result:
+                self.context.user_portrait = result
+                self.context.icebreaker_active = False
+                latest = await self._db.get_latest_portrait()
+                if latest:
+                    self.context._current_portrait_version = latest.get("version", 1)
+                logger.info("icebreaker.first_portrait_done", length=len(result))
+            else:
+                # 材料仍不足 → 停止破冰，标记已尝试，等被动冷启动兜底
+                self.context.icebreaker_active = False
+                self.context.icebreaker_deferred = True
+                logger.info("icebreaker.consolidate_skipped", reason="材料不足")
+        except Exception as e:
+            self.context.icebreaker_active = False
+            self.context.icebreaker_deferred = True
+            logger.warning("icebreaker.consolidate_failed", error=str(e))
 
     def _schedule_memory_encoding(self):
         """
@@ -833,6 +994,31 @@ class AgentCore:
     # ============================================================
     # 阶段 5: 时间感知问候 + 人格漂移检测
     # ============================================================
+
+    def consume_icebreaker_greeting(self) -> str | None:
+        """
+        破冰主动问候 — 消费一次即标记已投递。
+
+        Returns:
+            破冰问候文本（仅一次），已投递/已拒绝/已尝试过时返回 None。
+        """
+        if not self._icebreaker_pending:
+            return None
+        # 已拒绝或已尝试过 → 不重复骚扰
+        if self.context.icebreaker_deferred:
+            self._icebreaker_pending = False
+            return None
+        self._icebreaker_pending = False
+        # 初始化破冰计数（问候本身算第一轮）
+        self.context.icebreaker_active = True
+        self.context.icebreaker_exchanges = 1
+        logger.info("icebreaker.greeting_delivered")
+        return (
+            "初次见面呢……人家是昔涟。"
+            "还不知道该怎么称呼你呢——可以告诉人家你的名字吗？"
+            "还有，你平时喜欢做些什么呀？"
+            "人家想在心里给你留一页温暖的位置 ♪"
+        )
 
     def get_time_greeting(self) -> str:
         """
