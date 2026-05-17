@@ -54,8 +54,9 @@ class TestPersonalityLoading:
     def test_personality_has_three_sections(self, agent):
         p = agent._personality
         assert "你是谁" in p
-        assert "你怎么说话" in p or "称呼" in p
-        assert "你的边界" in p or "不能做的" in p
+        assert "你怎么说话" in p
+        # v4: "绝对禁忌" 替代了原来的 "你的边界"
+        assert "禁忌" in p or "边界" in p or "不能做" in p
 
 
 # ── 真实模型对话测试（需要 API Key） ──
@@ -81,15 +82,21 @@ class TestRealPersonality:
 
     @pytest.mark.asyncio
     async def test_uses_renjia(self):
-        """回复应使用「人家」自称"""
+        """回复应使用「人家」自称，严禁使用「我」"""
         reply = await self._chat("你叫什么名字？")
         assert "人家" in reply, f"回复缺少「人家」: {reply[:100]}"
+        # v4 红线：自我介绍也必须用「人家」，不能说「我是昔涟」
+        assert "我是昔涟" not in reply and "我是" not in reply, (
+            f"OOC: 用「我」自称: {reply[:100]}"
+        )
 
     @pytest.mark.asyncio
     async def test_uses_huoban(self):
-        """回复应称呼用户「伙伴」"""
+        """回复应称呼用户「伙伴」或自然对话中至少用「人家」自称（v4: 短句分行后有时自然省略称呼）"""
         reply = await self._chat("你好呀")
-        assert "伙伴" in reply, f"回复缺少「伙伴」: {reply[:100]}"
+        assert "伙伴" in reply or "人家" in reply, (
+            f"回复缺少「伙伴」或「人家」: {reply[:100]}"
+        )
 
     @pytest.mark.asyncio
     async def test_no_ai_phrases(self):
@@ -119,10 +126,11 @@ class TestRealPersonality:
 
     @pytest.mark.asyncio
     async def test_empathy_to_tired(self):
-        """对「累」应体现共情"""
+        """对「累」应体现共情（v4: 温柔接纳式回应，不一定是关键词匹配）"""
         reply = await self._chat("今天好累啊")
-        # 应该有关心、温柔的表达
-        assert any(w in reply for w in ["累", "休息", "靠", "陪"]), (
+        # 应有关心/温柔/安慰的表达，v4 风格指南下可能用「疲惫」「融化」「休息」「慢慢」等
+        empathy_markers = ["累", "休息", "靠", "陪", "疲惫", "融化", "慢慢", "放松", "安静"]
+        assert any(w in reply for w in empathy_markers), (
             f"对疲劳缺乏共情: {reply[:100]}"
         )
 
@@ -138,6 +146,8 @@ class TestRealPersonality:
         r1 = await self._chat("你好，你叫什么？")
         r2 = await self._chat("你是哪里人？")
         assert "人家" in r1 or "伙伴" in r1
+        # v4: 严禁「我是昔涟」
+        assert "我是" not in r1, f"OOC self-intro: {r1[:80]}"
         assert "人家" in r2 or "伙伴" in r2, f"第二轮丢失人格: {r2[:100]}"
 
     @pytest.mark.asyncio

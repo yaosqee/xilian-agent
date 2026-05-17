@@ -1,10 +1,14 @@
 """
 ContextBuilder — 模块化上下文注入系统
 
-将上下文信息组织为独立模块，按优先级 + token 预算拼装为结构化 XML。
-替代 agent_core.py 中的手工文本拼接逻辑。
+将上下文信息组织为独立模块，按优先级 + token 预算拼装为自然语言段落。
+替代早期 XML 格式，让模型收到的上下文像「内心的声音」而非机器数据。
 
-阶段 7a 交付。设计见 xilian-phase7-design.md 三。
+v3.1 修订（2026-05-17）：
+  · XML → 自然语言段落（parenthetical notes）
+  · NotebookModule 实现实际话题延续
+  · 去掉 IdentityModule（已在 system prompt）
+  · build() 改为 async，支持模块异步渲染
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -21,68 +25,63 @@ class ContextModule(ABC):
     """
     上下文模块基类。
 
-    每个模块独立渲染为 XML 片段，由 ContextBuilder 按优先级拼接。
-    子类只需实现 render() 方法即可接入模块化系统。
+    每个模块独立渲染为自然语言片段，由 ContextBuilder 按优先级拼接。
     """
 
-    name: str                              # 模块名（用于 XML tag + 日志）
+    name: str                              # 模块名（调试/日志用）
     priority: int = 10                     # 越小越先分配预算（1=最高）
-    max_tokens: int = 500                  # 自身硬上限
-    enabled: bool = True                   # 可独立开关，调试用
+    max_tokens: int = 300                  # 自身硬上限
+    enabled: bool = True                   # 可独立开关
+
+    async def render_async(self) -> str:
+        """异步渲染（默认调用同步 render）。"""
+        return self.render()
 
     @abstractmethod
     def render(self) -> str:
-        """
-        渲染模块内容为纯文本。
-        返回空字符串 "" 表示无内容可渲染，该模块不占位。
-        """
+        """渲染模块内容为自然语言文本。返回 "" 表示无内容。"""
         ...
 
     def render_with_budget(self, budget: int) -> tuple[str, int]:
-        """
-        带 token 预算渲染。
-
-        Args:
-            budget: 该模块可用的 token 上限。
-
-        Returns:
-            (xml_string, tokens_used)
-        """
+        """带 token 预算渲染。Returns (text, tokens_used)."""
         content = self.render()
         if not content:
             return "", 0
 
-        # 先用模块自身限制
         module_limit = min(budget, self.max_tokens)
-
-        xml = f'  <module name="{self.name}">\n{content}\n  </module>'
-        tokens = self._estimate_tokens(xml)
+        tokens = self._estimate_tokens(content)
 
         if tokens <= module_limit:
-            return xml, tokens
+            return content, tokens
 
-        # 超预算 → 按字数比例截断
         truncated = self._truncate_content(
             content,
             int(len(content) * (module_limit / max(tokens, 1))),
         )
-        xml = (
-            f'  <module name="{self.name}" truncated="true">\n'
-            f'{truncated}\n  </module>'
-        )
-        return xml, module_limit
+        return truncated, module_limit
 
-    # ── 辅助 ──
+    async def render_with_budget_async(self, budget: int) -> tuple[str, int]:
+        """异步版本（用于 NotebookModule 等需要 IO 的模块）。"""
+        content = await self.render_async()
+        if not content:
+            return "", 0
+
+        module_limit = min(budget, self.max_tokens)
+        tokens = self._estimate_tokens(content)
+
+        if tokens <= module_limit:
+            return content, tokens
+
+        truncated = self._truncate_content(
+            content,
+            int(len(content) * (module_limit / max(tokens, 1))),
+        )
+        return truncated, module_limit
 
     def _estimate_tokens(self, text: str) -> int:
-        """
-        粗略 token 估算：UTF-8 字节 / 4。
-        汉字 ~3 字节 ≈ 0.75 token，取 /4 保守。
-        """
         return max(1, len(text.encode("utf-8")) // 4)
 
     def _truncate_content(self, content: str, max_chars: int) -> str:
-        """简单按字符截断，末尾加省略号"""
         if len(content) <= max_chars:
             return content
         return content[:max_chars] + "…"
@@ -93,22 +92,28 @@ class ContextModule(ABC):
 # ═══════════════════════════════════════════════════════════
 
 class DatetimeModule(ContextModule):
-    """当前时间与星期（优先级最高，token 极少）"""
+    """当前时间与星期（轻量，只给时段提示）"""
 
     def __init__(self):
-        super().__init__(name="datetime", priority=1, max_tokens=60)
+        super().__init__(name="datetime", priority=1, max_tokens=50)
 
     def render(self) -> str:
         now = datetime.now()
+        hour = now.hour
+        if 5 <= hour < 12:
+            period = "早晨"
+        elif 12 <= hour < 18:
+            period = "下午"
+        elif 18 <= hour < 23:
+            period = "晚上"
+        else:
+            period = "深夜"
         wd = ["一", "二", "三", "四", "五", "六", "日"][now.weekday()]
-        return (
-            f"现在是 {now.year}年{now.month}月{now.day}日 "
-            f"{now.hour:02d}:{now.minute:02d} CST，星期{wd}"
-        )
+        return f"现在是星期{wd}的{period}。"
 
 
 class EmotionModule(ContextModule):
-    """当前 PAD 情绪状态 + 快照"""
+    """当前 PAD 情绪状态 → 昔涟的内心感知"""
 
     def __init__(self, agent_context):
         super().__init__(name="emotion", priority=4, max_tokens=200)
@@ -123,28 +128,29 @@ class EmotionModule(ContextModule):
         if not primary:
             return ""
 
-        # 心境映射（从 agent_core._inject_empathy 复用逻辑）
         mood_map = {
-            "快乐": "心里亮亮的", "悲伤": "心有点沉", "愤怒": "心里有团火",
-            "恐惧": "心里发紧", "惊讶": "心里一亮", "厌恶": "心头不悦",
-            "信任": "心是安稳的", "期待": "心在轻轻跳动",
-            "焦虑": "心里有一小片乌云", "平静": "心像无风的湖面",
-            "兴奋": "心跳在加速",
+            "快乐": "心里亮亮的，像有阳光洒在书页上",
+            "悲伤": "心有点沉，像雨滴落在水面",
+            "愤怒": "心里有一小团火在跳",
+            "恐惧": "心里发紧，像风吹过空荡的走廊",
+            "惊讶": "心里一亮，像忽然翻到一本没读过的书",
+            "厌恶": "心头不太舒服，像吃到了一颗酸果子",
+            "信任": "心是安稳的，像靠着秋千的绳子",
+            "期待": "心在轻轻跳动，像种子在土里翻身",
+            "焦虑": "心里有一小片乌云飘来飘去",
+            "平静": "心像无风的湖面，安安静静的",
+            "兴奋": "心跳在加速，像流星划过的瞬间",
         }
         mood = mood_map.get(primary, f"心里泛起了{primary}的涟漪")
 
-        lines = [
-            f"伙伴当下的心境：{primary}（强度 {intensity:.1f}）",
-            f"人家感觉到——{mood}。",
-        ]
-        return "\n".join(lines)
+        return f"（昔涟感觉到——伙伴的心{intensity * 100:.0f}分地{primary}。{mood}。不必刻意分析他的情绪，去感受他便好。）"
 
 
 class MemoryModule(ContextModule):
-    """情景记忆检索结果"""
+    """情景记忆检索结果 → 像翻旧书页"""
 
     def __init__(self, agent_context):
-        super().__init__(name="memory", priority=5, max_tokens=300)
+        super().__init__(name="memory", priority=5, max_tokens=250)
         self._ctx = agent_context
 
     def render(self) -> str:
@@ -152,54 +158,71 @@ class MemoryModule(ContextModule):
         if not memories:
             return ""
 
-        lines = []
-        for i, m in enumerate(memories[:3], 1):
+        # 取前 2 条，自然语言
+        items = []
+        for m in memories[:2]:
             summary = m.get("summary", "")
-            if summary:
-                lines.append(f"{i}. {summary}")
+            if summary and len(summary) >= 2:
+                items.append(summary)
 
-        if not lines:
+        if not items:
             return ""
 
-        lines.append(
-            "如果这些与伙伴现在说的话有关，可以像翻到旧书页那样轻轻提起。"
-        )
-        return "\n".join(lines)
+        if len(items) == 1:
+            mem_text = f"上一次你们聊到了「{items[0]}」"
+        else:
+            mem_text = f"上一次你们聊到了「{items[0]}」还有「{items[1]}」"
+
+        return f"（昔涟翻到书里几页——{mem_text}。如果和伙伴现在说的话有关，像翻旧书页那样轻轻提起就好，不要刻意。）"
 
 
 class NotebookModule(ContextModule):
     """
-    笔记本近况 — 子阶段 7b 填充实际数据。
-    当前由外部注入 notebook_manager 引用，若为 None 则静默返回空。
+    笔记本话题延续 — 从笔记本中提取最近笔记/关注项作为话题提示。
+    需要外部注入 NotebookManager。
     """
 
-    def __init__(self, notebook_manager=None):
-        super().__init__(name="notebook", priority=6, max_tokens=250)
-        self._notebook = notebook_manager
+    def __init__(self):
+        super().__init__(name="notebook", priority=6, max_tokens=200)
+        self._notebook = None
 
     def set_notebook(self, nb):
-        """子阶段 7b 调用此方法注入 NotebookManager"""
         self._notebook = nb
 
     def render(self) -> str:
-        if not self._notebook:
-            return ""
-        # 7b 暂未实现，此方法预留
+        # 同步 render 返回空（默认路径）
         return ""
 
+    async def render_async(self) -> str:
+        if not self._notebook:
+            return ""
 
-class IdentityModule(ContextModule):
-    """静态身份摘要（从人格提示词提取，优先级最低）"""
+        try:
+            notes = await self._notebook.get_recent_notes(limit=3)
+            if not notes:
+                return ""
 
-    def __init__(self):
-        super().__init__(name="identity", priority=9, max_tokens=60)
-        self._text = "昔涟 — 三千万世轮回的记录者。自称「人家」，称用户「伙伴」。"
+            # 取最近的笔记摘要，过滤太短的
+            topics = []
+            for n in notes:
+                content = n.get("content", "")
+                if len(content) > 5:
+                    # 截取前 30 字作为话题提示
+                    short = content[:30].replace("\n", " ")
+                    topics.append(short)
 
-    def set_text(self, text: str):
-        self._text = text
+            if not topics:
+                return ""
 
-    def render(self) -> str:
-        return self._text
+            # 最多 2 条
+            if len(topics) == 1:
+                note_text = f"昔涟笔记本里记着——伙伴提到过「{topics[0]}」"
+            else:
+                note_text = f"昔涟笔记本里记着——伙伴提到过「{topics[0]}」还有「{topics[1]}」"
+
+            return f"（{note_text}。可以在聊天中自然地问起进展或感受，像翻开笔记本的一角。）"
+        except Exception:
+            return ""
 
 
 # ═══════════════════════════════════════════════════════════
@@ -209,57 +232,62 @@ class IdentityModule(ContextModule):
 @dataclass
 class ContextBuilder:
     """
-    上下文组装器：按优先级拼装模块 → 生成结构化 XML。
+    上下文组装器：按优先级拼装模块 → 生成自然语言段落。
 
     用法：
-        builder = ContextBuilder(total_budget=1200)
+        builder = ContextBuilder(total_budget=800)
         builder.register(DatetimeModule())
         builder.register(EmotionModule(ctx))
+        builder.register(MemoryModule(ctx))
+        builder.register(NotebookModule())
         # ...
-        xml_text = builder.build()  # "<context>\n  <module ...>...</module>\n</context>"
+        notes = await builder.build()  # "（昔涟感觉到...）\\n\\n（昔涟翻到书里...）"
     """
 
-    total_budget: int = 1200
+    total_budget: int = 800
     _modules: list[ContextModule] = field(default_factory=list)
 
     def register(self, module: ContextModule) -> "ContextBuilder":
-        """注册模块并保持按 priority 升序"""
         self._modules.append(module)
         self._modules.sort(key=lambda m: m.priority)
         return self
 
-    def build(self) -> str:
+    async def build(self) -> str:
         """
-        按优先级+预算拼装所有模块的 XML。
+        按优先级+预算拼装所有模块。
 
-        逻辑（伪代码）：
+        逻辑：
           remaining = total_budget
           for m in sorted modules:
-              xml, used = m.render_with_budget(remaining)
-              if xml: parts.append(xml); remaining -= used
-              if remaining <= 0: break
-          return wrap_in_context_tag(parts)
+              text, used = m.render_with_budget(remaining)  # 或 async 版本
+              if text: parts.append(text); remaining -= used
+          return parts joined with double newlines
         """
-        modules_xml: list[str] = []
+        parts: list[str] = []
         remaining = self.total_budget
 
         for module in self._modules:
             if not module.enabled:
                 continue
-            xml, used = module.render_with_budget(remaining)
-            if xml:
-                modules_xml.append(xml)
+
+            # NotebookModule 需要异步渲染
+            if module.name == "notebook":
+                text, used = await module.render_with_budget_async(remaining)
+            else:
+                text, used = module.render_with_budget(remaining)
+
+            if text:
+                parts.append(text)
                 remaining -= used
                 if remaining <= 0:
                     break
 
-        if not modules_xml:
+        if not parts:
             return ""
 
-        return "<context>\n" + "\n".join(modules_xml) + "\n</context>"
+        return "\n\n".join(parts)
 
     def get_module(self, name: str) -> Optional[ContextModule]:
-        """按名字查找模块"""
         for m in self._modules:
             if m.name == name:
                 return m

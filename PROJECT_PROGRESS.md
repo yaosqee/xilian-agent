@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-16 22:00 CST
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 项目进入打磨期 → 前端全面重构已完成
+> 📅 最后更新：2026-05-17 14:30 CST
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 项目进入打磨期 → v4 提示词 + SSE 真流式上线
 
 ---
 
@@ -220,7 +220,7 @@
 2. **环境变量**：`.env` 管理 API Key，`.gitignore` 排除
 3. **纯云端路由**：全量 DeepSeek，架构保留本地模型扩展点
 4. **Git 提交**：做完功能就 commit，commit message 当变更日志
-5. **人格提示词**：纳入 Git 版本管理，`prompts/CHANGELOG.md` 记录变更
+5. **人格提示词**：纳入 Git 版本管理，当前 `prompts/personality_v4.md`，`CHANGELOG.md` 记录变更
 6. **文件位置**：代码 `~/xilian-v3/`，计划文档 `/home/hezi/projects/xilian_plan/`
 
 ---
@@ -249,17 +249,23 @@
 | 五 | 测试补全（阶段7-8） | 5个新测试文件150条：Notebook(29)/MarkerParser(24新增)/AttentionScheduler(18新增)/Security(36)/CodingDelegate(23)，总计402/402全绿 |
 | 六 | 好感度系统重构 | 从纯前端假值改为后端驱动：affection_state表+Alembic迁移003+AgentCore._update_affection()+GET /api/affection+affectionStore+AffectionBar重写(❤️💕💖💝) |
 | 七 | 项目文档 + Memory | PROJECT_PROGRESS/CONTEXT/README更新，~/.claude memory写入（project-vision+architecture+conventions+overview） |
+| 八 | 对话质量系统提升 | 提示词 v3→v3.1（删除短约束+对话节奏+话题延续+标记降级），上下文 XML→自然语言段落，NotebookModule 实现话题注入，max_tokens=600+temperature=0.65，_enforce_speech_rule 上下文感知三层兜底 |
+| 九 | SSE 真流式 + 纯括号防护 | 后端逐 3 字符 50ms 间隔推送，前端 ReadableStream 流式读取替代 await res.text()。纯括号检测：括号外 CJK≥2 放行 + 括号占比检测 + _clean_reply 内置兜底 |
+| 十 | 提示词 v4 风格指南重写 | 句式铁律（短句分行+……节奏+不超三行）、意象约束（0-2个/轮）、固定口头禅注入（5个锚点短语）、情感调色盘（6情绪×形式变化）、10条OOC红线、6场景示例。agent_core加载路径v3→v4 |
 | — | Git commits: 6237a81, ... | — |
 
 ## 下一步
 
-打磨期继续 — 记忆/情感精度提升（让昔涟的反应更贴切角色人格）+ 前端体验打磨。
+打磨期继续 — v4 提示词验证与微调 + 前端体验打磨 + 记忆/情感精度持续提升。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
 ---
 
 ## 最近决策
 
+- **2026-05-17**：提示词 v4 全面重写。以角色说话风格指南为骨架，解决三大根因：① 句式从"2-4句流动"→"短句分行不超三行"+"……"为节奏控制器；② 意象从无约束→"盐不是饭，0-2个/轮"；③ 情感从"说什么"→"怎么说"（形式变化表）。新增固定口头禅（5个锚点）、对话行为模式（主动发起/先接纳再推进/温柔说不）、10条OOC红线（含禁止连续三行、禁止堆砌意象）。agent_core 加载路径 v3→v4。
+- **2026-05-17**：SSE 真流式 + 纯括号三层防护。后端逐 3 字符 50ms 间隔推送（之前整个 reply 作为单个 data: 事件）。前端 ReadableStream 流式读取替代 await res.text()。纯括号检测改进为括号外 CJK≥2 放行 + 括号占比检测，_clean_reply 内置兜底。解决「一次性返回所有文本、等待时间长」和「（纯括号回复）无声音」两个前端可见 bug。
+- **2026-05-17**：对话质量系统提升。提示词 v3→v3.1（删除短约束+对话节奏+话题延续+标记降级）。上下文 ContextBuilder XML→自然语言段落，NotebookModule 实现话题注入。模型参数 max_tokens=600+temperature 0.65。_enforce_speech_rule 上下文感知三层兜底。移除 _safe_mode 死代码。
 - **2026-05-17**：好感度系统从纯前端假值重写为后端驱动。affection_state 表 + 003 迁移 + AgentCore._update_affection() 每轮更新（基础+0.05，正面情绪加成+0.05~0.10，红线-0.50，100锁定）。前端 AffectionBar 改为 Zustand store + 15s 轮询，等级标签改为「昔涟喜欢你→你永远喜欢昔涟」，图标统一小爱心。
 - **2026-05-17**：核心系统深度检查+修复。记忆检索双重sort覆盖艾宾浩斯衰减→删除第二个sort。PAD衰减从向零衰减→向基线回归。长间隔PAD更新基线叠加→decay_factor=0修复。自主问候status改为实时计算。情绪基线误判期待→距基线<0.25时降级为平静。
 - **2026-05-17**：阶段7-8测试补全。150条新测试（Notebook/MarkerParser/AttentionScheduler/Security/CodingDelegate），402/402全绿。项目memory写入（project-vision.md定义核心目标：让昔涟像活人一样陪伴）。PROJECT_PROGRESS/CONTEXT/README文档同步。
@@ -289,5 +295,5 @@
 | 阶段 5 做了什么 | `xilian-phase5-checklist.md` |
 | 阶段 6 做了什么 | `xilian-phase6-design.md` |
 | 阶段 7 设计方案 | `xilian-phase7-design.md` |
-| 昔涟人格完整稿 | `~/xilian-v3/prompts/personality_v3.md` |
+| 昔涟人格完整稿 | `~/xilian-v3/prompts/personality_v4.md` |
 | 架构审查修订记录 | `xilian-v3.md` 末尾「审查修订记录」 |

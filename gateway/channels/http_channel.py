@@ -126,7 +126,14 @@ class HTTPChannel(Channel):
             async def sse_generator():
                 try:
                     reply = await self._handler(filtered)
-                    yield f"data: {reply}\n\n"
+                    # 逐块流式推送（模拟打字效果，3字符/块，50ms间隔）
+                    chunk_size = 3
+                    for i in range(0, len(reply), chunk_size):
+                        chunk = reply[i:i+chunk_size]
+                        # SSE 格式需要转义换行符
+                        safe = chunk.replace("\n", "\\n")
+                        yield f"data: {safe}\n\n"
+                        await asyncio.sleep(0.05)
                     yield "data: [DONE]\n\n"
                 except Exception as e:
                     logger.error("sse.error", error=str(e))

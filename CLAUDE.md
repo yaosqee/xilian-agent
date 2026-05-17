@@ -28,7 +28,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - loguru 结构化日志：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`
 - 测试：pytest + pytest-asyncio，asyncio_mode = "strict"
 - 环境变量：.env 管理 API Key，.gitignore 排除
-- 人格提示词纳入 Git 版本管理：`prompts/personality_v3.md`
+- 人格提示词纳入 Git 版本管理：`prompts/personality_v4.md`
 
 ## 前端风格
 

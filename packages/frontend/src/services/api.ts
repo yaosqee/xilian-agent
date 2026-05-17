@@ -27,14 +27,24 @@ export function postChatStream(
   })
     .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      // Simple SSE parsing
-      const lines = text.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') { onDone(); return; }
-          onToken(data);
+      const reader = res.body?.getReader();
+      if (!reader) { onDone(); return; }
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // Process complete SSE events
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // keep incomplete line
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') { onDone(); return; }
+            // Unescape newlines from SSE transport
+            onToken(data.replace(/\\n/g, '\n'));
+          }
         }
       }
       onDone();

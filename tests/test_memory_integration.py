@@ -110,17 +110,17 @@ async def test_reset_session(agent):
 
 @pytest.mark.asyncio
 async def test_build_messages_with_memory(agent):
-    """阶段 7a: ContextBuilder XML 格式 — 上下文注入为结构化 XML。
-    
+    """v3.1: ContextBuilder 自然语言格式 — 上下文注入为自然语言段落。
+
     验证：
     - system prompt 仅含纯人格
-    - 用户消息包含 XML context 或保持原样
+    - 用户消息包含自然语言上下文（parenthetical notes）或保持原样
     - empathy_text / memory_text 参数保留但不再手动拼接
     """
     agent._personality = "你是昔涟。"
     memory_text = "[当前记忆]\n· 书页翻到一段回忆：昨天..."
     empathy_text = "[共情感知]\n伙伴似乎有些疲惫"
-    msgs = agent._build_messages("今天好累", empathy_text, memory_text)
+    msgs = await agent._build_messages("今天好累", empathy_text, memory_text)
 
     # system prompt 仅含纯人格
     assert msgs[0]["content"] == "你是昔涟。"
@@ -131,25 +131,22 @@ async def test_build_messages_with_memory(agent):
     last_content = last_msg["content"]
     assert "今天好累" in last_content
 
-    # 阶段 7a: 上下文由 ContextBuilder 组装为 XML
-    # 有 datetime module 就说明 XML 格式正常
-    if "<context>" in last_content:
-        assert "<module" in last_content
-        assert "</context>" in last_content
-    # else: 没有上下文注入，仅用户消息（无数据时正常）
+    # v3.1: 上下文为自然语言段落（不再使用 XML）
+    # datetime module 总是输出，检查是否包含自然语言格式
+    if "---" in last_content:
+        # 有上下文注入时检查格式
+        assert "星期" in last_content  # datetime module
 
 
 @pytest.mark.asyncio
 async def test_build_messages_no_injections(agent):
-    """阶段 7a: 空注入时仍有基础模块（datetime/identity）→ XML context"""
+    """v3.1: 无数据时 datetime 模块仍有输出（星期信息）"""
     agent._personality = "你是昔涟。"
-    msgs = agent._build_messages("hello", "", "")
+    msgs = await agent._build_messages("hello", "", "")
     assert msgs[0]["content"] == "你是昔涟。"
-    # 阶段 7a: ContextBuilder 会注入基础模块，消息不再是纯文本
-    # 但用户消息一定包含原始内容
+    # 用户消息包含原始内容，可能还有日期信息
     last = msgs[-1]["content"]
     assert "hello" in last
-    assert "<context>" in last or last == "hello"
 
 
 @pytest.mark.asyncio

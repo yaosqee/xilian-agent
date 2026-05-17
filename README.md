@@ -212,7 +212,7 @@ xilian-v3/
 ## 了解更多
 
 - [项目架构详解](docs/ARCHITECTURE.md)
-- [人格提示词](prompts/personality_v3.md)
+- [人格提示词](prompts/personality_v4.md)
 - [项目进度](PROJECT_PROGRESS.md)
 - [代码导航](CONTEXT.md)
 

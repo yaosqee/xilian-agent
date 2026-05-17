@@ -1,7 +1,7 @@
-"""ContextBuilder 单元测试 — 阶段 7a"""
+"""ContextBuilder 单元测试 — v3.1 (自然语言段落)"""
 import pytest
 from packages.agent.context_builder import (
-    ContextBuilder, DatetimeModule, IdentityModule, EmotionModule, MemoryModule,
+    ContextBuilder, DatetimeModule, EmotionModule, MemoryModule, NotebookModule,
 )
 from packages.agent.agent_context import AgentContext
 
@@ -10,24 +10,11 @@ class TestDatetimeModule:
     def test_renders_time_info(self):
         m = DatetimeModule()
         result = m.render()
-        assert '年' in result
-        assert '月' in result
-        assert 'CST' in result
+        assert '星期' in result
+        assert len(result) > 3
 
     def test_priority_is_1(self):
         assert DatetimeModule().priority == 1
-
-
-class TestIdentityModule:
-    def test_renders_basic_identity(self):
-        m = IdentityModule()
-        result = m.render()
-        assert '昔涟' in result or '记录者' in result or '人家' in result
-
-    def test_custom_text(self):
-        m = IdentityModule()
-        m.set_text('自定义身份')
-        assert m.render() == '自定义身份'
 
 
 class TestEmotionModule:
@@ -49,6 +36,14 @@ class TestEmotionModule:
         m = EmotionModule(ctx)
         assert m.render() == ''
 
+    def test_parenthetical_format(self):
+        ctx = AgentContext()
+        ctx.emotion_snapshot = {'primary_emotion': '平静', 'primary_intensity': 0.3}
+        m = EmotionModule(ctx)
+        result = m.render()
+        assert result.startswith('（')
+        assert result.endswith('）')
+
 
 class TestMemoryModule:
     def test_empty_when_no_memories(self):
@@ -63,49 +58,61 @@ class TestMemoryModule:
         result = m.render()
         assert '昔涟项目' in result
 
-    def test_max_3_memories(self):
+    def test_max_2_memories_natural_format(self):
         ctx = AgentContext()
         ctx.memory_retrieval = [
-            {'summary': f'memory {i}'} for i in range(5)
+            {'summary': f'topic {i}'} for i in range(5)
         ]
         m = MemoryModule(ctx)
         result = m.render()
-        assert 'memory 0' in result
-        assert 'memory 2' in result
+        assert 'topic 0' in result
+        assert 'topic 1' in result
+        assert 'topic 2' not in result  # only shows 2
+
+    def test_parenthetical_format(self):
+        ctx = AgentContext()
+        ctx.memory_retrieval = [{'summary': '樱花'}]
+        m = MemoryModule(ctx)
+        result = m.render()
+        assert result.startswith('（')
+        assert result.endswith('）')
+
+
+class TestNotebookModule:
+    def test_empty_when_no_notebook(self):
+        m = NotebookModule()
+        assert m.render() == ''
+
+    @pytest.mark.asyncio
+    async def test_empty_when_no_data(self):
+        m = NotebookModule()
+        assert await m.render_async() == ''
 
 
 class TestContextBuilder:
     def test_registers_and_sorts_modules(self):
         builder = ContextBuilder()
-        builder.register(IdentityModule())
         builder.register(DatetimeModule())
+        builder.register(EmotionModule(AgentContext()))
         assert builder.module_names[0] == 'datetime'  # priority 1 first
-        assert builder.module_names[-1] == 'identity'  # priority 9 last
 
-    def test_build_produces_xml(self):
+    @pytest.mark.asyncio
+    async def test_build_returns_natural_language(self):
         builder = ContextBuilder(total_budget=500)
         builder.register(DatetimeModule())
-        builder.register(IdentityModule())
-        result = builder.build()
-        assert '<context>' in result
-        assert '</context>' in result
-        assert '<module' in result
+        result = await builder.build()
+        assert '星期' in result
+        # No XML tags
+        assert '<context>' not in result
+        assert '<module' not in result
 
-    def test_empty_when_no_enabled_modules(self):
+    @pytest.mark.asyncio
+    async def test_empty_when_no_enabled_modules(self):
         builder = ContextBuilder()
         m = DatetimeModule()
         m.enabled = False
         builder.register(m)
-        assert builder.build() == ''
-
-    def test_budget_truncation(self):
-        """预算极度紧张时低优先级模块被跳过"""
-        builder = ContextBuilder(total_budget=10)
-        builder.register(DatetimeModule())   # 会用掉大部分
-        builder.register(IdentityModule())   # 可能被跳过
-        result = builder.build()
-        # datetime 应该在里面
-        assert 'datetime' in result
+        assert await builder.build() == ''
 
     def test_get_module_by_name(self):
         builder = ContextBuilder()

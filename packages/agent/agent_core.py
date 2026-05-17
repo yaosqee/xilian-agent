@@ -33,7 +33,6 @@ from .context_builder import (
     EmotionModule,
     MemoryModule,
     NotebookModule,
-    IdentityModule,
 )
 
 
@@ -99,10 +98,8 @@ class AgentCore:
         self._drift_counter: int = 0
         self._last_interaction_time: float = 0.0
 
-        # 阶段 8: 安全机制
+        # 阶段 8: 安全机制（审计日志 + 人设评分，safe_mode 预留）
         self._round_count: int = 0
-        self._safe_mode: bool = False
-        self._safe_mode_score_count: int = 0  # 安全模式下评分次数
 
         # 好感度系统
         self._affection_score: float = 0.0
@@ -116,14 +113,13 @@ class AgentCore:
         self._vector_store: VectorStore | None = None
         self.memory_manager: MemoryManager | None = None
 
-        # 阶段 7a: 模块化上下文构建器
-        # 5 个模块，按优先级排序：datetime(1) < emotion(4) < memory(5) < notebook(6) < identity(9)
-        self._context_builder = ContextBuilder(total_budget=1200)
+        # 阶段 7a: 模块化上下文构建器（v3.1: XML→自然语言）
+        # 4 个模块，按优先级：datetime(1) < emotion(4) < memory(5) < notebook(6)
+        self._context_builder = ContextBuilder(total_budget=800)
         self._context_builder.register(DatetimeModule())
         self._context_builder.register(EmotionModule(self.context))
         self._context_builder.register(MemoryModule(self.context))
         self._context_builder.register(NotebookModule())  # 7b 通过 set_notebook() 注入
-        self._context_builder.register(IdentityModule())
 
         # 阶段 7b: 笔记本管理器占位（子阶段 7b 注入）
         self.notebook_manager: NotebookManager | None = None
@@ -209,10 +205,10 @@ class AgentCore:
     # ============================================================
 
     def _load_personality(self) -> str:
-        """从 prompts/personality_v3.md 加载系统提示"""
+        """从 prompts/personality_v4.md 加载系统提示"""
         prompt_path = (
             Path(__file__).resolve().parent.parent.parent
-            / "prompts" / "personality_v3.md"
+            / "prompts" / "personality_v4.md"
         )
         try:
             content = prompt_path.read_text(encoding="utf-8")
@@ -278,14 +274,15 @@ class AgentCore:
         self.context.memory_retrieval = await self._retrieve_memories(event.payload)
 
         # ── 3. 构建消息（情感+记忆由 ContextBuilder EmotionModule/MemoryModule 注入）──
-        messages = self._build_messages(event.payload)
+        messages = await self._build_messages(event.payload)
 
         # ── 6. 模型调用 ──
         try:
             result = await self.router.route(
                 "chat",
                 messages,
-                temperature=0.8,
+                temperature=0.65,
+                max_tokens=600,
                 stream=stream,
             )
             if stream:
@@ -475,7 +472,7 @@ class AgentCore:
     # 消息构建
     # ============================================================
 
-    def _build_messages(
+    async def _build_messages(
         self,
         user_msg: str,
         empathy_text: str = "",   # ⚠️ 保留参数签名（向后兼容），但不再使用
@@ -485,12 +482,12 @@ class AgentCore:
         构建模型输入消息列表（阶段 7a：ContextBuilder 模块化）。
 
         结构：
-          [system: 人格提示词] → [历史消息] → [XML 上下文 + 用户消息]
+          [system: 人格提示词] → [历史消息] → [自然语言上下文 + 用户消息]
 
         优化要点：
         - 系统提示只含静态人格 → 前缀缓存 100% 命中
         - 历史消息与前一轮高度一致 → 高缓存命中率
-        - 上下文由 ContextBuilder 组装为结构化 XML → 注入到用户消息底部
+        - 上下文由 ContextBuilder 组装为自然语言段落 → 注入到用户消息底部
         - 每个模块独立渲染、可按 priority + budget 控制
         """
         # 纯静态系统提示（前缀缓存友好，永远不变）
@@ -500,12 +497,12 @@ class AgentCore:
         history = self.context.get_messages(limit=20)
         messages.extend(history)
 
-        # 阶段 7a: ContextBuilder 组装 XML 上下文
-        ctx_xml = self._context_builder.build()
+        # 阶段 7a: ContextBuilder 组装上下文（v3.1: 自然语言段落）
+        ctx_notes = await self._context_builder.build()
 
         # 动态注入 + 用户消息收到底部
-        if ctx_xml:
-            user_content = f"{ctx_xml}\n\n---\n\n{user_msg}"
+        if ctx_notes:
+            user_content = f"{ctx_notes}\n\n---\n\n{user_msg}"
         else:
             user_content = user_msg
 
@@ -518,11 +515,12 @@ class AgentCore:
     # ============================================================
 
     def _clean_reply(self, raw: str) -> str:
-        """清洗模型输出：去首尾空白，保证非空"""
+        """清洗模型输出：去首尾空白 + 兜底语音检测"""
         cleaned = raw.strip()
         if not cleaned:
             return "……♪"
-        return cleaned
+        # 第一层语音兜底：如果清洗后只有动作描述没有实际对话，立即补
+        return self._enforce_speech_rule(cleaned)
 
     def _extract_markers(self, text: str) -> tuple[str, list]:
         """
@@ -566,34 +564,55 @@ class AgentCore:
     def _enforce_speech_rule(self, text: str) -> str:
         """
         语音兜底：确保回复包含实际对话。
-
-        如果回复只有括号动作（如「（轻轻翻开书）」）没有实际说话内容，
-        在前面补一句温柔的开场。
-
-        判断逻辑：去掉所有括号内容后，剩余有效对话文字 ≥ 3 字。
+        检测：括号外 CJK >= 2 放行；括号内文字远超括号外 → 模型只写了动作 → 补前缀。
         """
         import re
-        # 去掉中英文括号、标记、空白
         stripped = re.sub(r'[（(][^）)]*[）)]', '', text)
         stripped = re.sub(r'\[[^\]]*\]', '', stripped)
         stripped = re.sub(r'[~♪✨🌟⭐💕]', '', stripped)
         stripped = stripped.strip()
 
-        # 剩余有效对话文字 ≥ 3 个中日韩文字符
-        cjk_chars = [c for c in stripped if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff']
-        if len(cjk_chars) >= 3:
+        def _cjk(s: str) -> int:
+            return sum(1 for c in s if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff')
+
+        outside_cjk = _cjk(stripped)
+        total_cjk = _cjk(text)
+
+        if outside_cjk >= 2:
             return text
 
-        # 纯括号/无对话 → 补一句
-        fallbacks = [
-            "嗯……人家正在想呢～",
-            "人家听到了呢……让想想看。",
-            "唔，伙伴的话，人家收进书里了。",
-        ]
-        import random
-        prefix = random.choice(fallbacks)
+        if total_cjk > outside_cjk and total_cjk >= 3:
+            prefix = self._build_speech_fallback()
+            logger.debug("speech_rule.enforced", prefix=prefix, original=text[:60])
+            return f"{prefix} {text}" if text.strip() else prefix
+
+        if outside_cjk >= 1:
+            return text
+
+        prefix = self._build_speech_fallback()
         logger.debug("speech_rule.enforced", prefix=prefix, original=text[:60])
         return f"{prefix} {text}" if text.strip() else prefix
+
+    def _build_speech_fallback(self) -> str:
+        """构建上下文感知的语音兜底。"""
+        import random
+        last_user_msg = ""
+        for m in reversed(self.context.history):
+            if m["role"] == "user":
+                last_user_msg = m["content"]
+                break
+
+        if last_user_msg:
+            if "?" in last_user_msg or "？" in last_user_msg:
+                q = last_user_msg.replace("?", "").replace("？", "")
+                if len(q) > 8:
+                    return f"嗯……人家刚才在想关于「{q[:15]}」的事情呢。"
+                return f"嗯……这个问题人家想了一下呢——"
+
+            short = last_user_msg[-15:] if len(last_user_msg) > 15 else last_user_msg
+            return f"人家听到了呢……「{short}」——（轻轻合上书）"
+
+        return "嗯…（轻轻翻开一页书）人家刚才走神了一下呢。伙伴再说一遍好吗？"
 
     def reset_session(self) -> None:
         """重置会话（取消 pending 分析 + 清空历史 + 上下文）"""
@@ -929,47 +948,7 @@ class AgentCore:
                             score=round(score, 2),
                             reason=reason.strip()[:60],
                         )
-                        self._safe_mode_score_count += 1
-                        if self._safe_mode_score_count >= 3:
-                            self._enter_safe_mode()
-                    else:
-                        # 评分正常 → 如果不在安全模式则重置计数
-                        if not self._safe_mode:
-                            self._safe_mode_score_count = 0
-                        else:
-                            # 在安全模式下评分回升 → 可能退出
-                            self._safe_mode_score_count = max(0, self._safe_mode_score_count - 1)
-                            if score > 0.75 and self._safe_mode_score_count <= 0:
-                                self._exit_safe_mode()
                 except ValueError:
                     pass
         except Exception as e:
             logger.warning("personality.scoring_failed", error=str(e))
-
-    def _enter_safe_mode(self):
-        """进入安全回复模式。"""
-        if self._safe_mode:
-            return
-        self._safe_mode = True
-        self._safe_mode_count = 0
-        logger.warning("personality.safe_mode_entered")
-        if self._db and self._db._conn:
-            import asyncio
-            asyncio.ensure_future(
-                self._db.insert_audit_log("safe_mode_entered", severity="warning")
-            )
-
-    def _exit_safe_mode(self):
-        """退出安全回复模式。"""
-        self._safe_mode = False
-        self._safe_mode_score_count = 0
-        logger.info("personality.safe_mode_exited")
-        if self._db and self._db._conn:
-            import asyncio
-            asyncio.ensure_future(
-                self._db.insert_audit_log("safe_mode_exited", severity="info")
-            )
-
-    @property
-    def is_safe_mode(self) -> bool:
-        return self._safe_mode

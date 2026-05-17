@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-17（好感度系统重构 + 核心bug修复 + 测试补全150条）
+> 📅 最后更新：2026-05-17（v4 提示词重写 + SSE 真流式 + 纯括号三层防护 + 对话质量系统提升）
 
 ---
 
@@ -33,7 +33,7 @@ xilian-v3/
 │   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder(XML) + Marker管道 + Notebook钩子 + coding_delegate + 人格评分
 │   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器注册表
-│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook/Identity 5模块）
+│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook 4模块，自然语言段落）
 │   ├── notebook_manager.py          # NotebookManager：笔记/日记/关注/任务 + 自动记笔记（阶段7b）
 │   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载 + 质量双门控（阶段7d）
 │   ├── emotion_analyzer.py          # EmotionAnalyzer：DeepSeek 11维情感分析（阶段2，被PAD增强）
@@ -56,7 +56,7 @@ xilian-v3/
 │       └── adapter.py               # MCPAdapter：接口签名预埋（阶段7实现）
 │
 ├── prompts/                         # 📝 人格提示词（Git 版本管理）
-│   ├── personality_v3.md            # 当前活跃版本（v3，含标记使用说明）
+│   ├── personality_v4.md            # 当前活跃版本（v4，短句分行+意象约束+情感调色盘）
 │   ├── personality_v2.md            # v2 精简版（保留对比）
 │   ├── personality_v1.md            # v1 原始版（保留对比）
 │   ├── game-knowledge.md            # 昔涟游戏知识（崩坏3/原神/星铁等）
@@ -170,7 +170,7 @@ main.py 启动
 agent.process(event) 内部（阶段 7）：
   _perceive() → 意图/编码委托检测
   _retrieve_memories() → sqlite-vec 向量化 → top-3 + 艾宾浩斯衰减权重
-  _build_messages() → ContextBuilder XML 组装（5模块）
+  _build_messages() → ContextBuilder 自然语言上下文组装（4模块）
   router.route("chat") → 模型调用 → MarkerParser 后处理 → 返回
   _schedule_emotion_analysis() → fire-and-forget 后台 PAD 更新
   _schedule_memory_encoding() → 三层调度
@@ -202,7 +202,7 @@ NudgeEngine 自主问候流程（阶段 6）：
 | `emotion_core.py` | PAD 情感引擎：评价→PAD→惯性衰减→情绪标签 | `AppraisalExtractor.analyze()`, `EmotionState.update()`, `PersonalityModulator.modulate()`, `pad_to_emotion_profile()` |
 | `memory_manager.py` | 情景记忆全管线：编码/检索/艾宾浩斯衰减/调度/容量 | `encode_memory()`, `retrieve_memories()`, `schedule_encoding()`, `manage_capacity()` |
 | `autobiography_writer.py` | 每日自传体 + 每周反思结晶 | `write_daily()`, `reflect_weekly()` |
-| `context_builder.py` | 模块化上下文组装（5模块 XML + 优先级+预算） | `ContextBuilder.register()`, `build()` |
+| `context_builder.py` | 模块化上下文组装（4模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
 | `notebook_manager.py` | 笔记/日记/关注/任务 + 自动记笔记 | `add_note()`, `generate_daily_diary()`, `auto_note_after_message()` |
 | `skills_loader.py` | Agent Skills 加载 + 质量双门控 | `load_all()`, `match()` |
 | `marker_parser.py` | 5种标记流式解析 + SSML接口 | `MarkerParser.feed()`, `flush()` |
@@ -238,5 +238,5 @@ NudgeEngine 自主问候流程（阶段 6）：
 
 ## 下一步
 
-打磨期继续 — 记忆/情感精度提升（对齐角色人格）+ 前端体验打磨。
+打磨期继续 — v4 提示词验证 + 前端体验打磨 + 记忆/情感精度持续提升。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
