@@ -204,48 +204,81 @@ class ModelRouter:
         return self._ds_pro_clients[idx]
 
     async def _call_ds_pro(self, messages: list, timeout: int = 60, **kwargs):
-        """DS Pro（双 Key 轮询 + fallback）"""
-        # Key 1 尝试
+        """DS Pro（双 Key 轮询 + fallback）。有 tools 时返回完整 message 对象。"""
+        has_tools = bool(kwargs.get("tools"))
         for attempt in range(len(self._ds_pro_clients)):
             try:
                 client = self._ds_pro_clients[attempt]
+                api_kwargs = dict(
+                    model=self.ds_pro_model,
+                    messages=messages,
+                    temperature=kwargs.get("temperature", 0.7),
+                    stream=kwargs.get("stream", False),
+                )
+                if kwargs.get("max_tokens"):
+                    api_kwargs["max_tokens"] = kwargs["max_tokens"]
+                if has_tools:
+                    api_kwargs["tools"] = kwargs["tools"]
+                    api_kwargs["tool_choice"] = kwargs.get("tool_choice", "auto")
                 response = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=self.ds_pro_model,
-                        messages=messages,
-                        temperature=kwargs.get("temperature", 0.7),
-                        stream=kwargs.get("stream", False),
-                    ),
+                    client.chat.completions.create(**api_kwargs),
                     timeout=timeout,
                 )
                 if kwargs.get("stream"):
                     return response
-                return response.choices[0].message.content
+                choice = response.choices[0]
+                finish = choice.finish_reason
+                if finish == "length":
+                    logger.warning("model_router.truncated",
+                                  model=self.ds_pro_model,
+                                  reason="max_tokens reached",
+                                  usage=str(response.usage))
+                msg = choice.message
+                # 有 tools 时返回完整 message（可能含 tool_calls）；否则返回 content 字符串
+                return msg if has_tools else msg.content
             except Exception as e:
-                logger.warning(f"DS Pro key[{attempt}] 失败", error=str(e))
+                err_type = type(e).__name__
+                err_msg = str(e)[:200]
+                logger.warning(f"DS Pro key[{attempt}] 失败: {err_type}",
+                              detail=err_msg)
                 if attempt == len(self._ds_pro_clients) - 1:
                     raise
                 continue
 
     async def _call_ds_flash(self, messages: list, timeout: int = 60, **kwargs):
-        """DS Flash"""
+        """DS Flash。有 tools 时返回完整 message 对象。"""
         if not self._ds_flash:
-            # fallback 到 Pro
             logger.warning("DS Flash 不可用，fallback DS Pro")
             return await self._call_ds_pro(messages, **kwargs)
 
+        has_tools = bool(kwargs.get("tools"))
+        api_kwargs = dict(
+            model=self.ds_flash_model,
+            messages=messages,
+            temperature=kwargs.get("temperature", 0.7),
+            stream=kwargs.get("stream", False),
+        )
+        if kwargs.get("max_tokens"):
+            api_kwargs["max_tokens"] = kwargs["max_tokens"]
+        if has_tools:
+            api_kwargs["tools"] = kwargs["tools"]
+            api_kwargs["tool_choice"] = kwargs.get("tool_choice", "auto")
+
         response = await asyncio.wait_for(
-            self._ds_flash.chat.completions.create(
-                model=self.ds_flash_model,
-                messages=messages,
-                temperature=kwargs.get("temperature", 0.7),
-                stream=kwargs.get("stream", False),
-            ),
+            self._ds_flash.chat.completions.create(**api_kwargs),
             timeout=timeout,
         )
         if kwargs.get("stream"):
             return response
-        return response.choices[0].message.content
+        choice = response.choices[0]
+        finish = choice.finish_reason
+        if finish == "length":
+            logger.warning("model_router.truncated",
+                          model=self.ds_flash_model,
+                          reason="max_tokens reached",
+                          usage=str(response.usage))
+        msg = choice.message
+        return msg if has_tools else msg.content
 
     # ========== 工具兼容性 ==========
 

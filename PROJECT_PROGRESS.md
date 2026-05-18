@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-18 01:30 CST
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 项目进入打磨期 → v4 提示词 + SSE 真流式上线
+> 📅 最后更新：2026-05-18 12:00 CST
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期 → 工具系统重构完成（LLM function calling 驱动）
 
 ---
 
@@ -254,18 +254,21 @@
 | 十 | 提示词 v4 风格指南重写 | 句式铁律（短句分行+……节奏+不超三行）、意象约束（0-2个/轮）、固定口头禅注入（5个锚点短语）、情感调色盘（6情绪×形式变化）、10条OOC红线、6场景示例。agent_core加载路径v3→v4 |
 | 十一 | 对话历史持久化与分页加载 | 游标分页API(GET /api/conversation/history)+启动恢复20轮到AgentContext+前端LoadMoreButton(毛玻璃居中按钮+spin动画)+chatStore分页状态(historyCursor/hasMore/loadedRounds最多40轮)+滚动位置保持 |
 | 十二 | 用户记忆系统：印象文档 + 破冰 | user_portrait表+PortraitManager定期重写(每日5:00)+PortraitModule(优先级3,版本号门控,完整文档注入)+破冰主动问候(consume_icebreaker_greeting+_tick_icebreaker+强制编码)+冷启动兜底(阈值4轮)+前端PortraitPanel(星形图标,空状态轮询,刷新按钮)+GET /api/user/portrait |
+| 十三 | 工具系统全面重构 | LLM function calling 驱动工具选择（替代关键词匹配），ToolExecutor（校验→权限→频率→确认→审计），ResultWrapper（规则模板+LLM双轨），autodiscover 自动注册，DeepSeek thinking mode reasoning_content 回传修复。4 工具：search_memory（记忆检索）/ query_weather（和风天气+搜索fallback）/ search_web（智谱Web Search）/ coding_delegate（EXECUTE，需用户确认）。工具→记忆/印象联动（trigger_memory/trigger_portrait_update）。确认回路（_pending_confirmation）。finish_reason 截断检测 + max_tokens 1500。 |
 | — | Git commits: 6237a81, ... | — |
 
 ## 下一步
 
-打磨期继续 — v4 提示词验证与微调 + 前端体验打磨 + 记忆/情感精度持续提升。
-对话历史持久化已交付。用户记忆系统已交付（叙事性印象文档 + 破冰主动问候 + 每日凌晨重写 + 前端伙伴印象面板）。
-好感度显示修复 + cron调度迁移asyncio已完成。
+打磨期继续 — 工具系统运行观察与调优 + 前端体验打磨 + 记忆/情感精度持续提升。
+工具系统已交付（LLM function calling 驱动 4 工具 + 确认回路 + 记忆/印象联动）。
+和风天气 API Key 需在控制台激活（当前使用 Zhipu 搜索 fallback，功能正常）。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
 ---
 
 ## 最近决策
+
+- **2026-05-18**：工具系统全面重构。LLM function calling 替代关键词匹配，4 工具 autodiscover 注册（search_memory/query_weather/search_web/coding_delegate）。ToolExecutor 全流程（校验→权限→频率→确认→审计）+ ResultWrapper 结果包装（规则模板+LLM双轨）。确认回路（_pending_confirmation）+ 工具→记忆联动（trigger_memory/trigger_portrait_update→memory_encoding/mark_dirty）。修复 DeepSeek thinking mode reasoning_content 回传问题 + finish_reason 截断检测。max_tokens 600→1500（工具回传路径）。新增文件：tool_executor.py / tool_result.py / result_wrapper.py / query_weather.py / search_memory.py / search_web.py。
 
 - **2026-05-18**：好感度API端点修复 + 前端显示精度。GET /api/affection 从 _register_stage8_routes 移到 _setup_routes（同上次 portrait 端点的路由注册bug，只在 __init__ 内注册的端点才生效）。前端 AffectionBar Math.round→toFixed(1) 显示小数点后一位。
 - **2026-05-18**：Cron调度全面修复。所有异步定时任务从 APScheduler lambda+asyncio.create_task 迁移到 asyncio 后台循环（nudge_loop/token_refill + _cron_loop/_cron_weekly_loop/_cron_multi_loop）。根因：APScheduler 在线程池执行 lambda，线程池无 running event loop，asyncio.create_task() 抛出 RuntimeError 被静默吞掉，导致自主问候/自传体/反思/日记/任务检查/印象重写等所有异步定时任务从未执行。同步备份任务仍用 APScheduler（不受影响）。

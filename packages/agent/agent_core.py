@@ -21,6 +21,8 @@ from ..shared.vector_store import VectorStore
 from ..shared.marker_parser import MarkerParser
 from .agent_context import AgentContext
 from .tool_registry import ToolRegistry
+from .tool_executor import ToolExecutor
+from .result_wrapper import ResultWrapper
 from .emotion_analyzer import EmotionAnalyzer
 from .emotion_core import EmotionEngine
 from .memory_manager import MemoryManager
@@ -45,10 +47,7 @@ DEGRADED_REPLY = (
     "伙伴能等一小会儿吗？"
 )
 
-TOOL_PLACEHOLDER = (
-    "这个功能人家还在学习呢……"
-    "伙伴再等等好不好？等学会了，一定马上帮你~ ♪"
-)
+# TOOL_PLACEHOLDER 已移除 — 工具调用现由 LLM function calling 驱动
 
 
 def _sanitize_surrogates(text: str) -> str:
@@ -72,20 +71,20 @@ class AgentCore:
     def __init__(self, model_router: ModelRouter | None = None, db_path: str = "data/xilian.db"):
         self.router = model_router or ModelRouter()
         self.tool_registry = ToolRegistry()
+        self.tool_executor: ToolExecutor | None = None
+        self.result_wrapper: ResultWrapper | None = None
         self.context = AgentContext()
         self._personality: str = self._load_personality()
 
-        # 阶段 7d: 注册编码委托工具
-        from .tools.coding_delegate import coding_delegate as _cd
-        from .tool_registry import ToolPermission
-        self.tool_registry.register(
-            name="coding_delegate",
-            description="委托 Claude Code 完成编码任务。适合写代码、调试、重构等编程需求。",
-            schema={
-                "task_description": {"type": "string", "description": "编码任务描述"},
-            },
-            permission=ToolPermission.EXECUTE,
-        )(_cd)
+        # 打磨期: 自动发现并注册 tools/ 目录下所有工具
+        new_tools = self.tool_registry.autodiscover("packages.agent.tools")
+        # 注册工具的结果模板（不需要 LLM 二次包装的）
+        from .tools.search_memory import _register_template as _reg_sm
+        from .tools.query_weather import _register_template as _reg_qw
+        from .tools.search_web import _register_template as _reg_sw
+        _reg_sm()
+        _reg_qw()
+        _reg_sw()
 
         # 阶段 2: 情感分析
         self.emotion_analyzer = EmotionAnalyzer(self.router)
@@ -135,6 +134,9 @@ class AgentCore:
 
         # 阶段 7c: 注意力调度器占位（子阶段 7c 注入）
         self.attention_scheduler = None
+
+        # 打磨期: 工具确认回路状态
+        self._pending_confirmation: dict | None = None
 
         logger.info(
             "AgentCore 就绪",
@@ -195,6 +197,18 @@ class AgentCore:
                     logger.info("portrait.not_found_in_db")
             except Exception as e:
                 logger.warning("portrait.load_failed", error=str(e))
+
+        # 打磨期: 初始化 ToolExecutor + ResultWrapper（依赖 memory_manager / db 已就绪）
+        self.tool_executor = ToolExecutor(
+            registry=self.tool_registry,
+            db=self._db,
+            memory_manager=self.memory_manager,
+            portrait_manager=self.portrait_manager,
+            notebook_manager=self.notebook_manager,
+        )
+        self.result_wrapper = ResultWrapper(model_router=self.router)
+        logger.info("tool_system.ready", tools=self.tool_registry.tool_names,
+                    executor=True, wrapper=True)
 
         # 检查破冰是否已被用户拒绝
         try:
@@ -313,20 +327,22 @@ class AgentCore:
         intent = self._perceive(event.payload)
         trace_log.debug("agent.perceive", intent=intent)
 
-        if intent.get("is_tool_request"):
-            if intent.get("intent") == "coding_delegate":
-                # 阶段 7d: 编码委托
-                from .tools.coding_delegate import coding_delegate as _cd
-                result = await _cd(event.payload)
-                reply = result.summary
-            else:
-                reply = TOOL_PLACEHOLDER
-            self.context.add_message("user", event.payload)
-            self.context.add_message("assistant", reply)
-            trace_log.info("agent.process.done", reply_preview=reply[:60])
-            return reply
+        # ── 1. 感知 ──
+        intent = self._perceive(event.payload)
+        trace_log.debug("agent.perceive", intent=intent)
 
-        # ── 2. 记忆检索 (NEW) ──
+        # ── 1b. 工具确认回路检查 ──
+        if self._pending_confirmation:
+            confirmed = await self._handle_confirmation(event, trace_log)
+            if confirmed:
+                reply, tool_results = confirmed
+                if tool_results:
+                    self._process_tool_side_effects(tool_results, event.payload)
+                self.context.add_message("user", event.payload)
+                self.context.add_message("assistant", reply)
+                return reply
+
+        # ── 2. 记忆检索 ──
         if self.memory_manager:
             self.memory_manager.signal_new_message()
         self.context.memory_retrieval = await self._retrieve_memories(event.payload)
@@ -334,7 +350,11 @@ class AgentCore:
         # ── 3. 构建消息（情感+记忆由 ContextBuilder EmotionModule/MemoryModule 注入）──
         messages = await self._build_messages(event.payload)
 
-        # ── 6. 模型调用 ──
+        # ── 4. 模型调用（打磨期：LLM 驱动工具选择）──
+        tools = None
+        if self.tool_executor and len(self.tool_registry) > 0:
+            tools = self.tool_registry.to_openai_tools()
+
         try:
             result = await self.router.route(
                 "chat",
@@ -342,12 +362,22 @@ class AgentCore:
                 temperature=0.65,
                 max_tokens=600,
                 stream=stream,
+                tools=tools,
+                tool_choice="auto" if tools else None,
             )
             if stream:
                 reply = "[stream]"
                 trace_log.info("agent.process.stream_started")
-            else:
+            elif isinstance(result, str):
                 reply = self._clean_reply(result)
+            else:
+                # LLM 返回了 tool_calls → 执行 + 包装 + 回传
+                reply, tool_results = await self._handle_tool_calls(
+                    result, event, messages, trace_log
+                )
+                # 工具调用后处理：记忆编码 + 印象更新
+                if tool_results:
+                    self._process_tool_side_effects(tool_results, event.payload)
         except Exception as e:
             trace_log.error("agent.process.model_error", error=str(e))
             reply = DEGRADED_REPLY
@@ -409,32 +439,12 @@ class AgentCore:
 
     def _perceive(self, payload: str) -> dict:
         """
-        感知阶段：解析用户消息，提取意图/情绪基调。
+        感知阶段：提取情绪基调（工具选择交由 LLM function calling）。
         """
         intent = {
             "intent": "chat",
-            "is_tool_request": False,
             "emotion_hint": "",
         }
-
-        tool_keywords = {"帮我查", "查一下", "查询", "搜索一下", "发送邮件", "写邮件"}
-        for kw in tool_keywords:
-            if kw in payload:
-                intent["is_tool_request"] = True
-                intent["intent"] = "tool_request"
-                break
-
-        # 阶段 7d: 编码委托意图
-        coding_keywords = {
-            "帮我写", "写个", "写一个", "帮我改", "改一下代码",
-            "调试", "bug", "报错", "重构", "帮我实现", "实现一个",
-        }
-        if not intent["is_tool_request"]:
-            for kw in coding_keywords:
-                if kw in payload:
-                    intent["is_tool_request"] = True
-                    intent["intent"] = "coding_delegate"
-                    break
 
         positive = {"开心", "高兴", "好耶", "哈哈", "太棒了", "喜欢", "爱"}
         negative = {"难过", "累", "烦", "焦虑", "害怕", "孤独", "不开心", "哭"}
@@ -681,6 +691,185 @@ class AgentCore:
         messages.append({"role": "user", "content": user_content})
 
         return messages
+
+    # ============================================================
+    # 打磨期: LLM 驱动工具调用
+    # ============================================================
+
+    async def _handle_tool_calls(self, message, event, messages, trace_log):
+        """
+        处理 LLM 返回的 tool_calls：执行工具 → 包装结果 → 回传 LLM → 获取最终文本回复。
+        最多迭代 3 次，防止工具调用死循环。
+
+        Returns:
+            (reply_text, tool_results) — tool_results 是 [(tool_name, ToolResult), ...]
+            用于后续记忆编码和印象更新判断。
+        """
+        import json
+
+        MAX_ITER = 3
+        current_message = message
+        all_tool_results: list = []  # 跨迭代收集所有工具结果
+
+        for iteration in range(MAX_ITER):
+            tool_calls = getattr(current_message, 'tool_calls', None)
+            if not tool_calls:
+                content = getattr(current_message, 'content', '') or ''
+                if content:
+                    return self._clean_reply(content), all_tool_results
+                return DEGRADED_REPLY, all_tool_results
+
+            trace_log.info("tool.iteration", iter=iteration + 1,
+                          count=len(tool_calls))
+
+            # 执行所有工具调用 + 包装结果
+            tool_msgs = []
+            for tc in tool_calls:
+                tool_name = tc.function.name
+                try:
+                    arguments = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {}
+
+                trace_log.info("tool.call", tool=tool_name,
+                              args=str(arguments)[:120])
+
+                result = await self.tool_executor.execute(
+                    tool_name, arguments, user_id="hezi",
+                )
+
+                # 处理 PENDING_CONFIRMATION — 保存状态供确认回路
+                if not result.success and result.error == "PENDING_CONFIRMATION":
+                    pending_tool = result.data.get("tool_name", tool_name)
+                    pending_args = result.data.get("arguments", arguments)
+                    self._pending_confirmation = {
+                        "tool_name": pending_tool,
+                        "arguments": pending_args,
+                        "tool_call": tc,
+                    }
+                    return (
+                        f"人家想帮你执行「{pending_tool}」……\n"
+                        f"不过这个操作需要伙伴确认一下才可以哦 ~♪\n"
+                        f"伙伴说一声「确认」人家就去办～"
+                    ), all_tool_results
+
+                # 收集工具结果供记忆/印象更新
+                all_tool_results.append((tool_name, result))
+
+                wrapped = await self.result_wrapper.wrap(
+                    tool_name, result, event.payload,
+                )
+                tool_msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": wrapped,
+                })
+                trace_log.info("tool.result", tool=tool_name,
+                              success=result.success)
+
+            # 构建回传消息：assistant(tool_calls) + tool results
+            # 必须保留原消息的 reasoning_content（DeepSeek thinking mode 要求）
+            follow_up = list(messages)
+            assistant_content = getattr(current_message, 'content', None)
+            assistant_msg = {
+                "role": "assistant",
+                "content": assistant_content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+            # 保留 thinking mode 字段（DeepSeek V4-Pro 要求回传）
+            reasoning = getattr(current_message, 'reasoning_content', None)
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning
+            follow_up.append(assistant_msg)
+            follow_up.extend(tool_msgs)
+
+            # 回传 LLM（不带 tools，避免二次工具调用）
+            try:
+                result = await self.router.route(
+                    "chat", follow_up,
+                    temperature=0.65, max_tokens=1500,
+                )
+            except Exception as e:
+                # LLM 回传失败 → 降级返回已包装的工具结果
+                trace_log.error("tool.follow_up_error",
+                              error_type=type(e).__name__,
+                              error=str(e)[:200])
+                fallback = tool_msgs[0]["content"] if tool_msgs else DEGRADED_REPLY
+                return fallback, all_tool_results
+
+            if isinstance(result, str):
+                return self._clean_reply(result), all_tool_results
+            else:
+                current_message = result
+                continue
+
+        # 超过最大迭代
+        trace_log.warning("tool.max_iterations", limit=MAX_ITER)
+        return "人家帮你都看过了……不过信息有点多，要不伙伴先消化一下？ ~♪", all_tool_results
+
+    def _process_tool_side_effects(self, tool_results: list, user_msg: str):
+        """
+        处理工具调用的副作用：trigger_memory → 记忆编码 / trigger_portrait → 标记印象 dirty。
+        在 process() 的 reply 生成之后调用，fire-and-forget 不阻塞回复。
+        """
+        for tool_name, result in tool_results:
+            if result.trigger_memory:
+                logger.info("tool.side_effect.memory", tool=tool_name)
+                self._schedule_memory_encoding()
+                break  # 一次编码足够
+
+        for tool_name, result in tool_results:
+            if result.trigger_portrait_update and self.portrait_manager:
+                logger.info("tool.side_effect.portrait_dirty", tool=tool_name)
+                self.portrait_manager.mark_dirty()
+
+    async def _handle_confirmation(self, event, trace_log):
+        """
+        处理工具确认回路：用户确认后直接执行之前挂起的工具。
+        返回 (reply, tool_results) 或 None（表示不是确认场景）。
+        """
+        pending = self._pending_confirmation
+        if not pending:
+            return None
+
+        user_text = event.payload.strip()
+        confirm_words = {"确认", "好的", "好", "可以", "行", "ok", "yes", "嗯", "做吧", "去吧"}
+
+        if user_text in confirm_words or any(user_text.startswith(w) for w in confirm_words):
+            self._pending_confirmation = None
+            tool_name = pending["tool_name"]
+            arguments = pending["arguments"]
+
+            trace_log.info("confirmation.execute", tool=tool_name)
+
+            # 强制执行（跳过 requires_confirmation 检查）
+            result = await self.tool_executor.execute(
+                tool_name, arguments, user_id="hezi",
+            )
+
+            wrapped = await self.result_wrapper.wrap(
+                tool_name, result, event.payload,
+            )
+            trace_log.info("confirmation.done", tool=tool_name, success=result.success)
+
+            return wrapped, [(tool_name, result)]
+
+        # 用户说了别的话 → 取消挂起
+        if len(user_text) > 5 or user_text not in confirm_words:
+            self._pending_confirmation = None
+            trace_log.debug("confirmation.cancelled")
+
+        return None
 
     # ============================================================
     # 工具方法

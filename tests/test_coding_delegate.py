@@ -161,7 +161,7 @@ class TestCodingDelegate:
         with patch("packages.agent.tools.coding_delegate._find_claude", return_value=None):
             result = await coding_delegate("帮我写代码")
             assert result.success is False
-            assert "装上" in result.summary or "装好" in result.summary
+            assert "装上" in result.error or "装好" in result.error
 
     @pytest.mark.asyncio
     async def test_successful_delegation(self, mock_subprocess, tmp_path):
@@ -175,7 +175,7 @@ class TestCodingDelegate:
                     result = await coding_delegate("写个hello world", working_dir=ws, timeout=10)
 
         assert result.success is True
-        assert "Generated code" in result.output
+        assert "Generated code" in result.data["output"]
 
     @pytest.mark.asyncio
     async def test_timeout(self):
@@ -187,7 +187,7 @@ class TestCodingDelegate:
                     result = await coding_delegate("复杂任务", timeout=5)
 
         assert result.success is False
-        assert "太久" in result.summary
+        assert "太久" in result.error
 
     @pytest.mark.asyncio
     async def test_subprocess_error(self):
@@ -235,13 +235,13 @@ class TestCodingDelegate:
         with patch("packages.agent.tools.coding_delegate._find_claude", return_value="/usr/bin/claude"):
             proc = AsyncMock()
             proc.communicate.return_value = (b"Output still here", b"Some warning: error in module")
-            proc.returncode = 0  # 退出码 0 表示成功
+            proc.returncode = 0
             mock_exec = AsyncMock(return_value=proc)
             with patch("asyncio.create_subprocess_exec", mock_exec):
                 with patch("packages.agent.tools.coding_delegate._collect_files", return_value=[]):
                     result = await coding_delegate("test")
 
-            assert result.success is True  # stderr with warnings doesn't fail
+            assert result.success is True
 
     @pytest.mark.asyncio
     async def test_nonzero_exit_code(self):
@@ -255,4 +255,4 @@ class TestCodingDelegate:
                     result = await coding_delegate("test")
 
             assert result.success is False
-            assert len(result.summary) > 0
+            assert len(result.error) > 0

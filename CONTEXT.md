@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-18（好感度API修复 + cron调度迁移asyncio + 前端显示精度）
+> 📅 最后更新：2026-05-18（工具系统重构：LLM function calling + 4工具 + 确认回路 + 记忆联动）
 
 ---
 
@@ -30,13 +30,16 @@ xilian-v3/
 │   └── logging_config.py            # loguru 结构化日志配置
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
-│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + Notebook钩子 + coding_delegate + 破冰追踪 + 启动上下文恢复
+│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + LLM工具调用 + 确认回路 + 记忆联动
 │   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
-│   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器注册表
-│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook 4模块，自然语言段落）
+│   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器 + autodiscover + to_openai_tools()
+│   ├── tool_executor.py             # ToolExecutor：校验→权限→频率→确认→执行→审计（打磨期）
+│   ├── tool_result.py               # ToolResult + ToolContext dataclass（打磨期）
+│   ├── result_wrapper.py            # ResultWrapper：工具结果→昔涟语言（规则模板 + LLM包装双轨，打磨期）
+│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook 4模块）
 │   ├── notebook_manager.py          # NotebookManager：笔记/日记/关注/任务 + 自动记笔记（阶段7b）
-│   ├── portrait_manager.py          # PortraitManager：用户印象文档定期重写 + 破冰冷启动（阶段8+）
-│   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载 + 质量双门控（阶段7d）
+│   ├── portrait_manager.py          # PortraitManager：用户印象文档定期重写 + mark_dirty（阶段8+）
+│   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载（阶段7d）
 │   ├── emotion_analyzer.py          # EmotionAnalyzer：DeepSeek 11维情感分析（阶段2，被PAD增强）
 │   ├── emotion_core.py              # EmotionEngine：PAD情感引擎（阶段4）
 │   ├── memory_manager.py            # MemoryManager：情景记忆编码/检索/艾宾浩斯衰减/调度/容量管理（阶段3+5）
@@ -44,6 +47,10 @@ xilian-v3/
 │   ├── nudge_engine.py              # NudgeEngine + AttentionScheduler（阶段6+7c）
 │   └── tools/
 │       ├── __init__.py              # 工具包入口
+│       ├── coding_delegate.py       # 编码委托（Claude Code CLI，EXECUTE，需确认）
+│       ├── search_memory.py         # 记忆检索（利用 MemoryManager.retrieve_memories）
+│       ├── query_weather.py         # 天气查询（和风天气 + Zhipu搜索fallback）
+│       └── search_web.py            # 网络搜索（智谱 Web Search API）
 │       └── coding_delegate.py       # Claude Code 编码委托（阶段7d）
 │
 ├── gateway/                         # 🚪 消息网关
@@ -168,11 +175,14 @@ main.py 启动
              ├─ ConsoleChannel: stdin 读一行 → InternalEvent → agent.process() → rich 打印
              └─ HTTPChannel: POST /api/chat → InternalEvent → agent.process() → JSON/SSE
 
-agent.process(event) 内部（阶段 7）：
-  _perceive() → 意图/编码委托检测
+agent.process(event) 内部（阶段 7 + 打磨期）：
+  _perceive() → 情绪基调检测
   _retrieve_memories() → sqlite-vec 向量化 → top-3 + 艾宾浩斯衰减权重
   _build_messages() → ContextBuilder 自然语言上下文组装（5模块：DateTime/Portrait/Emotion/Memory/Notebook）
-  router.route("chat") → 模型调用 → MarkerParser 后处理 → 返回
+  router.route("chat", tools=[...]) → LLM function calling 工具选择 →
+    ├─ 文本回复 → MarkerParser 后处理 → 返回
+    └─ tool_calls → ToolExecutor.execute() → ResultWrapper.wrap() → 回传 LLM → 最终回复
+       └─ _process_tool_side_effects() → trigger_memory/trigger_portrait
   _schedule_emotion_analysis() → fire-and-forget 后台 PAD 更新
   _schedule_memory_encoding() → 三层调度
   _write_conversation_log() → SQLite 写入
@@ -208,9 +218,15 @@ NudgeEngine 自主问候流程（阶段 6）：
 | `notebook_manager.py` | 笔记/日记/关注/任务 + 自动记笔记 | `add_note()`, `generate_daily_diary()`, `auto_note_after_message()` |
 | `skills_loader.py` | Agent Skills 加载 + 质量双门控 | `load_all()`, `match()` |
 | `marker_parser.py` | 5种标记流式解析 + SSML接口 | `MarkerParser.feed()`, `flush()` |
-| `tools/coding_delegate.py` | Claude Code 编码委托 | `coding_delegate()`, `_find_claude()` |
+| `tool_registry.py` | 装饰器注册 + autodiscover + OpenAI tools 格式 | `register_tool()`, `autodiscover()`, `to_openai_tools()` |
+| `tool_executor.py` | 工具执行调度：校验→权限→频率→确认→审计 | `execute()`, `_check_rate_limit()` |
+| `tool_result.py` | 统一工具返回格式 + 副作用标记 | `ToolResult.ok()`, `ToolResult.fail()` |
+| `result_wrapper.py` | 工具结果→昔涟语言（规则模板+LLM包装双轨） | `wrap()`, `_llm_wrap()` |
+| `tools/coding_delegate.py` | 编码委托（Claude Code CLI，EXECUTE，需确认） | `coding_delegate()` |
+| `tools/search_memory.py` | 记忆检索（MemoryManager） | `search_memory()` |
+| `tools/query_weather.py` | 天气查询（和风天气 + 搜索fallback） | `query_weather()` |
+| `tools/search_web.py` | 网络搜索（智谱 Web Search API） | `search_web()` |
 | `nudge_engine.py` | 自主问候 + 注意力调度（AttentionScheduler） | `TokenBucket.consume()`, `MissingValueCalculator.compute()`, `GreetingGenerator.generate()`, `AutonomyConfig` |
-| `tool_registry.py` | 装饰器注册工具 | `register_tool()`, `list_tools()` |
 | `gateway.py` | 通道生命周期管理 | `register()`, `start()`, `stop()` |
 | `security.py` | 白名单 + 紧急熔断 + 频率限制 | `filter(event)`, `emergency_stop()` |
 | `http_channel.py` | FastAPI 应用, ~26个端点 + SSE | `/api/chat`, `/api/emotion`, `/api/notebook/*` 等 |
@@ -237,9 +253,9 @@ NudgeEngine 自主问候流程（阶段 6）：
 | `packages/voice/` | 语音管道接口占位，阶段 9 完整实现 |
 | `gateway/mcp/adapter.py` | MCP 适配器接口签名预埋 |
 | `markers_to_ssml()` | SSML 转换完整实现 |
+| 和风天气 API Key | 需在控制台激活对应 API 产品（当前使用 Zhipu 搜索 fallback） |
 
 ## 下一步
 
-打磨期继续 — v4 提示词验证与微调 + 前端体验打磨 + 记忆/情感精度持续提升。
-用户记忆系统已交付（叙事性印象文档 + 破冰主动问候 + 每日重写 + 前端伙伴印象面板）。
-不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
+打磨期继续 — 工具系统运行观察与调优 + 前端体验打磨 + 记忆/情感精度持续提升。
+工具系统已交付（LLM function calling 驱动 4 工具 + 确认回路 + 记忆/印象联动）。

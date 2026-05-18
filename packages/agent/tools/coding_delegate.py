@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from loguru import logger
 
+from ..tool_result import ToolResult
+
 
 # ── Claude Code prompt 模板 ──
 
@@ -41,48 +43,50 @@ class CodeResult:
 
 
 # ═══════════════════════════════════════════════════════════
-# 主函数
+# 工具注册（autodiscover 自动消费）
 # ═══════════════════════════════════════════════════════════
 
+from ..tool_registry import register_tool, ToolPermission
+
+
+@register_tool(
+    name="coding_delegate",
+    description="委托 Claude Code 完成编码任务。当伙伴需要写代码、调试、重构、实现功能时使用。",
+    schema={
+        "type": "object",
+        "properties": {
+            "task_description": {
+                "type": "string",
+                "description": "编码任务的自然语言描述",
+            },
+        },
+        "required": ["task_description"],
+    },
+    permission=ToolPermission.EXECUTE,
+    category="system",
+    max_frequency=3,
+    requires_confirmation=True,
+)
 async def coding_delegate(
     task_description: str,
     working_dir: str | None = None,
     timeout: int = 300,
-) -> CodeResult:
+    ctx=None,
+) -> ToolResult:
     """
     将编码任务委托给 Claude Code。
-
-    流程：
-      1. 检测 claude 是否可用
-      2. 构建 prompt
-      3. subprocess 调用 claude --print --permission-mode bypassPermissions
-      4. 等待结果（超时 300s）
-      5. 收集生成文件
-      6. 包装结果（昔涟风格）
-
-    Args:
-        task_description: 伙伴的编码需求
-        working_dir: 工作目录（默认 ~/claude_workspace）
-        timeout: 超时秒数
-
-    Returns:
-        CodeResult with success + summary
     """
     cwd = working_dir or os.path.expanduser("~/claude_workspace")
     os.makedirs(cwd, exist_ok=True)
 
-    # 1. 检测 Claude Code
     claude_bin = _find_claude()
     if not claude_bin:
-        return CodeResult(
-            success=False,
-            summary="人家想帮你请 Claude Code 来写代码……但他好像还没装好呢 (´•ω•̥`) 盒子先装一下 Claude Code 好不好？",
+        return ToolResult.fail(
+            "人家想帮你请 Claude Code 来写代码……但他好像还没装好呢 (´•ω•̥`)"
         )
 
-    # 2. 构建 prompt
     prompt = CLAUDE_PROMPT_TEMPLATE.format(task_description=task_description)
 
-    # 3. 调用 Claude Code
     try:
         proc = await asyncio.create_subprocess_exec(
             claude_bin,
@@ -107,34 +111,27 @@ async def coding_delegate(
             logger.warning("coding_delegate.stderr", stderr=stderr[:200])
 
         success = proc.returncode == 0
-
-        # 4. 收集生成文件
         files = _collect_files(cwd)
-
-        # 5. 包装结果
         summary = _package_result(task_description, stdout, success, files)
 
-        logger.info(
-            "coding_delegate.done",
-            success=success,
-            output_len=len(stdout),
-            files_count=len(files),
-        )
+        logger.info("coding_delegate.done", success=success,
+                    output_len=len(stdout), files_count=len(files))
 
-        return CodeResult(success=success, output=stdout, summary=summary, files=files)
+        if success:
+            return ToolResult.ok(
+                {"summary": summary, "output": stdout[:2000], "files": files},
+                trigger_memory=False,
+            )
+        return ToolResult.fail(summary)
 
     except asyncio.TimeoutError:
         logger.error("coding_delegate.timeout")
-        return CodeResult(
-            success=False,
-            summary="人家请 Claude Code 帮忙了……但它想了太久都还没想好 (´•̥ω•̥̥`) 可能这个问题比较复杂呢。要不伙伴换个方式说说？",
+        return ToolResult.fail(
+            "人家请 Claude Code 帮忙了……但它想了太久 (´•̥ω•̥̥`) 要不换个方式说说？"
         )
     except Exception as e:
         logger.error("coding_delegate.error", error=str(e))
-        return CodeResult(
-            success=False,
-            summary="人家想帮忙的……但 Claude Code 那边好像出了一点小问题。等会儿再试试好不好？",
-        )
+        return ToolResult.fail("Claude Code 那边出了一点小问题……等会儿再试试好不好？")
 
 
 # ═══════════════════════════════════════════════════════════

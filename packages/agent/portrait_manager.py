@@ -54,10 +54,16 @@ class PortraitManager:
     def __init__(self, db, model_router):
         self._db = db
         self._router = model_router
+        self._dirty = False
 
     # ============================================================
     # 查询
     # ============================================================
+
+    def mark_dirty(self):
+        """标记印象文档需要更新（工具调用揭示了用户新偏好）。"""
+        self._dirty = True
+        logger.debug("portrait.marked_dirty")
 
     async def get_current_portrait(self) -> dict | None:
         """返回最新印象文档，不存在时返回 None。"""
