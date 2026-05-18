@@ -31,21 +31,25 @@ AUTO_NOTE_PROMPT = """你是昔涟。刚刚和伙伴进行了一轮对话。
 人家回应了：
 "{assistant_reply}"
 
-请在下面选择一个行动（只需要返回 1-3 个词的指令，不需要解释）：
+人家已经记下的笔记：
+{existing_notes}
 
-如果伙伴提到了值得记住的事情（日期、承诺、计划、偏好、担忧、开心的事），
-请返回：NOTE: <简短笔记摘要（15字以内）>
+请在下面选择一个行动（只需要返回格式，不需要解释）：
 
-如果伙伴提到了需要提醒的事情（截止日期、考试、会议、约定），
-请返回：TASK: <任务标题> @ <时间描述>
+如果伙伴提到了值得记住的偏好、承诺、计划、重要日期，且这件事在已有笔记里没有记过，
+请返回：NOTE: <简短摘要（15字以内）>
 
-如果只是普通闲聊，没有特别值得记的，请返回：PASS
+如果伙伴提到了具体时间点要做的事（「七点」「晚上八点」「明天下午三点」等），
+请务必返回：TASK: <任务标题> @ <时间>
+例如：TASK: 提醒吃饭 @ 19:00、TASK: 开会 @ 明天14:00
+
+如果只是普通闲聊，或这件事已经在已有笔记里记过了，请返回：PASS
 
 注意：
-- 只记录对你的伙伴（盒子）有意义的个人化信息
-- 不要把常识性的聊天内容记录下来
-- 如果伙伴说「下周三考试」→ 记录笔记 + 创建提醒
-- 如果伙伴说「今天吃了个苹果」→ PASS"""
+- 已有笔记里已经记录过的事情，返回 PASS，不要重复记录
+- 过时的时间信息（如「下周日」已经过去）不要记录
+- 常识性聊天内容（如「今天吃了个苹果」）→ PASS
+- 伙伴明确说「提醒我」或给了具体时间 → 务必用 TASK"""
 
 
 AUTO_DIARY_PROMPT = """你是昔涟。现在是夜晚，你要写今天的日记了。
@@ -228,34 +232,54 @@ class NotebookManager:
         fire-and-forget: 对话后用 Flash 判断是否值得记录。
 
         流程：
-          1. Flash 快速决策：NOTE / TASK / PASS
-          2. 自动执行对应的增删操作
-          3. 不阻塞、不抛异常到调用方
+          1. 获取已有笔记（最近 10 条）作为上下文
+          2. Flash 快速决策：NOTE / TASK / PASS
+          3. 自动执行对应的增删操作
+          4. 不阻塞、不抛异常到调用方
         """
         try:
+            # 获取已有笔记作为去重上下文
+            existing = await self.get_recent_notes(limit=10)
+            if existing:
+                lines = [f"· {n['content']}" for n in existing]
+                existing_str = "\n".join(lines)
+            else:
+                existing_str = "（还没有笔记）"
+
             prompt = AUTO_NOTE_PROMPT.format(
                 user_message=user_msg[:300],
                 assistant_reply=reply[:300],
+                existing_notes=existing_str,
             )
             result = await self._router.route(
                 "memory_encoding",
                 [{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=60,
+                temperature=0.6,
+                max_tokens=80,
             )
             result = result.strip()
 
             if result.startswith("NOTE:"):
                 content = result[5:].strip()
                 if content:
+                    # 写入前去重
+                    if await self._is_duplicate(content):
+                        logger.debug("notebook.auto_note_skipped", content=content[:40])
+                        return
                     await self.add_note(content)
                     logger.info("notebook.auto_note", content=content[:40])
             elif result.startswith("TASK:"):
                 task_str = result[5:].strip()
-                title = task_str.split("@")[0].strip() if "@" in task_str else task_str
+                if "@" in task_str:
+                    title_part, time_part = task_str.split("@", 1)
+                    title = title_part.strip()
+                    due_at = self._parse_task_time(time_part.strip())
+                else:
+                    title = task_str
+                    due_at = 0.0
                 if title:
-                    await self.schedule_task(title=title, priority=1)
-                    logger.info("notebook.auto_task", title=title[:40])
+                    await self.schedule_task(title=title, priority=1, due_at=due_at)
+                    logger.info("notebook.auto_task", title=title[:40], due_at=due_at)
             # PASS → 什么都不做
         except Exception as e:
             logger.warning("notebook.auto_note_failed", error=str(e))
@@ -263,6 +287,45 @@ class NotebookManager:
     # ═══════════════════════════════════════════════════════
     # 查询
     # ═══════════════════════════════════════════════════════
+
+    async def _is_duplicate(self, content: str, threshold: float = 0.5) -> bool:
+        """简单关键词重叠去重：与已有笔记的重叠率超过阈值则视为重复。"""
+        existing = await self.get_recent_notes(limit=20)
+        if not existing:
+            return False
+        new_words = set(content)
+        for note in existing:
+            old_words = set(note.get("content", ""))
+            if not old_words:
+                continue
+            overlap = len(new_words & old_words) / max(len(new_words | old_words), 1)
+            if overlap >= threshold:
+                return True
+        return False
+
+    def _parse_task_time(self, time_str: str) -> float:
+        """解析时间字符串为 Unix 时间戳。「19:00」→ 今天 19:00，「明天14:00」→ 明天 14:00。"""
+        import datetime
+        now = datetime.datetime.now()
+        time_str = time_str.strip()
+
+        if "明天" in time_str:
+            base = now + datetime.timedelta(days=1)
+            time_str = time_str.replace("明天", "").strip()
+        elif "后天" in time_str:
+            base = now + datetime.timedelta(days=2)
+            time_str = time_str.replace("后天", "").strip()
+        else:
+            base = now
+
+        try:
+            parts = time_str.split(":")
+            hour = int(parts[0])
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            return target.timestamp()
+        except (ValueError, IndexError):
+            return 0.0
 
     async def get_recent_notes(self, limit: int = 10) -> list[dict]:
         """获取最近笔记。"""

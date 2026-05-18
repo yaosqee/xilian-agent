@@ -87,26 +87,6 @@ async def main():
             except Exception as e:
                 logger.error(f"cron.{job_name}_error", error=str(e))
 
-    async def _cron_multi_loop(hours: list[int], minute: int, job_func, job_name: str):
-        """每日在多个整点运行 job_func。"""
-        import datetime
-        while True:
-            now = datetime.datetime.now()
-            candidates = []
-            for h in hours:
-                t = now.replace(hour=h, minute=minute, second=0, microsecond=0)
-                if t <= now:
-                    t += datetime.timedelta(days=1)
-                candidates.append(t)
-            target = min(candidates)
-            wait = (target - now).total_seconds()
-            logger.debug("cron.sleep", job=job_name, wait_minutes=round(wait / 60, 1))
-            await asyncio.sleep(wait)
-            try:
-                await job_func()
-            except Exception as e:
-                logger.error(f"cron.{job_name}_error", error=str(e))
-
     # ── 阶段 5: 自传体 + 反思定时任务 ──
     async def daily_autobiography_job():
         await run_daily_autobiography(agent._db, agent.router)
@@ -183,25 +163,30 @@ async def main():
                 logger.info("notebook.diary_generated", length=len(diary))
 
     async def check_due_tasks():
-        """检查到期任务 → enqueue 到 AttentionScheduler"""
-        if agent.notebook_manager and agent.attention_scheduler:
-            due = await agent.notebook_manager.get_due_tasks(window_seconds=1800)
-            for task in due:
-                urgency = (
-                    AttentionUrgency.IMMEDIATE if task.get("priority", 0) >= 2
-                    else AttentionUrgency.SOON
-                )
-                agent.attention_scheduler.enqueue(AttentionEvent(
-                    kind="task_reminder",
-                    urgency=urgency,
-                    payload={"task_id": task["id"], "title": task["title"]},
-                ))
-            if due:
-                logger.info("notebook.due_tasks_found", count=len(due))
+        """每 15 分钟检查到期任务 → enqueue 到 AttentionScheduler"""
+        while True:
+            await asyncio.sleep(900)  # 15 分钟
+            try:
+                if agent.notebook_manager and agent.attention_scheduler:
+                    due = await agent.notebook_manager.get_due_tasks(window_seconds=3600)
+                    for task in due:
+                        urgency = (
+                            AttentionUrgency.IMMEDIATE if task.get("priority", 0) >= 2
+                            else AttentionUrgency.SOON
+                        )
+                        agent.attention_scheduler.enqueue(AttentionEvent(
+                            kind="task_reminder",
+                            urgency=urgency,
+                            payload={"task_id": task["id"], "title": task["title"]},
+                        ))
+                    if due:
+                        logger.info("notebook.due_tasks_found", count=len(due))
+            except Exception as e:
+                logger.error("check_due_tasks.error", error=str(e))
 
     asyncio.create_task(_cron_loop(23, 50, notebook_daily_diary, "notebook_diary"))
-    asyncio.create_task(_cron_multi_loop([8, 12, 18], 0, check_due_tasks, "check_due_tasks"))
-    logger.info("Notebook 调度已启动 (每日 23:50 日记, 8:00/12:00/18:00 任务检查)")
+    asyncio.create_task(check_due_tasks())
+    logger.info("Notebook 调度已启动 (每日 23:50 日记, 每15分钟任务检查)")
 
     # ── 阶段 8+: 用户印象文档定期重写（每日凌晨 5:00，自传体之后）──
     async def consolidate_user_portrait():
