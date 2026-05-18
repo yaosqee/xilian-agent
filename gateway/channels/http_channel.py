@@ -50,6 +50,10 @@ class HTTPChannel(Channel):
         self.app = FastAPI(title="昔涟 V3.2 API", version="0.1.0")
         self._setup_middleware()
         self._setup_routes()
+        # 注册 Notebook + 审计/技能 + 背景图片路由（提前到 __init__，确保 FastAPI 路由生效）
+        self._register_background_routes()
+        self._register_notebook_routes()
+        self._register_stage8_routes()
 
     # ── 中间件 ──
 
@@ -257,7 +261,8 @@ class HTTPChannel(Channel):
                 return {
                     "memories": [{
                         "id": m["id"],
-                        "summary": m.get("summary", "")[:200],
+                        "summary": m.get("summary", ""),
+                        "raw_conversation": m.get("raw_conversation", ""),
                         "timestamp": m.get("timestamp"),
                         "importance": m.get("importance", 0.5),
                         "emotion_tags": m.get("emotion_tags"),
@@ -290,6 +295,25 @@ class HTTPChannel(Channel):
                 return {"entries": entries, "count": len(entries)}
             except Exception as e:
                 return {"entries": [], "error": str(e)}
+
+        @self.app.post("/api/autobiography/generate")
+        async def generate_autobiography():
+            """手动触发今日自传体生成（无需等待凌晨4点 cron）。"""
+            if self._agent is None:
+                return {"error": "agent not available"}
+            try:
+                from packages.agent.autobiography_writer import AutobiographyWriter
+                import datetime
+                writer = AutobiographyWriter(self._agent._db, self._agent.router)
+                date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                content = await writer.write_daily(date_str)
+                if content:
+                    from loguru import logger
+                    logger.info("api.autobiography_generated", date=date_str, chars=len(content))
+                    return {"status": "ok", "date": date_str, "content": content}
+                return {"status": "skipped", "reason": "no new conversations today"}
+            except Exception as e:
+                return {"error": str(e)}
 
         @self.app.get("/api/reflection/latest")
         async def get_reflection_latest():
@@ -636,13 +660,10 @@ class HTTPChannel(Channel):
         # ── 技能管理 ──
         @self.app.get("/api/skills")
         async def skills_list():
-            if not agent or not hasattr(agent, '_skills_loader'):
+            if not agent or not agent._skills_loader:
                 return {"skills": {}}
-            from packages.agent.skills_loader import SkillsLoader
-            loader = SkillsLoader()
-            loader.load_all()
             result = {}
-            for name, s in loader.skills.items():
+            for name, s in agent._skills_loader.skills.items():
                 result[name] = {
                     "category": s.category,
                     "description": s.description,
@@ -684,17 +705,6 @@ class HTTPChannel(Channel):
     async def start(self, handler: EventHandler) -> None:
         """启动 HTTP 服务器"""
         self._handler = handler
-
-        # 背景图片 API
-        self._register_background_routes()
-
-        # 阶段 7b: 注册 Notebook API
-        if self._agent and self._agent.notebook_manager:
-            self._register_notebook_routes()
-
-        # 阶段 8: 注册审计 + 技能 + 安全状态 API
-        if self._agent and self._agent._db:
-            self._register_stage8_routes()
 
         config = uvicorn.Config(
             self.app,

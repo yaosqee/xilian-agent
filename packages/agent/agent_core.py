@@ -28,6 +28,7 @@ from .emotion_core import EmotionEngine
 from .memory_manager import MemoryManager
 from .notebook_manager import NotebookManager
 from .portrait_manager import PortraitManager
+from .skills_loader import SkillsLoader
 
 # 阶段 7a: 模块化上下文
 from .context_builder import (
@@ -99,8 +100,9 @@ class AgentCore:
         self._drift_counter: int = 0
         self._last_interaction_time: float = 0.0
 
-        # 阶段 8: 安全机制（审计日志 + 人设评分，safe_mode 预留）
+        # 阶段 8: 安全机制（审计日志 + 人设评分）
         self._round_count: int = 0
+        self.is_safe_mode: bool = False
 
         # 好感度系统
         self._affection_score: float = 0.0
@@ -125,6 +127,9 @@ class AgentCore:
 
         # 阶段 7b: 笔记本管理器占位（子阶段 7b 注入）
         self.notebook_manager: NotebookManager | None = None
+
+        # 阶段 7d: 技能加载器（子阶段 7d 注入）
+        self._skills_loader: SkillsLoader | None = None
 
         # 阶段 8+: 用户印象管理器
         self.portrait_manager: PortraitManager | None = None
@@ -182,6 +187,11 @@ class AgentCore:
                 db=self._db,
                 model_router=self.router,
             )
+
+        # 阶段 7d: 初始化技能加载器
+        if not self._skills_loader:
+            self._skills_loader = SkillsLoader()
+            self._skills_loader.load_all()
         if not self.context.user_portrait:
             try:
                 latest = await self._db.get_latest_portrait()
@@ -360,7 +370,7 @@ class AgentCore:
                 "chat",
                 messages,
                 temperature=0.65,
-                max_tokens=600,
+                max_tokens=1500,
                 stream=stream,
                 tools=tools,
                 tool_choice="auto" if tools else None,

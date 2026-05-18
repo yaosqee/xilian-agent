@@ -26,6 +26,7 @@ export const AutobiographyPanel: React.FC = () => {
   const [entry, setEntry] = useState<AutoEntry | null>(null);
   const [list, setList] = useState<AutoListItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
 
   const loadLatest = useCallback(async () => {
     try {
@@ -54,15 +55,42 @@ export const AutobiographyPanel: React.FC = () => {
     loadList();
   }, [loadLatest, loadList]);
 
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      await fetch('/api/autobiography/generate', { method: 'POST' });
+      await loadList();
+      await loadLatest();
+    } catch {} finally { setGenerating(false); }
+  };
+
   if (list.length === 0) {
     return (
       <div>
         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>
           生命故事
         </h3>
-        <p style={{ fontSize: 13, color: 'var(--color-text-muted)', textAlign: 'center', padding: 40 }}>
+        <p style={{ fontSize: 13, color: 'var(--color-text-muted)', textAlign: 'center', padding: '20px 40px' }}>
           昔涟还没有开始写日记呢<br />每天凌晨 4:00，她会翻开书页~
         </p>
+        <div style={{ textAlign: 'center' }}>
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            style={{
+              padding: '8px 24px',
+              borderRadius: 10,
+              border: '1px solid var(--color-pink)',
+              background: generating ? 'rgba(255, 183, 197, 0.1)' : 'rgba(255, 183, 197, 0.15)',
+              color: 'var(--color-pink-dark)',
+              fontSize: 13,
+              cursor: generating ? 'not-allowed' : 'pointer',
+              transition: 'all 0.3s var(--ease-spring)',
+            }}
+          >
+            {generating ? '正在生成……' : '✨ 立即生成第一篇日记'}
+          </button>
+        </div>
       </div>
     );
   }

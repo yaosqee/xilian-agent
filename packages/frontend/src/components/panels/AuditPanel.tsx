@@ -36,7 +36,7 @@ export const AuditPanel: React.FC = () => {
     const map: Record<string, string> = {
       prompt_injection_detected: '提示注入', personality_drift_warning: '人设漂移告警',
       safe_mode_entered: '进入安全模式', safe_mode_exited: '退出安全模式',
-      tool_executed: '工具执行', tool_blocked: '工具拦截',
+      tool_executed: '工具执行', tool_blocked: '工具拦截', tool_call: '工具执行',
       rate_limited: '频率限制', emergency_stop: '紧急熔断',
       config_changed: '配置变更', forgotten: '数据删除', personality_check: '人设自检',
     };
@@ -62,7 +62,7 @@ export const AuditPanel: React.FC = () => {
         <option value="personality_drift_warning">人设漂移</option>
         <option value="safe_mode_entered">进入安全模式</option>
         <option value="safe_mode_exited">退出安全模式</option>
-        <option value="tool_executed">工具执行</option>
+        <option value="tool_call">工具执行</option>
         <option value="config_changed">配置变更</option>
       </select>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
