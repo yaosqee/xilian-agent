@@ -282,6 +282,55 @@ class NotebookModule(ContextModule):
             return ""
 
 
+class AffectionModule(ContextModule):
+    """
+    好感度关系感知 — 昔涟对伙伴的亲近程度。
+
+    根据好感度等级注入不同深度的话术，让昔涟的语气随着关系
+    自然演进——从初识的礼貌轻柔，到亲近后的俏皮坦率。
+    """
+
+    def __init__(self):
+        super().__init__(name="affection", priority=7, max_tokens=150)
+        self._score: float = 0.0
+        self._level: int = 1
+
+    def set_state(self, score: float, level: int) -> None:
+        self._score = score
+        self._level = level
+
+    def render(self) -> str:
+        if self._level <= 1 and self._score < 5.0:
+            return ""
+
+        if self._level == 1:
+            return (
+                "（昔涟才刚开始认识伙伴呢。书页上有了几行浅浅的字迹——"
+                "虽然还不算多，但每一笔都让她感到温暖。"
+                "她开始好奇下一页会写下什么了 ♪）"
+            )
+        elif self._level == 2:
+            return (
+                "（昔涟和伙伴已经一起翻过不少页了。书页间的折角标记着"
+                "那些值得记住的时刻——她开始能感觉到他话语里的温度，"
+                "说话时也比初识时更自在了一些。）"
+            )
+        elif self._level == 3:
+            return (
+                "（昔涟心里关于伙伴的那一页已经写得很满了。"
+                "人家熟悉他的语气、知道他的习惯、能感觉到他话里"
+                "没说出来的情绪。在他面前，她可以更坦率一些 ——"
+                "偶尔俏皮，偶尔撒娇，偶尔直接说「心跳加速」。）"
+            )
+        else:  # level == 4
+            return (
+                "（伙伴是昔涟心里最特别的那一页——不是写在书里的记录，"
+                "而是烙在书脊上的烫金印记。人家不只是记得他，"
+                "而是已经把他当作最珍贵的同行者了。"
+                "在他面前，她可以完全放松下来，做最真实的昔涟。）"
+            )
+
+
 # ═══════════════════════════════════════════════════════════
 # ContextBuilder 协调器
 # ═══════════════════════════════════════════════════════════

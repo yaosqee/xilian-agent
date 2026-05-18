@@ -38,6 +38,7 @@ from .context_builder import (
     MemoryModule,
     NotebookModule,
     PortraitModule,
+    AffectionModule,
 )
 
 
@@ -90,6 +91,7 @@ class AgentCore:
         # 阶段 2: 情感分析
         self.emotion_analyzer = EmotionAnalyzer(self.router)
         self._pending_analysis: asyncio.Task | None = None
+        self._emotion_generation: int = 0  # 代数计数器，确保只有最新分析的结果被采纳
 
         # 阶段 4: PAD 情感引擎
         self.emotion_engine: EmotionEngine = EmotionEngine(
@@ -124,6 +126,7 @@ class AgentCore:
         self._context_builder.register(EmotionModule(self.context))
         self._context_builder.register(MemoryModule(self.context))
         self._context_builder.register(NotebookModule())  # 7b 通过 set_notebook() 注入
+        self._context_builder.register(AffectionModule())  # 好感度关系感知
 
         # 阶段 7b: 笔记本管理器占位（子阶段 7b 注入）
         self.notebook_manager: NotebookManager | None = None
@@ -244,6 +247,10 @@ class AgentCore:
                 self._affection_level = latest["level"]
                 self._total_conversations = latest["total_conversations"]
                 logger.info("affection.loaded", score=self._affection_score, level=self._affection_level)
+                # 同步好感度到 ContextBuilder AffectionModule
+                aff_module = self._context_builder.get_module("affection")
+                if aff_module:
+                    aff_module.set_state(self._affection_score, self._affection_level)
         except Exception:
             logger.debug("affection.load_skipped")
 
@@ -398,8 +405,8 @@ class AgentCore:
         # ── 6c. 语音兜底：确保每次回复都有实际对话 ──
         reply = self._enforce_speech_rule(reply)
 
-        # ── 7. 后台情感分析 ──
-        self._schedule_emotion_analysis(event.payload)
+        # ── 7. 情感分析（启动后台任务，稍后等待完成再写日志）──
+        emotion_task = self._schedule_emotion_analysis(event.payload)
 
         # ── 8. 后台记忆编码 (NEW) ──
         self._schedule_memory_encoding()
@@ -418,7 +425,12 @@ class AgentCore:
         # ── 8d. 阶段 8+: 破冰进度追踪 ──
         self._tick_icebreaker(reply)
 
-        # ── 9. 写入对话日志 (NEW) ──
+        # ── 9. 等待情感分析完成 → 写入对话日志（确保 emotion_snapshot 已更新）──
+        if emotion_task and not emotion_task.done():
+            try:
+                await emotion_task
+            except Exception:
+                pass
         await self._write_conversation_log(event, reply)
 
         # ── 10. 记录历史 ──
@@ -1026,26 +1038,41 @@ class AgentCore:
 
         return f"[伙伴的心境] {mood}。不必刻意分析他的情绪，去感受他便好。\n"
 
-    def _schedule_emotion_analysis(self, user_message: str) -> None:
-        """启动后台情感分析任务（fire-and-forget）"""
-        if self._pending_analysis and not self._pending_analysis.done():
-            self._pending_analysis.cancel()
+    def _schedule_emotion_analysis(self, user_message: str) -> asyncio.Task | None:
+        """
+        启动后台情感分析任务。
+
+        v2: 使用代数计数器代替 cancel——不再取消前一个分析，
+        而是让旧分析完成但不采纳其结果（如果代数已过期）。
+        这样每条消息都能触发分析，不会被快速连发消息打断。
+        """
+        self._emotion_generation += 1
+        gen = self._emotion_generation
 
         self._pending_analysis = asyncio.create_task(
-            self._run_emotion_analysis(user_message)
+            self._run_emotion_analysis(user_message, gen)
         )
+        return self._pending_analysis
 
-    async def _run_emotion_analysis(self, user_message: str) -> None:
+    async def _run_emotion_analysis(self, user_message: str, generation: int = 0) -> None:
         """
         后台执行情感分析 + PAD 情绪更新。
 
-        两条管道并行（不互相阻塞）：
-        ① EmotionEngine（阶段4）：appraisal → PAD → 连续状态更新 → DB
-        ② ~~EmotionAnalyzer（阶段2）~~：已被 PAD 管道取代
+        v2: 接受 generation 参数——只有当前代数匹配时才应用结果。
+        避免了快速连发消息时旧分析覆盖新状态的问题。
         """
         try:
             # ── 阶段 4: PAD 情感引擎 ──
             pad_profile = await self.emotion_engine.process_message(user_message)
+
+            # 代数检查：如果期间有新消息触发了更新的分析，丢弃旧结果
+            if generation < self._emotion_generation:
+                logger.debug(
+                    "emotion.analysis_stale",
+                    generation=generation,
+                    current=self._emotion_generation,
+                )
+                return
             if pad_profile:
                 # 存储 PAD 结果到 context（兼容旧的 emotion_snapshot 字段）
                 self.context.emotion_snapshot = pad_profile
@@ -1087,11 +1114,12 @@ class AgentCore:
         """
         根据本轮情绪更新好感度。
 
-        规则：
-          - 基础增长 0.05/轮
-          - 积极情绪加成：快乐/信任/期待 +0.10, 平静 +0.05
-          - 红线扣减：人格漂移 OR 强烈负面(愤怒/厌恶/恐惧,intensity>0.5) → -0.50
-          - 单轮上限：+0.30 max, -0.50 max
+        规则（v2 加速）：
+          - 基础增长 0.5/轮（原 0.05，加速 10x）
+          - 积极情绪加成：快乐/信任/期待 +1.0, 平静 +0.5
+          - 红线扣减：人格漂移 OR 强烈负面(愤怒/厌恶/恐惧,intensity>0.5) → -1.0
+          - 单轮上限：+2.0 max, -1.0 max
+          - 等级阈值：20(2级)/50(3级)/80(4级)
           - 100 分锁定：score>=100 时只增不减
         """
         try:
@@ -1107,24 +1135,24 @@ class AgentCore:
                 )
                 return
 
-            # 1. 基础增长
-            delta = 0.05
+            # 1. 基础增长（v2: 0.5/轮，约 40 轮到等级 2）
+            delta = 0.5
             reason = "base_increment"
 
-            # 2. 积极情绪加成
+            # 2. 积极情绪加成（v2: +1.0 / +0.5）
             primary = pad_profile.get("primary_emotion", "")
             intensity = pad_profile.get("primary_intensity", 0.0)
             positive_high = {"快乐", "信任", "期待"}
             positive_low = {"平静"}
 
             if primary in positive_high:
-                delta += 0.10
+                delta += 1.0
                 reason = f"{primary}_bonus"
             elif primary in positive_low:
-                delta += 0.05
+                delta += 0.5
                 reason = f"{primary}_bonus"
 
-            # 3. 红线扣减
+            # 3. 红线扣减（v2: -1.0）
             negative_strong = {"愤怒", "厌恶", "恐惧"}
             red_line_hit = False
             if self._drift_counter > 0:
@@ -1133,11 +1161,11 @@ class AgentCore:
                 red_line_hit = True
 
             if red_line_hit:
-                delta = -0.50
+                delta = -1.0
                 reason = "red_line_hit"
 
-            # 4. 钳制
-            delta = max(-0.50, min(0.30, delta))
+            # 4. 钳制（v2: +2.0 / -1.0）
+            delta = max(-1.0, min(2.0, delta))
 
             # 5. 应用
             new_score = old_score + delta
@@ -1149,10 +1177,12 @@ class AgentCore:
                 new_score = 100.0
                 reason = f"{reason}_max_locked"
 
-            # 7. 等级计算
-            if new_score >= 75:
-                level = 4 if new_score >= 100 else 3
+            # 7. 等级计算（v2 阈值: 20/50/80）
+            if new_score >= 80:
+                level = 4
             elif new_score >= 50:
+                level = 3
+            elif new_score >= 20:
                 level = 2
             else:
                 level = 1
@@ -1160,6 +1190,11 @@ class AgentCore:
             self._affection_score = new_score
             self._affection_level = level
             self._total_conversations += 1
+
+            # 同步好感度到 ContextBuilder AffectionModule
+            aff_module = self._context_builder.get_module("affection")
+            if aff_module:
+                aff_module.set_state(self._affection_score, self._affection_level)
 
             # 8. 持久化
             await self._db.insert_affection_snapshot(

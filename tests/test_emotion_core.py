@@ -124,21 +124,21 @@ class TestEmotionUpdate:
     """PAD 更新核心公式"""
 
     def test_immediate_event_impact(self):
-        """立即事件（dt≈0）：decay≈1，新事件几乎无效，旧值占主导"""
+        """立即事件（dt≈0）：v2 公式中 event_weight 独立于 dt，事件有固定 40% 权重"""
         s = EmotionState()  # baseline, timestamp=now
         s.update((0.3, 0.1, 0.05))
-        # dt≈0 → decay≈1.0 → 新值≈旧值（baseline）
-        assert abs(s.pad_p - 0.15) < 0.05  # ≈ baseline p=0.15
-        assert abs(s.pad_a - 0.05) < 0.05  # ≈ baseline a=0.05
-        assert abs(s.pad_d - 0.10) < 0.05  # ≈ baseline d=0.10
+        # dt≈0 → decay≈1.0, ew=0.4 → P = 0.15×0.6 + 0.15×0.0 + 0.3×0.4 = 0.21
+        assert abs(s.pad_p - 0.21) < 0.05
+        assert abs(s.pad_a - 0.07) < 0.05
+        assert abs(s.pad_d - 0.08) < 0.05
 
     def test_update_after_delay(self):
-        """延迟后更新：旧情绪衰减 + 新事件按 (1-decay) 比例加入"""
+        """延迟后更新：衰减+基线回归 + 新事件按权重混合"""
         s = EmotionState(pad_p=0.5, pad_a=0.3, pad_d=0.2)
         s.timestamp -= DEFAULT_TAU  # 30 分钟前 → decay = e^(-1) ≈ 0.368
         s.update((0.3, 0.0, 0.0), tau=DEFAULT_TAU)
-        # pad_p = 0.5 * 0.368 + 0.3 * (1 - 0.368) = 0.184 + 0.190 = 0.374
-        assert 0.33 < s.pad_p < 0.42
+        # v2: P = 0.5×0.368×0.6 + 0.15×0.632×0.6 + 0.3×0.4 = 0.110+0.057+0.120=0.287
+        assert 0.23 < s.pad_p < 0.35
 
     def test_sensitivity_magnifies(self):
         """敏感度放大事件影响 — 时间戳设为过去使 decay≈0，impact 全额生效"""

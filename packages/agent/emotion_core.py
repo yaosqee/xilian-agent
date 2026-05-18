@@ -52,8 +52,9 @@ PAD_SIGMA: float = 0.5
 # 情绪动力学默认参数
 # ═══════════════════════════════════════════════════════════
 
-DEFAULT_TAU = 1800.0          # 半衰期 30 分钟（秒）
+DEFAULT_TAU = 1800.0          # 半衰期 30 分钟（秒）— 仅控制自发衰减速度
 DEFAULT_SENSITIVITY = 1.0      # 敏感度
+DEFAULT_EVENT_WEIGHT = 0.4     # 新事件权重（0-1），独立于衰减速度。越高越敏感
 DEFAULT_BASELINE = (0.15, 0.05, 0.1)  # 昔涟的基线心境：微正、平静、有掌控
 DECAY_CLIP = 0.001             # 最低衰减因子
 LONG_INACTIVITY_SECONDS = 7200  # > 2h 重置到基线
@@ -138,23 +139,33 @@ class EmotionState:
         event_pad: tuple[float, float, float],
         sensitivity: float = DEFAULT_SENSITIVITY,
         tau: float = DEFAULT_TAU,
+        event_weight: float = DEFAULT_EVENT_WEIGHT,
     ) -> "EmotionState":
         """
-        情绪更新公式（核心）：
+        情绪更新公式（v2 修正）：
 
-            PAD_new = PAD_old × e^(-Δt/τ)
-                    + event_impact × (1 - e^(-Δt/τ))
+        旧公式（v1）问题：
+          PAD_new = old × e^(-Δt/τ) + impact × (1 - e^(-Δt/τ))
+          → τ 同时控制衰减速度和新事件权重 → 60s 间隔时新事件仅 3.3%
+          → 负性事件被系统数学过滤，情绪永不进入负值区
 
-        event_impact = event_pad × sensitivity
+        新公式（v2）：
+          blended = old × e^(-Δt/τ) + baseline × (1 - e^(-Δt/τ))
+          PAD_new = blended × (1 - event_weight) + impact × event_weight
 
-        直觉：旧情绪随时间衰减 → 基线，新事件占据「新信息」份额。
-        dt→0 时 event 几乎不生效（短时间第一条消息还未被充分理解）；
-        dt→∞ 时旧情绪清空，event 全额生效。
+          展开：
+          PAD_new = old × decay × (1-ew) + baseline × (1-decay) × (1-ew) + impact × ew
+
+        其中：
+          · decay = e^(-Δt/τ) — 控制旧情绪向基线的自发衰减速度
+          · event_weight — 控制新事件的独立影响力（0.3-0.5）
+          · 两个参数独立，互不干扰
 
         Args:
-            event_pad: 本次事件的 (P, A, D) 偏移量
+            event_pad: 本次事件的 (P, A, D) 偏移量（已经人格调制）
             sensitivity: 人格敏感度（>1 更敏感，<1 更钝感）
-            tau: 衰减半衰期参数
+            tau: 衰减半衰期（仅控制自发衰减速度）
+            event_weight: 新事件权重（0-1），越高越容易被当前对话影响
 
         Returns:
             更新后的 self
@@ -162,32 +173,44 @@ class EmotionState:
         # 1. 计算时间衰减
         now = time.time()
         dt = now - self.timestamp
+
         if dt > LONG_INACTIVITY_SECONDS:
-            # 太久没对话 → 从基线重新开始，decay_factor=0 表示旧情绪完全释放
+            # 太久没对话 → 从基线重新开始，事件全额生效
             baseline_p, baseline_a, baseline_d = DEFAULT_BASELINE
             old_p = baseline_p
             old_a = baseline_a
             old_d = baseline_d
             decay_factor = 0.0
+            effective_ew = 1.0  # 首条消息全额生效
         else:
             old_p = self.pad_p
             old_a = self.pad_a
             old_d = self.pad_d
             decay_factor = math.exp(-dt / tau)
             decay_factor = max(decay_factor, DECAY_CLIP)
+            effective_ew = event_weight
 
-        # 2. 事件冲击（人格调制）
+        # 2. 事件冲击（人格调制 × 敏感度）
         ep, ea, ed = event_pad
         impact_p = ep * sensitivity
         impact_a = ea * sensitivity
         impact_d = ed * sensitivity
 
-        # 3. 核心公式
-        #    PAD_new = old × decay + impact × (1 - decay)
-        #    旧情绪随时间衰减，新事件按「新信息」比例加入
-        self.pad_p = old_p * decay_factor + impact_p * (1 - decay_factor)
-        self.pad_a = old_a * decay_factor + impact_a * (1 - decay_factor)
-        self.pad_d = old_d * decay_factor + impact_d * (1 - decay_factor)
+        # 3. 核心公式（v2）
+        #    先衰减旧情绪向基线 → 再与新事件按权重混合
+        baseline_p, baseline_a, baseline_d = DEFAULT_BASELINE
+        old_weight = decay_factor * (1 - effective_ew)
+        baseline_weight = (1 - decay_factor) * (1 - effective_ew)
+
+        self.pad_p = (old_p * old_weight
+                      + baseline_p * baseline_weight
+                      + impact_p * effective_ew)
+        self.pad_a = (old_a * old_weight
+                      + baseline_a * baseline_weight
+                      + impact_a * effective_ew)
+        self.pad_d = (old_d * old_weight
+                      + baseline_d * baseline_weight
+                      + impact_d * effective_ew)
 
         # 4. clamp [-1, 1]，但保留一点余量防止锁死
         self.pad_p = max(-0.95, min(0.95, self.pad_p))
