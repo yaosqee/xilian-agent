@@ -1,7 +1,7 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-18 12:00 CST
+> 📅 最后更新：2026-05-18 18:30 CST
 > 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期 → 工具系统重构完成（LLM function calling 驱动）
 
 ---
@@ -259,7 +259,6 @@
 
 ## 下一步
 
-打磨期继续 — 工具系统运行观察与调优 + 前端体验打磨 + 记忆/情感精度持续提升。
 工具系统已交付（LLM function calling 驱动 4 工具 + 确认回路 + 记忆/印象联动）。
 和风天气 API Key 需在控制台激活（当前使用 Zhipu 搜索 fallback，功能正常）。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
@@ -267,6 +266,12 @@
 ---
 
 ## 最近决策
+
+- **2026-05-18（晚间）**：笔记本第二轮优化。前端笔记/任务卡片增加 × 删除按钮（window.confirm 确认），auto_note 相似笔记合并而非新建（_find_similar + touch_note），AttentionScheduler NOTIFY 断头路修复（桥接到 NudgeEngine._pending_greeting），auto_note Flash max_tokens 80→150 修复 TASK 截断丢失，_parse_task_time 全面重写支持中文时间表达（今晚/明晚/下午 + 中文数字）。
+
+- **2026-05-18（晚间）**：笔记本第一轮优化。AUTO_NOTE_PROMPT 追加已有笔记上下文 + 强化 TASK 时间识别，写入前关键词重叠去重（_is_duplicate → _find_similar），任务检查从每天 3 次改为每 15 分钟（window 1800→3600s），移除 _cron_multi_loop。
+
+- **2026-05-18（傍晚）**：前端四面板修复。Skills 面板 _skills_loader 初始化，Audit 面板筛选值 tool_executed→tool_call 对齐数据库，Autobiography 面板空状态增加手动生成按钮 + POST /api/autobiography/generate，路由注册从 start() 提前到 __init__ 修复 404，新增 3 个技能文件（memory_search/web_search/coding_delegate），修复 max_tokens 600→1500 + is_safe_mode 属性缺失。
 
 - **2026-05-18**：工具系统全面重构。LLM function calling 替代关键词匹配，4 工具 autodiscover 注册（search_memory/query_weather/search_web/coding_delegate）。ToolExecutor 全流程（校验→权限→频率→确认→审计）+ ResultWrapper 结果包装（规则模板+LLM双轨）。确认回路（_pending_confirmation）+ 工具→记忆联动（trigger_memory/trigger_portrait_update→memory_encoding/mark_dirty）。修复 DeepSeek thinking mode reasoning_content 回传问题 + finish_reason 截断检测。max_tokens 600→1500（工具回传路径）。新增文件：tool_executor.py / tool_result.py / result_wrapper.py / query_weather.py / search_memory.py / search_web.py。
 

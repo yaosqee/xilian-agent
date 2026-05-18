@@ -22,15 +22,15 @@ xilian-v3/
 │
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
-│   ├── model_router.py              # ModelRouter：纯云端路由核心（Pro双Key轮询 + Flash后台 + 工具降级）
-│   ├── database.py                  # DatabaseManager：SQLite（11张表CRUD + 游标分页 + Alembic优先）
+│   ├── model_router.py              # ModelRouter：纯云端路由核心（Pro双Key轮询 + Flash后台 + 工具降级 + 截断检测）
+│   ├── database.py                  # DatabaseManager：SQLite 13张表 + 完整CRUD + 游标分页 + Alembic优先
 │   ├── vector_store.py              # VectorStore：sqlite-vec 向量检索（零外部依赖）
 │   ├── backup.py                    # BackupManager：每日备份 + 清理 + 恢复（阶段 3）
 │   ├── marker_parser.py             # MarkerParser：5种标记流式解析 + SSML接口（阶段7c）
 │   └── logging_config.py            # loguru 结构化日志配置
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
-│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + LLM工具调用 + 确认回路 + 记忆联动
+│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + LLM function calling + 确认回路 + 记忆联动 + 笔记本自动记录
 │   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器 + autodiscover + to_openai_tools()
 │   ├── tool_executor.py             # ToolExecutor：校验→权限→频率→确认→执行→审计（打磨期）
@@ -95,7 +95,10 @@ xilian-v3/
 │
 ├── skills/                          # 🛠️ Agent Skills（阶段7d）
 │   └── manual/
-│       └── weather_query.md         # 示例技能：天气查询
+│       ├── weather_query.md         # 天气查询
+│       ├── memory_search.md         # 记忆检索
+│       ├── web_search.md            # 网络搜索
+│       └── coding_delegate.md       # 编码助手
 │
 ├── alembic/                         # 🗄️ 数据库迁移（阶段7d）
 │   ├── alembic.ini
@@ -142,7 +145,7 @@ xilian-v3/
 main.py 启动
   │
   ├─→ AgentCore.__init__()
-  │     ├─ 加载 personality_v3.md → self._personality
+  │     ├─ 加载 personality_v4.md → self._personality
   │     ├─ 初始化 ToolRegistry + 注册 coding_delegate
   │     ├─ 初始化 AgentContext（对话历史容器）
   │     ├─ 初始化 ContextBuilder（Datetime/Portrait/Emotion/Memory/Notebook 5模块）
@@ -157,18 +160,19 @@ main.py 启动
   │     ├─ 注册 ConsoleChannel → stdin/stdout（rich 美化）
   │     └─ 注册 HTTPChannel → FastAPI :8000
   │
-  ├─→ APScheduler 定时任务
-  │     ├─ 3:00   daily_backup
-  │     ├─ 4:00   daily_autobiography（阶段5）
-  │     ├─ 4:30   weekly_reflection（阶段5，仅周日）
-  │     ├─ */15   proactive_check（阶段6：想念值检查）
-  │     ├─ */20   token_bucket_refill（阶段6）
-  │     ├─ 23:50  notebook_daily_diary（阶段7b：每日日记）
-  │     └─ 8/12/18 check_due_tasks → AttentionScheduler（阶段7b+7c）
+  ├─→ asyncio cron 后台循环
+  │     ├─ 3:00    daily_backup（APScheduler，同步备份不受影响）
+  │     ├─ 3:30    cleanup_backups
+  │     ├─ 4:00    daily_autobiography（asyncio _cron_loop）
+  │     ├─ 4:30    weekly_reflection（asyncio _cron_weekly_loop，仅周日）
+  │     ├─ 5:00    consolidate_user_portrait
+  │     ├─ */15    nudge_loop（想念值 + 自主问候）+ check_due_tasks（到期任务）
+  │     ├─ */20    token_refill
+  │     └─ 23:50   notebook_daily_diary
   │
   ├─→ AttentionScheduler（asyncio Task，阶段7c）
   │     5s tick → PriorityQueue → 防打扰 → Flash 决策
-  │
+  │     NOTIFY → set_external_greeting → 桥接到 NudgeEngine pending_greeting
   └─→ gateway.start()
         └─ 两条通道并发 asyncio.gather
              │
@@ -190,11 +194,16 @@ agent.process(event) 内部（阶段 7 + 打磨期）：
   add_message() → 对话历史
 
 NudgeEngine 自主问候流程（阶段 6）：
-  APScheduler 每15分钟 → proactive_check()
-    → 计算想念值（base × urgency × significance × time_mod）
-    → ≤ 阈值 → 静默
+  asyncio 每15分钟 → nudge.tick()
+    → 计算想念值 → ≤ 阈值 → 静默
     → > 阈值 + TokenBucket 可用 → DS Pro 生成温柔问候
-    → 写入 pending_greetings → 等待前端轮询投递
+    → 写入 _pending_greeting → 前端轮询 /api/autonomy/pending-greeting 投递
+
+AttentionScheduler 任务提醒流程：
+  asyncio 每15分钟 check_due_tasks → get_due_tasks(window=3600s)
+    → enqueue AttentionEvent → AttentionScheduler 5s tick
+    → Flash 决策 NOTIFY → set_external_greeting → _pending_greeting
+    → 前端轮询 → 展示 → 用户确认 → ack
 ```
 
 ---

@@ -24,19 +24,18 @@
 
 ## 能做什么
 
-- 💬 **自然对话** — 对话历史持久化，刷新/重启后自动恢复最近记录，支持向上翻页加载更多（最多 40 轮）
-- 📜 **历史分页** — 游标分页 API，前端「加载历史对话」按钮，滚动位置保持 — 温柔、轻盈的聊天风格，有完整的人格锚点和语言风格
-- 🧠 **情感感知** — 基于 PAD 心理模型的连续情感引擎，情绪会"惯性衰减"，不会跳变
-- 📖 **多层记忆** — 情景记忆 + 每天自动写自传体日记 + 每周反思 + 艾宾浩斯遗忘曲线
-- 📓 **自己的笔记本** — 自动发现对话中的重要信息并记录下来，每天写日记
-- 👤 **用户印象** — 昔涟会主动认识你（破冰问候），在心中为你写一份叙事性的印象文档，每日凌晨自动更新
-- 💝 **好感度系统** — 随对话自然增长（正常聊天+0.05，积极情绪加成），100分锁定不再下降
-- 🔔 **后台活着** — 5 秒一次的注意力调度，会主动想起你、提醒到期任务
-- 🛡️ **安全防御** — 提示注入检测、人设一致性自评分、审计日志
-- 🛠️ **能帮你做事** — 委托 Claude Code 写代码、Agent Skills 可扩展技能
-- 🖥️ **可视化面板** — React 前端（情绪雷达图、记忆时间线、笔记本、审计日志、技能管理、自传体）
-- 🎨 **可定制背景** — 全页背景图（默认 xilian.png），支持上传自定义图片
-- ✨ **浅色梦幻风** — 毛玻璃聊天区、SVG 图标侧栏、樱花粉色系
+- 💬 **自然对话** — 昔涟风格：短句分行、温柔轻盈、真实感节奏（v4 人格提示词）
+- 📜 **对话历史** — 游标分页持久化，刷新/重启自动恢复，最多向上加载 40 轮
+- 🧠 **情感感知** — PAD 心理模型连续情感引擎，情绪惯性衰减不跳变
+- 📖 **多层记忆** — 情景记忆向量检索 + 艾宾浩斯遗忘曲线 + 每日自传体 + 每周反思
+- 📓 **智能笔记本** — 自动发现对话重要信息并记录，支持笔记/日记/待办任务
+- 🔔 **任务提醒** — 对话中自然创建提醒（"晚上十点提醒我"），15 分钟粒度检查，主动推送
+- 👤 **用户印象** — 叙事性印象文档，每日凌晨自动重写，破冰主动问候
+- 💝 **好感度** — 随对话自然增长，4 级标签（昔涟喜欢你 → 你永远喜欢昔涟）
+- 🛡️ **安全纵深** — 提示注入检测 + 人设自评分 + 审计日志 + 被遗忘权
+- 🛠️ **4 个工具** — 记忆检索 / 天气查询 / 网络搜索 / 编码委托（LLM function calling 驱动）
+- 🖥️ **9 个前端面板** — 情绪雷达 / 记忆时间线 / 笔记本 / 自传体 / 审计日志 / 技能管理 / 伙伴印象 / 设置 / PAD 轨迹
+- 🎨 **浅色梦幻风** — 毛玻璃卡片 + SVG 侧栏图标 + 樱花粉色系 + 可定制全页背景
 
 ---
 
@@ -52,90 +51,51 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/yourname/xilian-v3.git
+git clone https://github.com/yaosqee/xilian-agent.git
 cd xilian-v3
 
-# 2. 配置 API Key
+# 2. 配置环境变量
 cp .env.example .env
 # 编辑 .env，至少填入 DEEPSEEK_API_KEY
 
-# 3. 安装依赖
+# 3. 安装 Python 依赖
 uv sync
 
-# 4. 构建前端（可选，跳过则使用 API-only 模式）
+# 4. 构建前端
 cd packages/frontend && npm install && npm run build && cd ../..
 
-# 5. 启动
+# 5. 一键启动
 uv run python main.py
 
-# 6. 打开浏览器
-# http://localhost:8000
+# 6. 打开浏览器 → http://localhost:8000
 ```
 
-几分钟后昔涟就准备好了。在浏览器里和她说话，或者在终端里直接聊。
-
----
-
-## 详细部署
-
-### 1. 获取 API Key
-
-1. 注册 [DeepSeek 开放平台](https://platform.deepseek.com)
-2. 在 API Keys 页面创建 Key
-3. 推荐创建两个 Key（Pro 对话用，Flash 后台用），写入 `.env`：
+### 开发模式
 
 ```bash
-DEEPSEEK_API_KEY=sk-your-key-here
-DEEPSEEK_API_KEY_2=sk-your-backup-key-here
-```
-
-> 双 Key 用于轮询防限流。只有一个 Key 也可以运行——填在第一行即可。
-
-### 2. 安装依赖
-
-```bash
-# Python 依赖
-uv sync
-
-# 前端依赖（可选）
-cd packages/frontend
-npm install
-npm run build    # 生产构建，构建后前端嵌入后端单进程 serve
-cd ../..
-```
-
-### 3. 启动
-
-```bash
-# 完整模式（API + 前端，推荐）
+# 后端（终端 1）
 uv run python main.py
 
-# API-only 模式（不启动前端，适合服务器部署）
-FRONTEND_DEV=1 uv run python main.py
-
-# 纯终端模式（不启动 HTTP 服务）
-NO_HTTP=1 uv run python main.py
-
-# 局域网访问（其他设备也能访问）
-BIND_HOST=0.0.0.0 uv run python main.py
+# 前端热更新开发服务器（终端 2）
+cd packages/frontend && npm run dev
+# 访问 http://localhost:5173，API 自动代理到 :8000
 ```
 
-### 4. 验证
+### 其他启动方式
 
-打开浏览器访问 `http://localhost:8000`，应该看到聊天界面。
+```bash
+FRONTEND_DEV=1 uv run python main.py   # API-only（需配合 npm run dev）
+NO_HTTP=1 uv run python main.py        # 纯终端聊天
+BIND_HOST=0.0.0.0 uv run python main.py  # 局域网访问
+```
 
-或者用 curl 测试：
+### 验证
 
 ```bash
 curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "你好呀", "user_id": "hezi"}'
 ```
-
-### 5. 开机自启（可选）
-
-Windows 下启动后自动弹出系统托盘图标，右键可设置。
-也可以用任务计划程序将 `uv run python main.py` 设为开机启动。
 
 ---
 
@@ -157,14 +117,13 @@ xilian-v3/
 │   │   ├── context_builder.py    #   模块化上下文构建
 │   │   ├── nudge_engine.py       #   自主问候 + 注意力调度
 │   │   ├── skills_loader.py      #   Agent Skills 加载器
-│   │   └── tools/                #   工具实现
+│   │   └── tools/                #   4 个工具实现
 │   ├── shared/                   # 🔗 共享层
 │   │   ├── model_router.py       #   模型路由 (DeepSeek)
 │   │   ├── database.py           #   数据库 (11 表)
 │   │   ├── marker_parser.py      #   标记解析器
 │   │   └── vector_store.py       #   向量存储
-│   ├── frontend/                 # 🎨 React 前端
-│   └── voice/                    # 🎤 语音管道预留
+│   └── frontend/                 # 🎨 React 前端
 │
 ├── gateway/                      # 🚪 消息网关
 │   ├── security.py               #   安全过滤（注入检测/熔断）
@@ -173,9 +132,8 @@ xilian-v3/
 ├── prompts/                      # 📝 人格提示词
 ├── photo/                        # 🖼️ 背景图片 + 风格参考
 ├── alembic/                      # 🗄️ 数据库迁移
-├── docs/agents/                  # 📋 Agent skills 配置
-├── skills/                       # 🛠️ 技能文件
-└── tests/                        # 🧪 测试
+├── skills/manual/                # 🛠️ 4 个技能文件
+└── tests/                        # 🧪 402 条测试
 ```
 
 ---
