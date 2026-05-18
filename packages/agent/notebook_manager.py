@@ -267,9 +267,9 @@ class NotebookManager:
                 "memory_encoding",
                 [{"role": "user", "content": prompt}],
                 temperature=0.6,
-                max_tokens=80,
+                max_tokens=150,
             )
-            result = result.strip()
+            result = (result or "").strip()
 
             if result.startswith("NOTE:"):
                 content = result[5:].strip()
@@ -294,7 +294,8 @@ class NotebookManager:
                 if title:
                     await self.schedule_task(title=title, priority=1, due_at=due_at)
                     logger.info("notebook.auto_task", title=title[:40], due_at=due_at)
-            # PASS → 什么都不做
+            elif result:
+                logger.debug("notebook.auto_note_pass", result=result[:80])
         except Exception as e:
             logger.warning("notebook.auto_note_failed", error=str(e))
 
@@ -318,28 +319,60 @@ class NotebookManager:
         return None
 
     def _parse_task_time(self, time_str: str) -> float:
-        """解析时间字符串为 Unix 时间戳。「19:00」→ 今天 19:00，「明天14:00」→ 明天 14:00。"""
+        """解析时间字符串为 Unix 时间戳。「19:00」→ 今天 19:00，「明晚8:30」→ 明天 20:30。"""
         import datetime
+        import re
         now = datetime.datetime.now()
-        time_str = time_str.strip()
+        original = time_str.strip()
+        time_str = original
 
-        if "明天" in time_str:
-            base = now + datetime.timedelta(days=1)
-            time_str = time_str.replace("明天", "").strip()
-        elif "后天" in time_str:
+        # ── 日期偏移 ──
+        if "后天" in time_str:
             base = now + datetime.timedelta(days=2)
-            time_str = time_str.replace("后天", "").strip()
+        elif "明天" in time_str or "明早" in time_str or "明晚" in time_str:
+            base = now + datetime.timedelta(days=1)
         else:
             base = now
 
+        # ── PM 检测（「晚」→ 下午/晚上 +12h，但 12 点本身不调）──
+        is_pm = any(w in original for w in ["晚", "夜", "下午"])
+        # ── 剥离日期/时段前缀词 ──
+        for prefix in ["后天", "明天", "明早", "明晚", "今天", "今早", "今晚", "上午", "下午", "晚上", "中午", "明夜", "今夜"]:
+            time_str = time_str.replace(prefix, "").strip()
+
+        # ── 中文数字 → 阿拉伯数字 ──
+        cn_num = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+                  "十": 10, "十一": 11, "十二": 12, "十三": 13, "十四": 14, "十五": 15,
+                  "十六": 16, "十七": 17, "十八": 18, "十九": 19, "二十": 20,
+                  "二十一": 21, "二十二": 22, "二十三": 23}
+        for cn, num in cn_num.items():
+            if cn in time_str:
+                time_str = time_str.replace(cn, str(num))
+                break
+
+        # ── 解析 HH:MM ──
         try:
             parts = time_str.split(":")
-            hour = int(parts[0])
-            minute = int(parts[1]) if len(parts) > 1 else 0
-            target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            return target.timestamp()
+            hour = int(re.sub(r"[^0-9]", "", parts[0]) or "0")
+            minute = int(re.sub(r"[^0-9]", "", parts[1])) if len(parts) > 1 else 0
+            if is_pm and hour < 12 and hour > 0:
+                hour += 12
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                return target.timestamp()
         except (ValueError, IndexError):
-            return 0.0
+            pass
+
+        # ── 解析纯中文数字（如「十点」→ PM → 22:00）──
+        for cn, num in cn_num.items():
+            if time_str.strip() == cn or time_str.strip().startswith(cn):
+                hour = num
+                if is_pm and hour < 12:
+                    hour += 12
+                target = base.replace(hour=hour, minute=0, second=0, microsecond=0)
+                return target.timestamp()
+
+        return 0.0
 
     async def get_recent_notes(self, limit: int = 10) -> list[dict]:
         """获取最近笔记。"""
