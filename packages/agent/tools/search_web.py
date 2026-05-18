@@ -101,7 +101,7 @@ async def search_web(query: str, recency: str = "noLimit",
                     "count": len(results),
                     "intent": intent_info,
                 },
-                trigger_memory=False,
+                trigger_memory=True,       # 打磨期 P1：验证工具→记忆编码路径
                 trigger_portrait_update=True,
             )
 

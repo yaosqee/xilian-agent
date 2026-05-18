@@ -614,6 +614,10 @@ class AgentCore:
         if not self.memory_manager:
             return
 
+        # 有新对话 → 印象文档可能需要更新
+        if self.portrait_manager:
+            self.portrait_manager.mark_dirty()
+
         asyncio.create_task(
             self.memory_manager.schedule_encoding(conversation_context)
         )

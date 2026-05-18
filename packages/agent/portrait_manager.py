@@ -54,7 +54,7 @@ class PortraitManager:
     def __init__(self, db, model_router):
         self._db = db
         self._router = model_router
-        self._dirty = False
+        self._dirty = True  # 启动后首次 consolidate 必定执行
 
     # ============================================================
     # 查询
@@ -73,7 +73,7 @@ class PortraitManager:
     # 核心：印象重写
     # ============================================================
 
-    async def consolidate(self) -> str | None:
+    async def consolidate(self, force: bool = False) -> str | None:
         """
         阅读近期材料 → Flash LLM 重写印象文档。
 
@@ -84,9 +84,12 @@ class PortraitManager:
           4. Flash LLM 重写
           5. 存入 user_portrait 表 → 返回新文档内容
 
-        Returns:
-            新版印象文档全文，失败时返回 None
+        门控：非 force 且 _dirty 为 False 时跳过，避免无变更时浪费 API 调用。
         """
+        if not force and not self._dirty:
+            logger.debug("portrait.clean_skipped")
+            return None
+
         # 1. 情景记忆
         try:
             memories = await self._db.get_episodic_recent(limit=50)
@@ -182,6 +185,7 @@ class PortraitManager:
                 length=len(portrait_text),
                 changes=changes[:80] if changes else "",
             )
+            self._dirty = False
         except Exception as e:
             logger.error("portrait.db_write_failed", error=str(e))
             return None
