@@ -633,6 +633,26 @@ class HTTPChannel(Channel):
             await agent.notebook_manager.cancel_task(task_id)
             return {"status": "ok"}
 
+        @self.app.delete("/api/notebook/notes/{note_id}")
+        async def notebook_note_delete(note_id: int):
+            """删除笔记"""
+            if not agent or not agent.notebook_manager:
+                return {"error": "notebook not available"}
+            ok = await agent.notebook_manager.delete_note(note_id)
+            if ok:
+                return {"status": "ok"}
+            return {"status": "not_found"}
+
+        @self.app.delete("/api/notebook/tasks/{task_id}")
+        async def notebook_task_delete(task_id: int):
+            """删除任务"""
+            if not agent or not agent.notebook_manager:
+                return {"error": "notebook not available"}
+            ok = await agent.notebook_manager.delete_task(task_id)
+            if ok:
+                return {"status": "ok"}
+            return {"status": "not_found"}
+
     # ── 阶段 8: 审计 + 技能 + 安全状态 API ──
 
     def _register_stage8_routes(self):

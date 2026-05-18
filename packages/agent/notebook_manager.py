@@ -221,6 +221,18 @@ class NotebookManager:
         """取消任务。"""
         await self._db.cancel_task(task_id)
 
+    async def delete_note(self, note_id: int) -> bool:
+        """删除笔记（软删除）。"""
+        return await self._db.delete_notebook_entry(note_id)
+
+    async def delete_task(self, task_id: int) -> bool:
+        """删除任务（硬删除）。"""
+        return await self._db.delete_task(task_id)
+
+    async def touch_note(self, note_id: int) -> bool:
+        """更新笔记时间戳（合并去重时用）。"""
+        return await self._db.touch_notebook_entry(note_id)
+
     # ═══════════════════════════════════════════════════════
     # 自动记笔记 ★ 核心差异化
     # ═══════════════════════════════════════════════════════
@@ -262,9 +274,11 @@ class NotebookManager:
             if result.startswith("NOTE:"):
                 content = result[5:].strip()
                 if content:
-                    # 写入前去重
-                    if await self._is_duplicate(content):
-                        logger.debug("notebook.auto_note_skipped", content=content[:40])
+                    # 写入前合并去重：相似笔记刷新时间戳而非新建
+                    similar_id = await self._find_similar(content)
+                    if similar_id:
+                        await self.touch_note(similar_id)
+                        logger.info("notebook.auto_note_merged", content=content[:40], note_id=similar_id)
                         return
                     await self.add_note(content)
                     logger.info("notebook.auto_note", content=content[:40])
@@ -288,11 +302,11 @@ class NotebookManager:
     # 查询
     # ═══════════════════════════════════════════════════════
 
-    async def _is_duplicate(self, content: str, threshold: float = 0.5) -> bool:
-        """简单关键词重叠去重：与已有笔记的重叠率超过阈值则视为重复。"""
+    async def _find_similar(self, content: str, threshold: float = 0.5) -> int | None:
+        """查找相似笔记。返回匹配的笔记 ID，无匹配返回 None。"""
         existing = await self.get_recent_notes(limit=20)
         if not existing:
-            return False
+            return None
         new_words = set(content)
         for note in existing:
             old_words = set(note.get("content", ""))
@@ -300,8 +314,8 @@ class NotebookManager:
                 continue
             overlap = len(new_words & old_words) / max(len(new_words | old_words), 1)
             if overlap >= threshold:
-                return True
-        return False
+                return note["id"]
+        return None
 
     def _parse_task_time(self, time_str: str) -> float:
         """解析时间字符串为 Unix 时间戳。「19:00」→ 今天 19:00，「明天14:00」→ 明天 14:00。"""

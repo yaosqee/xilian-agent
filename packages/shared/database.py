@@ -1084,6 +1084,28 @@ class DatabaseManager:
         await self._conn.commit()
         return cursor.rowcount
 
+    async def delete_notebook_entry(self, entry_id: int) -> bool:
+        """软删除一条笔记本条目（设置 is_active=0）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "UPDATE notebook_entries SET is_active=0 WHERE id=?",
+            (entry_id,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def touch_notebook_entry(self, entry_id: int) -> bool:
+        """更新笔记时间戳（合并去重时用）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        await self._conn.execute(
+            "UPDATE notebook_entries SET created_at=? WHERE id=?",
+            (time.time(), entry_id),
+        )
+        await self._conn.commit()
+        return True
+
     # ============================================================
     # scheduled_tasks CRUD（阶段 7b 新增）
     # ============================================================
@@ -1145,7 +1167,7 @@ class DatabaseManager:
         await self._conn.commit()
 
     async def cancel_task(self, task_id: int) -> None:
-        """取消任务。"""
+        """取消任务（软删除）。"""
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
         await self._conn.execute(
@@ -1153,6 +1175,17 @@ class DatabaseManager:
             (time.time(), task_id),
         )
         await self._conn.commit()
+
+    async def delete_task(self, task_id: int) -> bool:
+        """硬删除任务。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "DELETE FROM scheduled_tasks WHERE id=?",
+            (task_id,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
 
     # ============================================================
     # audit_logs CRUD（阶段 8 新增）

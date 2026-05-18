@@ -70,6 +70,20 @@ export const NotebookPanel: React.FC = () => {
     } catch {}
   };
 
+  const deleteNote = async (id: number) => {
+    try {
+      await fetch(`${BASE}/notebook/notes/${id}`, { method: 'DELETE' });
+      fetchNotes();
+    } catch {}
+  };
+
+  const deleteTask = async (id: number) => {
+    try {
+      await fetch(`${BASE}/notebook/tasks/${id}`, { method: 'DELETE' });
+      fetchTasks();
+    } catch {}
+  };
+
   const tabStyle = (t: typeof tab): React.CSSProperties => ({
     padding: '6px 16px',
     background: tab === t ? 'rgba(255, 183, 197, 0.15)' : 'transparent',
@@ -101,7 +115,22 @@ export const NotebookPanel: React.FC = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {notes.map((n) => (
             <div key={n.id} style={cardStyle}>
-              <div style={{ color: 'var(--color-text)' }}>{n.content || '(空)'}</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ color: 'var(--color-text)', flex: 1 }}>{n.content || '(空)'}</div>
+                <button
+                  onClick={() => deleteNote(n.id)}
+                  title="删除笔记"
+                  style={{
+                    background: 'transparent', border: 'none', color: 'var(--color-text-muted)',
+                    cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 0 0 8px',
+                    opacity: 0.5, transition: 'opacity 0.2s',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                  onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.5')}
+                >
+                  ×
+                </button>
+              </div>
               {n.tags && (
                 <div style={{ color: 'var(--color-text-dim)', fontSize: 11, marginTop: 4 }}>
                   {(() => { try { return typeof n.tags === 'string' ? JSON.parse(n.tags).map((t: string) => `#${t} `).join('') : ''; } catch { return ''; } })()}
@@ -139,14 +168,29 @@ export const NotebookPanel: React.FC = () => {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ color: 'var(--color-text)' }}>{t.title}</span>
-                {t.status === 'pending' && (
-                  <button onClick={() => markComplete(t.id)} style={{
-                    background: 'rgba(100, 180, 100, 0.15)', color: '#40a040',
-                    border: 'none', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11,
-                  }}>
-                    完成
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {t.status === 'pending' && (
+                    <button onClick={() => markComplete(t.id)} style={{
+                      background: 'rgba(100, 180, 100, 0.15)', color: '#40a040',
+                      border: 'none', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11,
+                    }}>
+                      完成
+                    </button>
+                  )}
+                  <button
+                    onClick={() => deleteTask(t.id)}
+                    title="删除任务"
+                    style={{
+                      background: 'transparent', border: 'none', color: 'var(--color-text-muted)',
+                      cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+                      opacity: 0.5, transition: 'opacity 0.2s',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.5')}
+                  >
+                    ×
                   </button>
-                )}
+                </div>
               </div>
             </div>
           ))}
