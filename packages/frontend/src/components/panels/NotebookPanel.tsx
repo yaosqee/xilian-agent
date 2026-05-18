@@ -71,6 +71,7 @@ export const NotebookPanel: React.FC = () => {
   };
 
   const deleteNote = async (id: number) => {
+    if (!window.confirm('确定要删除这条笔记吗？删除后无法恢复。')) return;
     try {
       await fetch(`${BASE}/notebook/notes/${id}`, { method: 'DELETE' });
       fetchNotes();
@@ -78,6 +79,7 @@ export const NotebookPanel: React.FC = () => {
   };
 
   const deleteTask = async (id: number) => {
+    if (!window.confirm('确定要删除这个任务吗？删除后无法恢复。')) return;
     try {
       await fetch(`${BASE}/notebook/tasks/${id}`, { method: 'DELETE' });
       fetchTasks();
