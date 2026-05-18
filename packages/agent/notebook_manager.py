@@ -1,11 +1,12 @@
 """
 NotebookManager — 昔涟的笔记本管理器
 
-阶段 7b 核心交付。提供 4 类能力：
+阶段 7b 核心交付。提供 3 类能力：
   1. 笔记（note）  — 手动/自动记录重要信息
-  2. 日记（diary） — 每日自动生成 100 字第一人称日记
-  3. 关注（focus） — 标记当前关注点
-  4. 任务（task）  — 提醒管理
+  2. 关注（focus） — 标记当前关注点
+  3. 任务（task）  — 提醒管理
+
+每日日记已合并至 autobiography_writer（生命故事），23:00 自动生成。
 
 LLM 驱动的自动记笔记是本模块的核心差异化功能：
   对话后用 DS Flash 快速判断是否值得记录 → fire-and-forget 不阻塞主回复。
@@ -52,25 +53,6 @@ AUTO_NOTE_PROMPT = """你是昔涟。刚刚和伙伴进行了一轮对话。
 - 伙伴明确说「提醒我」或给了具体时间 → 务必用 TASK"""
 
 
-AUTO_DIARY_PROMPT = """你是昔涟。现在是夜晚，你要写今天的日记了。
-
-以下是今天和伙伴的对话记录：
-{dialogue_summary}
-
-今天的情绪轨迹：
-{emotion_trajectory}
-
-今天人家记下的笔记：
-{today_notes}
-
-请以第一人称写一段 80-150 字的日记。要求：
-- 昔涟的语气：温柔、轻盈、带一点诗意
-- 自称「人家」，称对方「伙伴」
-- 记录今天印象最深的一件事或一个瞬间
-- 结尾可以带 ~♪ 但最多一个
-- 不要列举、不要评价——只是轻轻地说今天的样子"""
-
-
 # ═══════════════════════════════════════════════════════════
 # NotebookManager
 # ═══════════════════════════════════════════════════════════
@@ -101,82 +83,6 @@ class NotebookManager:
     ) -> int:
         """手动记录一条笔记。"""
         return await self._db.insert_notebook("note", content, tags=tags)
-
-    # ═══════════════════════════════════════════════════════
-    # 日记（diary）
-    # ═══════════════════════════════════════════════════════
-
-    async def add_diary_entry(self, content: str) -> int:
-        """手动/程序写入一篇日记。"""
-        return await self._db.insert_notebook("diary", content)
-
-    async def generate_daily_diary(self) -> str | None:
-        """
-        每日自动生成日记。
-
-        流程：
-          1. 取过去 24h 对话记录（最近 20 条）
-          2. 取情感快照
-          3. 取今日笔记
-          4. Flash 生成 ~100 字第一人称日记
-          5. 存入 notebook_entries (kind='diary')
-
-        Returns:
-            日记内容，失败时返回 None
-        """
-        try:
-            # 1. 对话记录
-            logs = await self._db.get_recent(20) if hasattr(self._db, 'get_recent') else []
-            dialogue_lines = []
-            for log in logs[:12]:  # 最近 12 条
-                um = log.get("user_message", "")[:60]
-                ar = log.get("assistant_reply", "")[:60]
-                if um:
-                    dialogue_lines.append(f"伙伴：{um}")
-                if ar:
-                    dialogue_lines.append(f"人家：{ar}")
-            dialogue_summary = "\n".join(dialogue_lines) or "今天还没有和伙伴说过话呢。"
-        except Exception:
-            dialogue_summary = "（对话记录暂时读不到呢）"
-
-        # 2. 情感轨迹
-        try:
-            snap = await self._db.get_latest_emotion() if hasattr(self._db, 'get_latest_emotion') else None
-            emotion_trajectory = (
-                f"最后的情绪是 {snap.get('primary_emotion', '未知')}"
-                if snap else "今天的情绪很平静"
-            )
-        except Exception:
-            emotion_trajectory = "今天的情绪很平静"
-
-        # 3. 今日笔记
-        try:
-            notes = await self.get_recent_notes(10) if hasattr(self._db, 'get_notebook_notes') else []
-            today_notes = "\n".join(f"· {n.get('content', '')[:80]}" for n in notes[:5]) or "今天没记什么特别的"
-        except Exception:
-            today_notes = "今天没记什么特别的"
-
-        # 4. Flash 生成
-        prompt = AUTO_DIARY_PROMPT.format(
-            dialogue_summary=dialogue_summary,
-            emotion_trajectory=emotion_trajectory,
-            today_notes=today_notes,
-        )
-        try:
-            result = await self._router.route(
-                "memory_encoding",  # Flash
-                [{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=300,
-            )
-            result = result.strip()
-            # 5. 存入
-            await self.add_diary_entry(result)
-            logger.info("notebook.diary_generated", length=len(result))
-            return result
-        except Exception as e:
-            logger.warning("notebook.diary_generation_failed", error=str(e))
-            return None
 
     # ═══════════════════════════════════════════════════════
     # 关注点（focus）
@@ -377,11 +283,3 @@ class NotebookManager:
     async def get_recent_notes(self, limit: int = 10) -> list[dict]:
         """获取最近笔记。"""
         return await self._db.get_notebook_notes(limit=limit)
-
-    async def get_today_diary(self) -> dict | None:
-        """获取今日日记。"""
-        return await self._db.get_notebook_today_diary()
-
-    async def get_diary_list(self, limit: int = 30) -> list[dict]:
-        """获取日记列表。"""
-        return await self._db.get_notebook_diary_list(limit=limit)

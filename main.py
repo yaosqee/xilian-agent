@@ -94,7 +94,7 @@ async def main():
     async def weekly_reflection_job():
         await run_weekly_reflection(agent._db, agent.router)
 
-    asyncio.create_task(_cron_loop(4, 0, daily_autobiography_job, "daily_autobiography"))
+    asyncio.create_task(_cron_loop(23, 0, daily_autobiography_job, "daily_autobiography"))
 
     # 每周日 4:30
     async def _cron_weekly_loop(dow: int, hour: int, minute: int, job_func, job_name: str):
@@ -119,7 +119,7 @@ async def main():
                 logger.error(f"cron.{job_name}_error", error=str(e))
 
     asyncio.create_task(_cron_weekly_loop(6, 4, 30, weekly_reflection_job, "weekly_reflection"))
-    logger.info("自传体写作调度已启动 (每日 4:00 自传体, 每周日 4:30 反思)")
+    logger.info("自传体写作调度已启动 (每日 23:00 自传体, 每周日 4:30 反思)")
 
     # ── 阶段 6: 自主问候 + 令牌补充调度 ──
     async def nudge_loop():
@@ -155,13 +155,6 @@ async def main():
     logger.info("自主生命节律已启动 (每15min 想念检查, 每20min 令牌补充)")
 
     # ── 阶段 7b: Notebook 定时任务 ──
-    async def notebook_daily_diary():
-        """每天 23:50 生成今日日记"""
-        if agent.notebook_manager:
-            diary = await agent.notebook_manager.generate_daily_diary()
-            if diary:
-                logger.info("notebook.diary_generated", length=len(diary))
-
     async def check_due_tasks():
         """每 15 分钟检查到期任务 → enqueue 到 AttentionScheduler"""
         while True:
@@ -184,9 +177,8 @@ async def main():
             except Exception as e:
                 logger.error("check_due_tasks.error", error=str(e))
 
-    asyncio.create_task(_cron_loop(23, 50, notebook_daily_diary, "notebook_diary"))
     asyncio.create_task(check_due_tasks())
-    logger.info("Notebook 调度已启动 (每日 23:50 日记, 每15分钟任务检查)")
+    logger.info("Notebook 调度已启动 (每15分钟任务检查)")
 
     # ── 阶段 8+: 用户印象文档定期重写（每日凌晨 5:00，自传体之后）──
     async def consolidate_user_portrait():

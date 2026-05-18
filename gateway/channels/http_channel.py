@@ -594,20 +594,6 @@ class HTTPChannel(Channel):
             items = await agent.notebook_manager.get_recent_notes(limit)
             return items
 
-        @self.app.get("/api/notebook/diary")
-        async def notebook_diary(date: str | None = None):
-            """获取指定日期或今日日记"""
-            if not agent or not agent.notebook_manager:
-                return {"error": "notebook not available"}
-            return await agent.notebook_manager.get_today_diary()
-
-        @self.app.get("/api/notebook/diary/list")
-        async def notebook_diary_list(limit: int = 30):
-            """获取日记列表"""
-            if not agent or not agent.notebook_manager:
-                return []
-            return await agent.notebook_manager.get_diary_list(limit)
-
         @self.app.get("/api/notebook/tasks")
         async def notebook_tasks(status: str = "pending"):
             """获取任务列表"""

@@ -17,6 +17,12 @@ interface Task {
   due_at: number;
 }
 
+interface AutoListItem {
+  date: string;
+  mood_summary?: string;
+  word_count?: number;
+}
+
 const BASE = '/api';
 
 const Empty: React.FC<{ text: string }> = ({ text }) => (
@@ -26,7 +32,7 @@ const Empty: React.FC<{ text: string }> = ({ text }) => (
 export const NotebookPanel: React.FC = () => {
   const [tab, setTab] = useState<'notes' | 'diary' | 'tasks'>('notes');
   const [notes, setNotes] = useState<Note[]>([]);
-  const [diaries, setDiaries] = useState<Note[]>([]);
+  const [diaries, setDiaries] = useState<AutoListItem[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,8 +57,9 @@ export const NotebookPanel: React.FC = () => {
 
   const fetchDiaries = async () => {
     try {
-      const data = await safeJson(await fetch(`${BASE}/notebook/diary/list?limit=30`));
-      setDiaries(Array.isArray(data) ? data : []);
+      const data = await safeJson(await fetch(`${BASE}/autobiography/list?limit=30`));
+      const entries = data?.entries || (Array.isArray(data) ? data : []);
+      setDiaries(entries);
     } catch (e) { setDiaries([]); }
   };
 
@@ -146,17 +153,30 @@ export const NotebookPanel: React.FC = () => {
 
       {tab === 'diary' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {diaries.map((d: any) => (
-            <div key={d.id} style={cardStyle}>
-              <div style={{ color: 'var(--color-text-dim)', fontSize: 11, marginBottom: 4 }}>
-                {d.date || (d.created_at ? new Date(d.created_at * 1000).toLocaleDateString('zh-CN') : '')}
+          {diaries.length === 0 ? (
+            <Empty text="昔涟还没有开始写日记呢~" />
+          ) : (
+            diaries.map((d) => (
+              <div key={d.date} style={cardStyle}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <span style={{ color: 'var(--color-text)', fontSize: 13, fontWeight: 500 }}>
+                    {d.date}
+                  </span>
+                  <span style={{ color: 'var(--color-text-dim)', fontSize: 11 }}>
+                    {d.word_count ? `${d.word_count} 字` : ''}
+                  </span>
+                </div>
+                {d.mood_summary && (
+                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>
+                    {d.mood_summary}
+                  </div>
+                )}
+                <div style={{ color: 'var(--color-text-dim)', fontSize: 11, marginTop: 4 }}>
+                  在「自传」面板阅读全文 →
+                </div>
               </div>
-              <div style={{ color: 'var(--color-text)' }}>
-                {(d.preview || d.content || '').slice(0, 80)}
-              </div>
-            </div>
-          ))}
-          {diaries.length === 0 && <Empty text="暂无日记" />}
+            ))
+          )}
         </div>
       )}
 
