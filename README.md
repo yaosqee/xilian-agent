@@ -115,7 +115,7 @@ cd xilian-v3
 
 #### 4.1 DeepSeek API Key（**必须**）
 
-昔涟的核心对话能力依赖 DeepSeek 大模型。没有这个 Key，昔涟无法运行。
+昔涟的核心对话能力依赖 DeepSeek 大模型。没有这个 Key，昔涟无法运行。（选择deepseek因为便宜好注册，后续会支持多模型，现在忙不过来了）
 
 1. 访问 [platform.deepseek.com](https://platform.deepseek.com)
 2. 用手机号注册（支持中国大陆手机号）
@@ -365,6 +365,12 @@ xilian-v3/
 - [人格提示词](prompts/personality_v4.md)
 - [项目进度](PROJECT_PROGRESS.md)
 - [代码导航](CONTEXT.md)
+
+---
+
+## 一些补充
+
+欢迎每一个喜欢昔涟的人下载使用，使用中遇到问题可以随时反馈，因为还在开发中，更新频率会比较高，有bug和没做的功能也请谅解，我会不断优化的。
 
 ---
 
