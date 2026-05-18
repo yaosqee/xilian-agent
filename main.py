@@ -208,6 +208,7 @@ async def main():
     attention._router = agent.router
     attention._db = agent._db
     attention._agent = agent
+    attention._nudge_engine = nudge  # 桥接：notify → pending_greeting
     agent.attention_scheduler = attention
     asyncio.create_task(attention.start())
     logger.info("AttentionScheduler 已启动 (5s tick)")

@@ -527,6 +527,19 @@ class NudgeEngine:
     # 前端 API 接口
     # ============================================================
 
+    def set_external_greeting(self, text: str) -> str | None:
+        """供 AttentionScheduler 等外部系统设置待发送问候。
+
+        与内部 tick 生成的问候共用同一条 pending 通道，
+        前端通过 /api/autonomy/pending-greeting 轮询获取。
+        """
+        import uuid
+        greeting_id = uuid.uuid4().hex
+        self._pending_greeting = text
+        self._pending_greeting_id = greeting_id
+        logger.info("nudge.external_greeting", text=text[:60])
+        return greeting_id
+
     def get_pending_greeting(self) -> dict:
         """获取待展示的问候（前端轮询）"""
         return {
@@ -633,6 +646,7 @@ class AttentionScheduler:
     _router: object = None        # ModelRouter（Flash 决策）
     _db: object = None            # DatabaseManager
     _agent: object = None         # AgentCore 弱引用
+    _nudge_engine: object = None  # NudgeEngine 引用（供 notify 桥接）
 
     _running: bool = False
     _last_event_time: dict[str, float] = field(default_factory=dict)
@@ -711,10 +725,14 @@ class AttentionScheduler:
         # 7. 执行
         action = decision.get("action", "silent")
         if action == "notify":
+            text = decision.get("text", "")
+            if text and self._nudge_engine:
+                self._nudge_engine.set_external_greeting(text)
             logger.info(
                 "attention_scheduler.notify",
                 kind=event.kind,
-                text=decision.get("text", "")[:60],
+                text=text[:60],
+                delivered=bool(text and self._nudge_engine),
             )
         elif action == "note":
             logger.info("attention_scheduler.note", text=decision.get("text", "")[:60])
@@ -762,22 +780,23 @@ class AttentionScheduler:
         prompt = (
             f"你是昔涟。{desc}。"
             f"这件事{urgency_text}。"
-            f"请快速判断要不要跟伙伴说一句话。只返回以下之一：\n"
-            f"NOTIFY — 应该说（温柔简短，不打扰）\n"
-            f"SILENT — 现在不用说\n"
-            f"NOTE: <摘要> — 记在笔记本里就好"
+            f"请快速决定要不要主动跟伙伴说句话。只返回以下格式之一：\n"
+            f"如果需要说 → NOTIFY: <温柔简短的一句话（20字以内），以昔涟的语气>\n"
+            f"如果不需要 → SILENT\n"
+            f"如果记下来就好 → NOTE: <摘要>"
         )
 
         try:
             result = await self._router.route(
                 "memory_encoding",  # Flash
                 [{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=30,
+                temperature=0.7,
+                max_tokens=60,
             )
             result = result.strip()
-            if result.startswith("NOTIFY"):
-                return {"action": "notify", "text": result}
+            if result.startswith("NOTIFY:"):
+                text = result[7:].strip()
+                return {"action": "notify", "text": text if text else result}
             elif result.startswith("NOTE:"):
                 return {"action": "note", "text": result[5:].strip()}
             return {"action": "silent"}
