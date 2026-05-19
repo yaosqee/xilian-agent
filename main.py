@@ -126,6 +126,10 @@ async def main():
         """每 15 分钟检查一次想念值"""
         while True:
             await asyncio.sleep(900)  # 15 分钟
+            # 破冰进行中 → 跳过 nudge，让破冰先完成
+            if agent._icebreaker_pending or agent.context.icebreaker_active:
+                logger.debug("nudge.deferred", reason="icebreaker_in_progress")
+                continue
             try:
                 decision = await nudge.tick()
                 if decision.action == "greet":
@@ -142,18 +146,22 @@ async def main():
                 logger.error("nudge.tick_error", error=str(e))
 
     # 启动时立即检查一次（不等 15 分钟）
-    try:
-        startup_decision = await nudge.tick()
-        if startup_decision.action == "greet":
-            logger.info(
-                "nudge.startup_greeting",
-                missing=round(nudge._current_missing_value, 2),
-                preview=startup_decision.greeting[:60] if startup_decision.greeting else "",
-            )
-        else:
-            logger.info("nudge.startup_silent", reason=startup_decision.reason)
-    except Exception as e:
-        logger.error("nudge.startup_tick_error", error=str(e))
+    # 但若破冰问候待发（初次见面），跳过 nudge——避免破冰 + 想念问候同时轰炸
+    if agent._icebreaker_pending:
+        logger.info("nudge.startup_deferred", reason="icebreaker_pending")
+    else:
+        try:
+            startup_decision = await nudge.tick()
+            if startup_decision.action == "greet":
+                logger.info(
+                    "nudge.startup_greeting",
+                    missing=round(nudge._current_missing_value, 2),
+                    preview=startup_decision.greeting[:60] if startup_decision.greeting else "",
+                )
+            else:
+                logger.info("nudge.startup_silent", reason=startup_decision.reason)
+        except Exception as e:
+            logger.error("nudge.startup_tick_error", error=str(e))
 
     async def token_refill_loop():
         """每 20 分钟补充令牌"""
