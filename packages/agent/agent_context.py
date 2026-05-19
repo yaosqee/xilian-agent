@@ -65,63 +65,6 @@ class AgentContext:
         self.icebreaker_active = False
         self.icebreaker_exchanges = 0
 
-    # ============================================================
-    # 上下文注入（阶段 3-4 填充实际内容）
-    # ============================================================
-
-    def inject_emotion_context(self) -> str:
-        """
-        将情绪快照转为系统提示动态注入段落。
-        兼容阶段2 EmotionAnalyzer 和阶段4 PAD 引擎两种格式。
-        """
-        snap = self.emotion_snapshot
-        if not snap:
-            return ""
-
-        emotion = snap.get("primary_emotion", "")
-        need = snap.get("need", "")
-
-        # PAD 引擎不提供 need 字段 → 从 appraisal.reason 中提取线索
-        if not need:
-            appraisal = snap.get("appraisal", {})
-            reason = appraisal.get("reason", "")
-            if reason and len(reason) <= 20:
-                need = reason
-
-        if not emotion:
-            return ""
-
-        text = f"伙伴刚才似乎有些{emotion}呢。"
-        if need:
-            text += f"伙伴可能需要的，是{need}吧。"
-
-        return text
-
-    def inject_memory_context(self) -> str:
-        """
-        将记忆检索结果转为系统提示动态注入段落。
-        阶段 3 实现：从 memory_retrieval 列表生成叙事性上下文。
-        """
-        if not self.memory_retrieval:
-            return ""
-
-        lines = ["[当前记忆 — 昔涟书中的一些页码]"]
-
-        for mem in self.memory_retrieval:
-            summary = mem.get("summary", "")
-            if not summary:
-                continue
-            lines.append(f"· 书页翻到一段回忆：{summary}")
-
-        if len(lines) == 1:
-            return ""  # 只有标题，无实际内容
-
-        lines.append(
-            "如果这些回忆与伙伴现在说的话有关，"
-            "可以自然地提及——像翻到旧书页那样轻轻提起，不必刻意。"
-        )
-        return "\n".join(lines)
-
     def __repr__(self) -> str:
         return (
             f"AgentContext(history={len(self.history)} msgs, "

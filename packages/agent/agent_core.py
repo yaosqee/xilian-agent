@@ -711,27 +711,11 @@ class AgentCore:
     # 上下文注入（向后兼容）
     # ============================================================
 
-    def _inject_context(self) -> str:
-        """拼接情绪上下文 + 记忆检索内容（向后兼容路径）"""
-        parts = []
-        emotion = self.context.inject_emotion_context()
-        if emotion:
-            parts.append(emotion)
-        memory = self.context.inject_memory_context()
-        if memory:
-            parts.append(memory)
-        return "\n".join(parts) if parts else ""
-
     # ============================================================
     # 消息构建
     # ============================================================
 
-    async def _build_messages(
-        self,
-        user_msg: str,
-        empathy_text: str = "",   # ⚠️ 保留参数签名（向后兼容），但不再使用
-        memory_text: str = "",    # ⚠️ 保留参数签名（向后兼容），但不再使用
-    ) -> list[dict]:
+    async def _build_messages(self, user_msg: str) -> list[dict]:
         """
         构建模型输入消息列表（阶段 7a：ContextBuilder 模块化）。
 
@@ -1062,31 +1046,6 @@ class AgentCore:
     # ============================================================
     # 阶段 2: 情感分析管道
     # ============================================================
-
-    def _inject_empathy(self) -> str:
-        """
-        从 context.emotion_snapshot 读取 PAD 情绪状态，
-        生成昔涟视角的心境感知（注入到伙伴消息下方的背景中）。
-        """
-        snap = self.context.emotion_snapshot
-        if not snap:
-            return ""
-
-        emotion = snap.get("primary_emotion", "")
-        if not emotion:
-            return ""
-
-        # 心境底色描述（不说教，只告知）
-        mood_map: dict[str, str] = {
-            "快乐": "心里亮亮的", "悲伤": "心有点沉", "愤怒": "心里有团火",
-            "恐惧": "心里发紧", "惊讶": "心里一亮", "厌恶": "心头不悦",
-            "信任": "心是安稳的", "期待": "心在轻轻跳动",
-            "焦虑": "心里有一小片乌云", "平静": "心像无风的湖面",
-            "兴奋": "心跳在加速",
-        }
-        mood = mood_map.get(emotion, f"心里泛起了{emotion}的涟漪")
-
-        return f"[伙伴的心境] {mood}。不必刻意分析他的情绪，去感受他便好。\n"
 
     def _schedule_emotion_analysis(self, user_message: str) -> asyncio.Task | None:
         """
