@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-19 17:30 CST
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（自主问候全面修复 + 前端情绪面板修复 + API 超时修复）
+> 📅 最后更新：2026-05-19 20:30 CST
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（角色历史融入 + 自主问候 + 情绪面板 + API 超时修复）
 
 ---
 
@@ -258,6 +258,7 @@
 | 十四 | 自主问候全面修复（4断点） | 断点1 前端从未轮询→MainLayout 30s轮询+ChatView GreetingBanner。断点2 DB空→四级回退链(_get_hours_since_last)+poke()。断点3 阈值6.0→3.0+深夜time_mod 0.2→0.6。断点4 启动无检查→main.py启动时立即tick。GREETING_SYSTEM_PROMPT重写(+time_of_day/portrait_context/多样性规则)。http_channel用户消息时调用nudge.poke()。nudge_engine 31/31测试通过。 |
 | 十五 | 日记合并 + 会话重置 + 任务上下文注入 | Notebook日记并入Autobiography自传体(移除notebook_manager日记代码+API,自传体时间→23:00)。reset_session async+清除DB conversation_logs+前端确认对话框。NotebookTaskModule(context_builder priority=8)注入当前待办列表。Notebook日记tab改用autobiography API。任务完成按钮+确认提示。 |
 | 十六 | 前端情绪面板修复 + API 超时修复 | 好感度等级前后端阈值不一致→前端直接用API level字段。PADTrajectory三线合一拆为3个独立时序图+HH:MM时间标签+散点图方向箭头。情绪映射`兴奋→孤独`改为`兴奋→喜悦`。ModelRouter connect超时5s→15s+max_retries 2→1+错误日志加elapsed_ms。问候空user_message防污染(历史加载跳过+轮询去重)。 |
+| 十七 | 昔涟角色历史融入系统 | 三层混合架构：(1) personality_v4.md→v4.1 新增「你的来处」小节(身份锚点+叙事约束)；(2) 25条角色情景记忆(昔涟第一人称)导入episodic_memories + bge-m3向量化，session_id='character'，seed脚本幂等；(3) MemoryModule双源渲染(用户记忆"翻到书里几页"/角色记忆"翻到旧书的一页→落点伙伴")；(4) agent_core 33关键词主动检索分流→character_memory_retrieval。端到端测试4场景全通过(触发3/不触发1)。 |
 | — | Git commits: 6237a81, ... | — |
 
 ## 下一步
@@ -268,6 +269,8 @@
 ---
 
 ## 最近决策
+
+- **2026-05-19（晚间）**：昔涟角色历史融入系统。方案评估后选择三层混合架构（人格提示词增强 + 情景记忆语义检索 + 叙事口吻指令），非单一方案。25条角色记忆以昔涟第一人称撰写，对齐样本四特质（知道过去不沉溺、过去是引子现在是正文、温柔不卖弄痛苦、面向未来）。检索复用现有episodic_memories+sqlite-vec管道，零新工具零新ContextModule。关键词触发+session_id分流实现角色/用户记忆双源渲染，token增加可控。
 
 - **2026-05-19（傍晚）**：前端情绪面板全面检查+修复。好感度等级P0：AffectionBar本地LEVELS阈值(25/50/75/100)与后端(20/50/80)不一致，改为直接使用API返回的level+level_label。PAD曲线P1：三线合一时间轴拆为P/A/D三个独立堆叠时序图+HH:MM时间标签+散点图方向箭头。情绪映射修复：PAD_TO_DISPLAY中`兴奋→孤独`改为`兴奋→喜悦`。API超时排查：OpenAI SDK v2默认connect=5s太短→改为15s，max_retries 2→1减少无效等待，错误日志加elapsed_ms。问候消息污染修复：前端loadHistory跳过空user_message条目(防"昔涟在思考...")+轮询注入前去重(防重复问候)。
 

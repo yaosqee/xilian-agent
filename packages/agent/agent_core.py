@@ -496,13 +496,25 @@ class AgentCore:
     # 阶段 3: 记忆检索
     # ============================================================
 
+    # 角色记忆触发关键词（用户消息中包含任一关键词时，额外检索昔涟的过去）
+    _CHARACTER_KEYWORDS: tuple[str, ...] = (
+        "你以前", "小时候", "轮回", "翁法罗斯", "白厄", "迷迷",
+        "哀丽秘榭", "黄金裔", "铁墓", "德谬歌", "逐火之旅",
+        "阿格莱雅", "万敌", "赛飞儿", "那刻夏", "风堇",
+        "遐蝶", "海瑟音", "刻律德菈", "缇宝", "缇安",
+        "浮黎", "记忆星神", "黑潮", "泰坦", "如我所书",
+        "你的过去", "你来自哪里", "你以前住", "你经历过",
+        "你等过", "三千万", "开拓者",
+    )
+
     async def _retrieve_memories(self, user_message: str) -> list[dict] | None:
         """
-        检索与当前消息相关的历史记忆。
+        检索与当前消息相关的历史记忆 + 角色情景记忆。
 
         检索条件：
         - 用户消息长度 ≥ 5 字符（太短不触发，节省资源）
-        - ChromaDB 不可用时静默跳过
+        - 结果按 session_id 分流：用户记忆 → memory_retrieval，角色记忆 → character_memory_retrieval
+        - 角色记忆仅在用户消息包含角色关键词时注入，避免日常对话中喧宾夺主
         """
         if len(user_message.strip()) < 5:
             return None
@@ -510,10 +522,35 @@ class AgentCore:
         try:
             if not self.memory_manager:
                 return None
-            results = await self.memory_manager.retrieve_memories(user_message, k=3)
-            if results:
-                logger.debug("memory.retrieved", count=len(results))
-            return results if results else None
+
+            results = await self.memory_manager.retrieve_memories(user_message, k=5)
+            if not results:
+                return None
+
+            # ── 分流：用户 vs 角色 ──
+            user_mems = []
+            char_mems = []
+            for r in results:
+                if r.get("session_id") == "character":
+                    char_mems.append(r)
+                else:
+                    user_mems.append(r)
+
+            # 角色记忆是否触发
+            triggered = any(kw in user_message for kw in self._CHARACTER_KEYWORDS)
+            if triggered and char_mems:
+                self.context.character_memory_retrieval = char_mems[:2]
+                logger.debug(
+                    "memory.character_triggered",
+                    keywords=[kw for kw in self._CHARACTER_KEYWORDS if kw in user_message],
+                    count=min(len(char_mems), 2),
+                )
+            else:
+                self.context.character_memory_retrieval = None
+
+            logger.debug("memory.retrieved", user=len(user_mems), char=len(char_mems), triggered=triggered)
+            return user_mems[:3] if user_mems else None
+
         except Exception as e:
             logger.warning("memory.retrieval_failed", error=str(e))
             return None

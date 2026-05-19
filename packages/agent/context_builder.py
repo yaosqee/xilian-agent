@@ -147,33 +147,54 @@ class EmotionModule(ContextModule):
 
 
 class MemoryModule(ContextModule):
-    """情景记忆检索结果 → 像翻旧书页"""
+    """情景记忆检索结果 → 像翻旧书页。支持用户记忆和角色记忆双源。"""
 
     def __init__(self, agent_context):
-        super().__init__(name="memory", priority=5, max_tokens=250)
+        super().__init__(name="memory", priority=5, max_tokens=300)
         self._ctx = agent_context
 
     def render(self) -> str:
-        memories = self._ctx.memory_retrieval
-        if not memories:
-            return ""
+        user_memories = self._ctx.memory_retrieval or []
+        char_memories = self._ctx.character_memory_retrieval or []
 
-        # 取前 2 条，自然语言
-        items = []
-        for m in memories[:2]:
+        parts = []
+
+        # ── 用户记忆（现有逻辑）──
+        user_items = []
+        for m in user_memories[:2]:
             summary = m.get("summary", "")
             if summary and len(summary) >= 2:
-                items.append(summary)
+                user_items.append(summary)
 
-        if not items:
+        if user_items:
+            if len(user_items) == 1:
+                mem_text = f"上一次你们聊到了「{user_items[0]}」"
+            else:
+                mem_text = f"上一次你们聊到了「{user_items[0]}」还有「{user_items[1]}」"
+            parts.append(
+                "（昔涟翻到书里几页——"
+                f"{mem_text}。如果和伙伴现在说的话有关，"
+                "像翻旧书页那样轻轻提起就好，不要刻意。）"
+            )
+
+        # ── 角色记忆（昔涟自己的过去）──
+        for m in char_memories[:1]:  # 一次最多 1 条，不堆砌
+            summary = m.get("summary", "")
+            if summary and len(summary) >= 2:
+                # 确保 summary 以句末标点收尾，避免重复标点
+                end = summary[-1] if summary else ""
+                sep = "" if end in "。！？♪~" else "。"
+                parts.append(
+                    "（昔涟翻到旧书的一页——"
+                    f"{summary}{sep}"
+                    "像翻旧书页那样轻轻提起就好，不要展开。"
+                    "落点放在伙伴现在身上。）"
+                )
+
+        if not parts:
             return ""
 
-        if len(items) == 1:
-            mem_text = f"上一次你们聊到了「{items[0]}」"
-        else:
-            mem_text = f"上一次你们聊到了「{items[0]}」还有「{items[1]}」"
-
-        return f"（昔涟翻到书里几页——{mem_text}。如果和伙伴现在说的话有关，像翻旧书页那样轻轻提起就好，不要刻意。）"
+        return "\n\n".join(parts)
 
 
 class PortraitModule(ContextModule):

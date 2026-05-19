@@ -341,6 +341,7 @@ class MemoryManager:
                         "episodic_id": row_id,
                         "timestamp": mem.get("timestamp"),
                         "days_since_access": round(days_since_access, 1),
+                        "session_id": mem.get("session_id", ""),
                     })
                     # 更新访问计数
                     await self._db.increment_access_count(row_id)

@@ -25,8 +25,10 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/shared/database.py` — SQLite 11 表 CRUD + 游标分页查询
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器
 - `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值 + TokenBucket + GreetingBanner）
-- `packages/agent/context_builder.py` — 模块化上下文注入（6模块，含 NotebookTaskModule）
+- `packages/agent/context_builder.py` — 模块化上下文注入（7模块，含 NotebookTaskModule + MemoryModule双源渲染）
 - `packages/agent/notebook_manager.py` — 笔记本管理器（笔记/关注/任务，日记已并入自传体）
+- `data/character_memories.json` — 昔涟角色情景记忆（25条，session_id='character'）
+- `scripts/seed_character_memories.py` — 角色记忆导入脚本（幂等，bge-m3向量化）
 
 ## 技术约定
 
@@ -37,7 +39,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - loguru 结构化日志：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`
 - 测试：pytest + pytest-asyncio，asyncio_mode = "strict"
 - 环境变量：.env 管理 API Key，.gitignore 排除
-- 人格提示词纳入 Git 版本管理：`prompts/personality_v4.md`
+- 人格提示词纳入 Git 版本管理：`prompts/personality_v4.md`（当前 v4.1）
 - 工具系统：LLM function calling 驱动，4 工具 autodiscover 注册，README_ONLY 自主 / EXECUTE 需确认
 - 外部 API Key（QWeather / Zhipu）仅存储在 .env，不入 git，不写入文档
 - 工具新增只需一个文件：在 `packages/agent/tools/` 下创建 + `@register_tool` 装饰器

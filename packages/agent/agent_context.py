@@ -22,6 +22,9 @@ class AgentContext:
     # 阶段 3：记忆检索结果 [{summary, score, ...}]
     memory_retrieval: Optional[list] = None
 
+    # 阶段 9：角色情景记忆检索结果（昔涟自己的过去）
+    character_memory_retrieval: Optional[list] = None
+
     # 阶段 8+: 用户印象文档 + 已注入版本号
     user_portrait: Optional[str] = None
     _current_portrait_version: Optional[int] = None
@@ -56,6 +59,7 @@ class AgentContext:
         self.history.clear()
         self.emotion_snapshot = None
         self.memory_retrieval = None
+        self.character_memory_retrieval = None
         self._current_portrait_version = None
         self._portrait_version_injected = None
         self.icebreaker_active = False
