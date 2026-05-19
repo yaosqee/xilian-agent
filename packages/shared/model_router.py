@@ -13,6 +13,7 @@ import time as _time_module
 from typing import Literal
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+import httpx
 from loguru import logger
 
 load_dotenv()
@@ -54,6 +55,9 @@ class ModelRouter:
     }
 
     def __init__(self):
+        # 统一超时配置：connect=15s（默认 5s 太短，网络波动时大量超时）
+        _api_timeout = httpx.Timeout(connect=15.0, read=120.0, write=120.0, pool=30.0)
+
         # === DeepSeek V4-Pro 客户端（多 Key 轮询）===
         self._ds_pro_keys = [
             k for k in [
@@ -62,7 +66,7 @@ class ModelRouter:
             ] if k
         ]
         self._ds_pro_clients = [
-            AsyncOpenAI(api_key=k, base_url="https://api.deepseek.com")
+            AsyncOpenAI(api_key=k, base_url="https://api.deepseek.com", timeout=_api_timeout, max_retries=1)
             for k in self._ds_pro_keys
         ] if self._ds_pro_keys else []
         self._pro_key_cycle = itertools.cycle(range(len(self._ds_pro_clients)))
@@ -71,7 +75,7 @@ class ModelRouter:
         # === DeepSeek V4-Flash 客户端 ===
         flash_key = os.getenv("DEEPSEEK_API_KEY_2") or os.getenv("DEEPSEEK_API_KEY")
         self._ds_flash = AsyncOpenAI(
-            api_key=flash_key, base_url="https://api.deepseek.com"
+            api_key=flash_key, base_url="https://api.deepseek.com", timeout=_api_timeout, max_retries=1
         ) if flash_key else None
         self.ds_flash_model = "deepseek-v4-flash"
 
@@ -203,10 +207,11 @@ class ModelRouter:
         logger.debug(f"DS Pro 选取 key[{idx}]")
         return self._ds_pro_clients[idx]
 
-    async def _call_ds_pro(self, messages: list, timeout: int = 60, **kwargs):
+    async def _call_ds_pro(self, messages: list, timeout: int = 90, **kwargs):
         """DS Pro（双 Key 轮询 + fallback）。有 tools 时返回完整 message 对象。"""
         has_tools = bool(kwargs.get("tools"))
         for attempt in range(len(self._ds_pro_clients)):
+            t0 = _time_module.time()
             try:
                 client = self._ds_pro_clients[attempt]
                 api_kwargs = dict(
@@ -224,6 +229,8 @@ class ModelRouter:
                     client.chat.completions.create(**api_kwargs),
                     timeout=timeout,
                 )
+                elapsed = (_time_module.time() - t0) * 1000
+                logger.debug("ds_pro.call_ok", key=attempt, elapsed_ms=round(elapsed))
                 if kwargs.get("stream"):
                     return response
                 choice = response.choices[0]
@@ -237,21 +244,24 @@ class ModelRouter:
                 # 有 tools 时返回完整 message（可能含 tool_calls）；否则返回 content 字符串
                 return msg if has_tools else msg.content
             except Exception as e:
+                elapsed = (_time_module.time() - t0) * 1000
                 err_type = type(e).__name__
-                err_msg = str(e)[:200]
+                err_msg = str(e)[:300]
                 logger.warning(f"DS Pro key[{attempt}] 失败: {err_type}",
+                              elapsed_ms=round(elapsed),
                               detail=err_msg)
                 if attempt == len(self._ds_pro_clients) - 1:
                     raise
                 continue
 
-    async def _call_ds_flash(self, messages: list, timeout: int = 60, **kwargs):
+    async def _call_ds_flash(self, messages: list, timeout: int = 90, **kwargs):
         """DS Flash。有 tools 时返回完整 message 对象。"""
         if not self._ds_flash:
             logger.warning("DS Flash 不可用，fallback DS Pro")
             return await self._call_ds_pro(messages, **kwargs)
 
         has_tools = bool(kwargs.get("tools"))
+        t0 = _time_module.time()
         api_kwargs = dict(
             model=self.ds_flash_model,
             messages=messages,
@@ -264,10 +274,20 @@ class ModelRouter:
             api_kwargs["tools"] = kwargs["tools"]
             api_kwargs["tool_choice"] = kwargs.get("tool_choice", "auto")
 
-        response = await asyncio.wait_for(
-            self._ds_flash.chat.completions.create(**api_kwargs),
-            timeout=timeout,
-        )
+        try:
+            response = await asyncio.wait_for(
+                self._ds_flash.chat.completions.create(**api_kwargs),
+                timeout=timeout,
+            )
+        except Exception as e:
+            elapsed = (_time_module.time() - t0) * 1000
+            logger.warning(f"DS Flash 失败: {type(e).__name__}",
+                          elapsed_ms=round(elapsed),
+                          detail=str(e)[:300])
+            raise
+
+        elapsed = (_time_module.time() - t0) * 1000
+        logger.debug("ds_flash.call_ok", elapsed_ms=round(elapsed))
         if kwargs.get("stream"):
             return response
         choice = response.choices[0]

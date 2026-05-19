@@ -2,69 +2,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useChat } from '../../hooks/useChat';
 import type { ChatMessage } from '../../types/chat';
-import { useAutonomyStore } from '../../stores/autonomyStore';
-
-/* ── 自主问候横幅 ── */
-const GreetingBanner: React.FC = () => {
-  const greeting = useAutonomyStore((s) => s.greeting);
-  const doAckGreeting = useAutonomyStore((s) => s.doAckGreeting);
-  const [dismissed, setDismissed] = useState(false);
-
-  if (!greeting?.has_greeting || !greeting.greeting || dismissed) return null;
-
-  return (
-    <div
-      style={{
-        margin: '0 16px 8px',
-        padding: '12px 18px',
-        borderRadius: 14,
-        background: 'linear-gradient(135deg, rgba(255, 220, 235, 0.5), rgba(235, 220, 250, 0.5))',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255, 183, 197, 0.25)',
-        boxShadow: '0 4px 16px rgba(255, 183, 197, 0.12)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        animation: 'fadeInUp 0.5s var(--ease-spring)',
-      }}
-    >
-      <span style={{
-        fontSize: 14,
-        color: 'var(--color-text)',
-        lineHeight: 1.6,
-        flex: 1,
-      }}>
-        {greeting.greeting}
-      </span>
-      <button
-        onClick={() => {
-          doAckGreeting(greeting.id || '');
-          setDismissed(true);
-        }}
-        style={{
-          background: 'transparent',
-          border: 'none',
-          color: 'var(--color-text-muted)',
-          cursor: 'pointer',
-          fontSize: 18,
-          lineHeight: 1,
-          padding: '4px 6px',
-          borderRadius: 6,
-          flexShrink: 0,
-          opacity: 0.5,
-          transition: 'opacity 0.2s',
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-        onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.5')}
-        title="关闭"
-      >
-        ×
-      </button>
-    </div>
-  );
-};
 
 /* ── 消息气泡 ── */
 const Bubble: React.FC<{ msg: ChatMessage }> = React.memo(({ msg }) => {
@@ -223,14 +160,12 @@ const MessageList: React.FC<{
       messages[0].id !== prevFirstId.current;
 
     if (wasPrepend) {
-      // 保持滚动位置：记录当前 scrollHeight，渲染后恢复
       const prevHeight = container.scrollHeight;
       requestAnimationFrame(() => {
         const newHeight = container.scrollHeight;
         container.scrollTop += newHeight - prevHeight;
       });
     } else {
-      // 正常追加 → 滚到底部
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
 
@@ -256,7 +191,6 @@ const MessageList: React.FC<{
         gap: 12,
       }}
     >
-      {/* 加载更多按钮（顶部） */}
       <LoadMoreButton
         hasMore={hasMore}
         isLoading={isLoadingMore}
@@ -267,7 +201,6 @@ const MessageList: React.FC<{
         <Bubble key={m.id} msg={m} />
       ))}
 
-      {/* 底部终点标记 */}
       {showEndMarker && (
         <div style={{ textAlign: 'center', padding: '4px 0 0' }}>
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
@@ -326,8 +259,6 @@ export const ChatView: React.FC = () => {
           overflow: 'hidden',
         }}
       >
-        <GreetingBanner />
-
         <MessageList
           messages={messages}
           hasMore={hasMore}

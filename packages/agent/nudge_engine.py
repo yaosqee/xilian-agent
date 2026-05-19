@@ -279,6 +279,14 @@ class NudgeEngine:
                 reason="令牌不足，下个周期再试",
             )
 
+        # 4.5. 检查是否有未回复的问候（避免骚扰）
+        if self._has_unanswered_greeting():
+            self._bucket.tokens += 1.0  # 退还令牌
+            return ProactiveDecision(
+                action="silent",
+                reason="已有未回复的问候，等待伙伴回应",
+            )
+
         # 5. 生成问候
         try:
             greeting = await self.generate_greeting()
@@ -618,9 +626,29 @@ class NudgeEngine:
         recent_hashes = {h for _, h in self._recent_greetings}
         return h in recent_hashes
 
+    def _has_unanswered_greeting(self) -> bool:
+        """检查最近一条对话记录是否是未回复的问候。"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self._db.db_path))
+            try:
+                cursor = conn.execute(
+                    """SELECT user_message FROM conversation_logs
+                       ORDER BY timestamp DESC LIMIT 1"""
+                )
+                row = cursor.fetchone()
+            finally:
+                conn.close()
+            if row and not row[0]:
+                return True  # user_message 为空 → 是自动问候，伙伴还没回复
+            return False
+        except Exception:
+            return False
+
     def _store_greeting(self, text: str) -> str:
-        """存储问候供前端轮询，返回 greeting_id"""
+        """存储问候供前端轮询，同时持久化到 conversation_logs。返回 greeting_id"""
         import uuid
+        import sqlite3
         greeting_id = uuid.uuid4().hex[:12]
 
         # 记录去重哈希
@@ -629,7 +657,35 @@ class NudgeEngine:
         if len(self._recent_greetings) > self._max_recent:
             self._recent_greetings = self._recent_greetings[-self._max_recent:]
 
-        # 设置待发送
+        # 持久化到 conversation_logs（作为昔涟主动发起的对话消息）
+        try:
+            conn = sqlite3.connect(str(self._db.db_path))
+            try:
+                conn.execute(
+                    """INSERT INTO conversation_logs
+                       (timestamp, session_id, event_id, user_message, assistant_reply,
+                        emotion_label, emotion_primary, emotion_intensity, user_id, source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        time.time(),
+                        "nudge",
+                        f"nudge-{greeting_id}",
+                        "",           # user_message 为空 → 标记为主动问候
+                        text,
+                        None,
+                        None,
+                        None,
+                        "hezi",
+                        "nudge",
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("nudge.log_write_failed", error=str(e))
+
+        # 设置待发送（前端轮询获取后转为聊天消息）
         self._pending_greeting = text
         self._pending_greeting_id = greeting_id
 

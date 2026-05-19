@@ -17,7 +17,7 @@ const PAD_TO_DISPLAY: Record<string, string> = {
   期待: '期待',
   焦虑: '焦虑',
   平静: '平静',
-  兴奋: '孤独',
+  兴奋: '喜悦',
 };
 
 /** 将 PAD 格式的 dimensions 键名映射到前端显示名 */

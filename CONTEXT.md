@@ -262,7 +262,6 @@ AttentionScheduler 任务提醒流程：
 | `packages/voice/` | 语音管道接口占位，阶段 9 完整实现 |
 | `gateway/mcp/adapter.py` | MCP 适配器接口签名预埋 |
 | `markers_to_ssml()` | SSML 转换完整实现 |
-| 和风天气 API Key | 需在控制台激活对应 API 产品（当前使用 Zhipu 搜索 fallback） |
 
 ## 下一步
 

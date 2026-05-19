@@ -263,7 +263,11 @@ class AgentCore:
         try:
             logs = await self._db.get_conversation_history(limit=20)
             for row in reversed(logs):
-                self.context.history.append({"role": "user", "content": row["user_message"]})
+                user_msg = row["user_message"]
+                # 主动问候的 user_message 为空 → 用标记代替，让 LLM 知道这是昔涟主动发起的
+                if not user_msg:
+                    user_msg = "（昔涟轻轻推了推伙伴——她主动发来了一句问候。）"
+                self.context.history.append({"role": "user", "content": user_msg})
                 self.context.history.append({"role": "assistant", "content": row["assistant_reply"]})
             if logs:
                 logger.info("agent.context_restored", rounds=len(logs))

@@ -22,18 +22,23 @@ export function useChat() {
       const res = await fetchConversationHistory(historyCursor ?? undefined, 10);
       const msgs: ChatMessage[] = [];
       for (const item of res.items) {
-        msgs.push({
-          id: `hist-${item.id}-u`,
-          role: 'user',
-          content: item.user_message,
-          timestamp: item.timestamp * 1000,
-        });
-        msgs.push({
-          id: `hist-${item.id}-a`,
-          role: 'assistant',
-          content: item.assistant_reply,
-          timestamp: item.timestamp * 1000,
-        });
+        // 主动问候的 user_message 为空 → 只创建昔涟的消息气泡，不创建空 user 气泡
+        if (item.user_message) {
+          msgs.push({
+            id: `hist-${item.id}-u`,
+            role: 'user',
+            content: item.user_message,
+            timestamp: item.timestamp * 1000,
+          });
+        }
+        if (item.assistant_reply) {
+          msgs.push({
+            id: `hist-${item.id}-a`,
+            role: 'assistant',
+            content: item.assistant_reply,
+            timestamp: item.timestamp * 1000,
+          });
+        }
       }
       if (msgs.length > 0) prependMessages(msgs);
       const newLoadedRounds = loadedRounds + res.items.length;

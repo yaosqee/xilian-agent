@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-19 14:00 CST
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（自主问候全面修复 + NotebookTaskModule + 日记合并）
+> 📅 最后更新：2026-05-19 17:30 CST
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（自主问候全面修复 + 前端情绪面板修复 + API 超时修复）
 
 ---
 
@@ -257,7 +257,8 @@
 | 十三 | 工具系统全面重构 | LLM function calling 驱动工具选择（替代关键词匹配），ToolExecutor（校验→权限→频率→确认→审计），ResultWrapper（规则模板+LLM双轨），autodiscover 自动注册，DeepSeek thinking mode reasoning_content 回传修复。4 工具：search_memory（记忆检索）/ query_weather（和风天气+搜索fallback）/ search_web（智谱Web Search）/ coding_delegate（EXECUTE，需用户确认）。工具→记忆/印象联动（trigger_memory/trigger_portrait_update）。确认回路（_pending_confirmation）。finish_reason 截断检测 + max_tokens 1500。 |
 | 十四 | 自主问候全面修复（4断点） | 断点1 前端从未轮询→MainLayout 30s轮询+ChatView GreetingBanner。断点2 DB空→四级回退链(_get_hours_since_last)+poke()。断点3 阈值6.0→3.0+深夜time_mod 0.2→0.6。断点4 启动无检查→main.py启动时立即tick。GREETING_SYSTEM_PROMPT重写(+time_of_day/portrait_context/多样性规则)。http_channel用户消息时调用nudge.poke()。nudge_engine 31/31测试通过。 |
 | 十五 | 日记合并 + 会话重置 + 任务上下文注入 | Notebook日记并入Autobiography自传体(移除notebook_manager日记代码+API,自传体时间→23:00)。reset_session async+清除DB conversation_logs+前端确认对话框。NotebookTaskModule(context_builder priority=8)注入当前待办列表。Notebook日记tab改用autobiography API。任务完成按钮+确认提示。 |
-| — | Git commits: 6237a81, ... f661aef | — |
+| 十六 | 前端情绪面板修复 + API 超时修复 | 好感度等级前后端阈值不一致→前端直接用API level字段。PADTrajectory三线合一拆为3个独立时序图+HH:MM时间标签+散点图方向箭头。情绪映射`兴奋→孤独`改为`兴奋→喜悦`。ModelRouter connect超时5s→15s+max_retries 2→1+错误日志加elapsed_ms。问候空user_message防污染(历史加载跳过+轮询去重)。 |
+| — | Git commits: 6237a81, ... | — |
 
 ## 下一步
 
@@ -267,6 +268,8 @@
 ---
 
 ## 最近决策
+
+- **2026-05-19（傍晚）**：前端情绪面板全面检查+修复。好感度等级P0：AffectionBar本地LEVELS阈值(25/50/75/100)与后端(20/50/80)不一致，改为直接使用API返回的level+level_label。PAD曲线P1：三线合一时间轴拆为P/A/D三个独立堆叠时序图+HH:MM时间标签+散点图方向箭头。情绪映射修复：PAD_TO_DISPLAY中`兴奋→孤独`改为`兴奋→喜悦`。API超时排查：OpenAI SDK v2默认connect=5s太短→改为15s，max_retries 2→1减少无效等待，错误日志加elapsed_ms。问候消息污染修复：前端loadHistory跳过空user_message条目(防"昔涟在思考...")+轮询注入前去重(防重复问候)。
 
 - **2026-05-19**：自主问候全面修复（4 断点全部解决）。断点1 前端从未轮询 → MainLayout 30s 轮询 + ChatView GreetingBanner 问候横幅（毛玻璃渐变卡片 + 关闭按钮）。断点2 DB 清空后 _get_hours_since_last 返回 0 → 四级回退链（conversation_logs → episodic_memories → emotion_snapshots → notebook_entries → _fallback_timestamp）+ poke() 更新 fallback 时间戳。断点3 阈值 6.0 需 ~14h 静默 → 默认 3.0（6-7h） + 深夜 time_mod 0.2→0.6。断点4 启动无检查 → main.py 启动时立即 tick 一次。GREETING_SYSTEM_PROMPT 重写（新增 time_of_day + portrait_context + 多样性规则）。nudge_engine 31/31 测试通过。
 

@@ -1,26 +1,12 @@
 import React, { useEffect, useCallback } from 'react';
 import { useAffectionStore } from '../stores/affectionStore';
 
-interface LevelInfo {
-  threshold: number;
-  level: number;
-  label: string;
-  icon: string;
-}
-
-const LEVELS: LevelInfo[] = [
-  { threshold: 25,  level: 1, label: '昔涟喜欢你',     icon: '❤️' },
-  { threshold: 50,  level: 2, label: '昔涟非常喜欢你', icon: '💕' },
-  { threshold: 75,  level: 3, label: '昔涟特别喜欢你', icon: '💖' },
-  { threshold: 100, level: 4, label: '你永远喜欢昔涟', icon: '💝' },
-];
-
-function getLevelInfo(score: number): LevelInfo {
-  for (let i = LEVELS.length - 1; i >= 0; i--) {
-    if (score >= LEVELS[i].threshold) return LEVELS[i];
-  }
-  return LEVELS[0];
-}
+const LEVEL_ICONS: Record<number, string> = {
+  1: '❤️',
+  2: '💕',
+  3: '💖',
+  4: '💝',
+};
 
 export const AffectionBar: React.FC = () => {
   const { data, refresh } = useAffectionStore();
@@ -36,7 +22,9 @@ export const AffectionBar: React.FC = () => {
   }, [doRefresh]);
 
   const score = data?.score ?? 0;
-  const info = getLevelInfo(score);
+  const level = data?.level ?? 1;
+  const label = data?.level_label ?? '昔涟喜欢你';
+  const icon = LEVEL_ICONS[level] || '❤️';
 
   return (
     <div style={{
@@ -45,7 +33,7 @@ export const AffectionBar: React.FC = () => {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
         <span style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>
-          {info.icon} {info.label}
+          {icon} {label}
         </span>
         <span style={{ fontSize: 12, color: 'var(--color-pink-dark)', fontWeight: 600 }}>
           好感度 {score.toFixed(1)}

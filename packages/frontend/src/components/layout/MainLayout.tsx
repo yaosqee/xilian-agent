@@ -6,6 +6,7 @@ import { SlidePanel } from '../panels/SlidePanel';
 import { BackgroundLayer } from './BackgroundLayer';
 import { fetchBackground } from '../../services/api';
 import { useAutonomyStore } from '../../stores/autonomyStore';
+import { useChatStore } from '../../stores/chatStore';
 
 const Atmosphere: React.FC = () => (
   <div className="atmosphere" aria-hidden="true">
@@ -18,7 +19,11 @@ const Atmosphere: React.FC = () => (
 export const MainLayout: React.FC = () => {
   const [bgUrl, setBgUrl] = useState<string | null>(null);
   const checkGreeting = useAutonomyStore((s) => s.checkGreeting);
+  const greeting = useAutonomyStore((s) => s.greeting);
+  const doAckGreeting = useAutonomyStore((s) => s.doAckGreeting);
+  const addMessage = useChatStore((s) => s.addMessage);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevGreetingId = useRef<string | null>(null);
 
   useEffect(() => {
     fetchBackground()
@@ -46,6 +51,29 @@ export const MainLayout: React.FC = () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [checkGreeting]);
+
+  // 检测到新问候 → 注入为对话消息
+  useEffect(() => {
+    if (!greeting?.has_greeting || !greeting.greeting) return;
+    if (greeting.id === prevGreetingId.current) return; // 已处理过
+    prevGreetingId.current = greeting.id;
+
+    // ack 清除 pending
+    doAckGreeting(greeting.id || '');
+
+    // 如果消息列表中最后一条已经是相同内容（历史加载已包含），跳过
+    const msgs = useChatStore.getState().messages;
+    const lastMsg = msgs[msgs.length - 1];
+    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content === greeting.greeting) return;
+
+    // 注入为昔涟的消息气泡
+    addMessage({
+      id: `nudge-${greeting.id || Date.now()}`,
+      role: 'assistant',
+      content: greeting.greeting,
+      timestamp: Date.now(),
+    });
+  }, [greeting, doAckGreeting, addMessage]);
 
   return (
     <div
