@@ -973,11 +973,11 @@ class AttentionScheduler:
                 max_tokens=60,
             )
             result = result.strip()
-            if result.startswith("NOTIFY:"):
-                text = result[7:].strip()
+            if result.startswith("NOTIFY"):
+                text = result[6:].lstrip(":： ").strip()
                 return {"action": "notify", "text": text if text else result}
-            elif result.startswith("NOTE:"):
-                return {"action": "note", "text": result[5:].strip()}
+            elif result.startswith("NOTE"):
+                return {"action": "note", "text": result[4:].lstrip(":： ").strip()}
             return {"action": "silent"}
         except Exception as e:
             logger.warning("attention.decision_failed", error=str(e))

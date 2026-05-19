@@ -149,13 +149,13 @@ class TestFlashDecision:
     async def test_decide_notify(self):
         s = AttentionScheduler()
         s._router = Mock()
-        s._router.route = AsyncMock(return_value="NOTIFY 伙伴，考试时间到了哦")
+        s._router.route = AsyncMock(return_value="NOTIFY: 伙伴，考试时间到了哦")
         event = AttentionEvent(kind="task_reminder", urgency=AttentionUrgency.IMMEDIATE,
                                payload={"title": "考试"})
 
         decision = await s._decide(event)
         assert decision["action"] == "notify"
-        assert "NOTIFY" in decision["text"]
+        assert "考试" in decision["text"]
 
     @pytest.mark.asyncio
     async def test_decide_silent(self):
@@ -238,7 +238,7 @@ class TestTickBehavior:
     async def test_tick_process_immediate(self):
         s = AttentionScheduler()
         s._router = Mock()
-        s._router.route = AsyncMock(return_value="NOTIFY 重要提醒")
+        s._router.route = AsyncMock(return_value="NOTIFY: 重要提醒")
         s.event_queue.put_nowait(AttentionEvent(
             kind="task_reminder", urgency=AttentionUrgency.IMMEDIATE,
             payload={"title": "会议"},
