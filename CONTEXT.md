@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-18（工具系统重构：LLM function calling + 4工具 + 确认回路 + 记忆联动）
+> 📅 最后更新：2026-05-19（自主问候全面修复 + NotebookTaskModule + 日记合并 + 会话重置）
 
 ---
 
@@ -36,8 +36,8 @@ xilian-v3/
 │   ├── tool_executor.py             # ToolExecutor：校验→权限→频率→确认→执行→审计（打磨期）
 │   ├── tool_result.py               # ToolResult + ToolContext dataclass（打磨期）
 │   ├── result_wrapper.py            # ResultWrapper：工具结果→昔涟语言（规则模板 + LLM包装双轨，打磨期）
-│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Emotion/Memory/Notebook 4模块）
-│   ├── notebook_manager.py          # NotebookManager：笔记/日记/关注/任务 + 自动记笔记（阶段7b）
+│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Portrait/Emotion/Memory/Notebook/NotebookTask 6模块）
+│   ├── notebook_manager.py          # NotebookManager：笔记/关注/任务 + 自动记笔记（阶段7b，日记已并入自传体）
 │   ├── portrait_manager.py          # PortraitManager：用户印象文档定期重写 + mark_dirty（阶段8+）
 │   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载（阶段7d）
 │   ├── emotion_analyzer.py          # EmotionAnalyzer：DeepSeek 11维情感分析（阶段2，被PAD增强）
@@ -148,7 +148,7 @@ main.py 启动
   │     ├─ 加载 personality_v4.md → self._personality
   │     ├─ 初始化 ToolRegistry + 注册 coding_delegate
   │     ├─ 初始化 AgentContext（对话历史容器）
-  │     ├─ 初始化 ContextBuilder（Datetime/Portrait/Emotion/Memory/Notebook 5模块）
+  │     ├─ 初始化 ContextBuilder（Datetime/Portrait/Emotion/Memory/Notebook/NotebookTask 6模块）
   │     ├─ 初始化 ModelRouter（纯云端 DeepSeek Pro双Key + Flash + 工具降级）
   │     ├─ 初始化 EmotionEngine（PAD 情感引擎，常驻内存）
   │     ├─ 初始化 MemoryManager（sqlite-vec 向量检索）
@@ -163,12 +163,10 @@ main.py 启动
   ├─→ asyncio cron 后台循环
   │     ├─ 3:00    daily_backup（APScheduler，同步备份不受影响）
   │     ├─ 3:30    cleanup_backups
-  │     ├─ 4:00    daily_autobiography（asyncio _cron_loop）
-  │     ├─ 4:30    weekly_reflection（asyncio _cron_weekly_loop，仅周日）
   │     ├─ 5:00    consolidate_user_portrait
+  │     ├─ 23:00   daily_autobiography（asyncio _cron_loop）
   │     ├─ */15    nudge_loop（想念值 + 自主问候）+ check_due_tasks（到期任务）
-  │     ├─ */20    token_refill
-  │     └─ 23:50   notebook_daily_diary
+  │     └─ */20    token_refill
   │
   ├─→ AttentionScheduler（asyncio Task，阶段7c）
   │     5s tick → PriorityQueue → 防打扰 → Flash 决策
@@ -182,7 +180,7 @@ main.py 启动
 agent.process(event) 内部（阶段 7 + 打磨期）：
   _perceive() → 情绪基调检测
   _retrieve_memories() → sqlite-vec 向量化 → top-3 + 艾宾浩斯衰减权重
-  _build_messages() → ContextBuilder 自然语言上下文组装（5模块：DateTime/Portrait/Emotion/Memory/Notebook）
+  _build_messages() → ContextBuilder 自然语言上下文组装（6模块：DateTime/Portrait/Emotion/Memory/Notebook/NotebookTask）
   router.route("chat", tools=[...]) → LLM function calling 工具选择 →
     ├─ 文本回复 → MarkerParser 后处理 → 返回
     └─ tool_calls → ToolExecutor.execute() → ResultWrapper.wrap() → 回传 LLM → 最终回复
@@ -193,11 +191,13 @@ agent.process(event) 内部（阶段 7 + 打磨期）：
   auto_note_after_message() → Flash 自动判断是否记笔记
   add_message() → 对话历史
 
-NudgeEngine 自主问候流程（阶段 6）：
-  asyncio 每15分钟 → nudge.tick()
-    → 计算想念值 → ≤ 阈值 → 静默
-    → > 阈值 + TokenBucket 可用 → DS Pro 生成温柔问候
-    → 写入 _pending_greeting → 前端轮询 /api/autonomy/pending-greeting 投递
+NudgeEngine 自主问候流程（阶段 6，2026-05-19 全面修复）：
+  启动时立即 tick() → asyncio 每15分钟 → nudge.tick()
+    → _get_hours_since_last() 四级回退链（conversation_logs→episodic_memories→emotion_snapshots→notebook_entries→fallback）
+    → 计算想念值 → 默认阈值 3.0（6-7h 静默触发）
+    → TokenBucket 频率控制 → DS Pro 生成问候 → _pending_greeting
+    → 前端 MainLayout 30s 轮询 /api/autonomy/pending-greeting → ChatView GreetingBanner 展示
+    → 用户关闭 → ack → 清除 pending
 
 AttentionScheduler 任务提醒流程：
   asyncio 每15分钟 check_due_tasks → get_due_tasks(window=3600s)
@@ -223,8 +223,8 @@ AttentionScheduler 任务提醒流程：
 | `memory_manager.py` | 情景记忆全管线：编码/检索/艾宾浩斯衰减/调度/容量 | `encode_memory()`, `retrieve_memories()`, `schedule_encoding()`, `manage_capacity()` |
 | `autobiography_writer.py` | 每日自传体 + 每周反思结晶 | `write_daily()`, `reflect_weekly()` |
 | `portrait_manager.py` | 用户印象文档定期重写 + 破冰主动问候 + 冷启动 | `consolidate()`, `ensure_exists()` |
-| `context_builder.py` | 模块化上下文组装（5模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
-| `notebook_manager.py` | 笔记/日记/关注/任务 + 自动记笔记 | `add_note()`, `generate_daily_diary()`, `auto_note_after_message()` |
+| `context_builder.py` | 模块化上下文组装（6模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
+| `notebook_manager.py` | 笔记/关注/任务 + 自动记笔记（日记已并入自传体） | `add_note()`, `auto_note_after_message()`, `get_pending_tasks_summary()` |
 | `skills_loader.py` | Agent Skills 加载 + 质量双门控 | `load_all()`, `match()` |
 | `marker_parser.py` | 5种标记流式解析 + SSML接口 | `MarkerParser.feed()`, `flush()` |
 | `tool_registry.py` | 装饰器注册 + autodiscover + OpenAI tools 格式 | `register_tool()`, `autodiscover()`, `to_openai_tools()` |
@@ -235,7 +235,7 @@ AttentionScheduler 任务提醒流程：
 | `tools/search_memory.py` | 记忆检索（MemoryManager） | `search_memory()` |
 | `tools/query_weather.py` | 天气查询（和风天气 + 搜索fallback） | `query_weather()` |
 | `tools/search_web.py` | 网络搜索（智谱 Web Search API） | `search_web()` |
-| `nudge_engine.py` | 自主问候 + 注意力调度（AttentionScheduler） | `TokenBucket.consume()`, `MissingValueCalculator.compute()`, `GreetingGenerator.generate()`, `AutonomyConfig` |
+| `nudge_engine.py` | 自主问候 + 注意力调度（AttentionScheduler）| `TokenBucket.consume()`, `NudgeEngine.tick()`, `NudgeEngine.poke()`, `GreetingGenerator.generate()`, `AutonomyConfig` |
 | `gateway.py` | 通道生命周期管理 | `register()`, `start()`, `stop()` |
 | `security.py` | 白名单 + 紧急熔断 + 频率限制 | `filter(event)`, `emergency_stop()` |
 | `http_channel.py` | FastAPI 应用, ~26个端点 + SSE | `/api/chat`, `/api/emotion`, `/api/notebook/*` 等 |

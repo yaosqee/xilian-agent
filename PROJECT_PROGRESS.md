@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-18 18:30 CST
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期 → 工具系统重构完成（LLM function calling 驱动）
+> 📅 最后更新：2026-05-19 14:00 CST
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（自主问候全面修复 + NotebookTaskModule + 日记合并）
 
 ---
 
@@ -255,17 +255,22 @@
 | 十一 | 对话历史持久化与分页加载 | 游标分页API(GET /api/conversation/history)+启动恢复20轮到AgentContext+前端LoadMoreButton(毛玻璃居中按钮+spin动画)+chatStore分页状态(historyCursor/hasMore/loadedRounds最多40轮)+滚动位置保持 |
 | 十二 | 用户记忆系统：印象文档 + 破冰 | user_portrait表+PortraitManager定期重写(每日5:00)+PortraitModule(优先级3,版本号门控,完整文档注入)+破冰主动问候(consume_icebreaker_greeting+_tick_icebreaker+强制编码)+冷启动兜底(阈值4轮)+前端PortraitPanel(星形图标,空状态轮询,刷新按钮)+GET /api/user/portrait |
 | 十三 | 工具系统全面重构 | LLM function calling 驱动工具选择（替代关键词匹配），ToolExecutor（校验→权限→频率→确认→审计），ResultWrapper（规则模板+LLM双轨），autodiscover 自动注册，DeepSeek thinking mode reasoning_content 回传修复。4 工具：search_memory（记忆检索）/ query_weather（和风天气+搜索fallback）/ search_web（智谱Web Search）/ coding_delegate（EXECUTE，需用户确认）。工具→记忆/印象联动（trigger_memory/trigger_portrait_update）。确认回路（_pending_confirmation）。finish_reason 截断检测 + max_tokens 1500。 |
-| — | Git commits: 6237a81, ... | — |
+| 十四 | 自主问候全面修复（4断点） | 断点1 前端从未轮询→MainLayout 30s轮询+ChatView GreetingBanner。断点2 DB空→四级回退链(_get_hours_since_last)+poke()。断点3 阈值6.0→3.0+深夜time_mod 0.2→0.6。断点4 启动无检查→main.py启动时立即tick。GREETING_SYSTEM_PROMPT重写(+time_of_day/portrait_context/多样性规则)。http_channel用户消息时调用nudge.poke()。nudge_engine 31/31测试通过。 |
+| 十五 | 日记合并 + 会话重置 + 任务上下文注入 | Notebook日记并入Autobiography自传体(移除notebook_manager日记代码+API,自传体时间→23:00)。reset_session async+清除DB conversation_logs+前端确认对话框。NotebookTaskModule(context_builder priority=8)注入当前待办列表。Notebook日记tab改用autobiography API。任务完成按钮+确认提示。 |
+| — | Git commits: 6237a81, ... f661aef | — |
 
 ## 下一步
 
-工具系统已交付（LLM function calling 驱动 4 工具 + 确认回路 + 记忆/印象联动）。
 和风天气 API Key 需在控制台激活（当前使用 Zhipu 搜索 fallback，功能正常）。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
 ---
 
 ## 最近决策
+
+- **2026-05-19**：自主问候全面修复（4 断点全部解决）。断点1 前端从未轮询 → MainLayout 30s 轮询 + ChatView GreetingBanner 问候横幅（毛玻璃渐变卡片 + 关闭按钮）。断点2 DB 清空后 _get_hours_since_last 返回 0 → 四级回退链（conversation_logs → episodic_memories → emotion_snapshots → notebook_entries → _fallback_timestamp）+ poke() 更新 fallback 时间戳。断点3 阈值 6.0 需 ~14h 静默 → 默认 3.0（6-7h） + 深夜 time_mod 0.2→0.6。断点4 启动无检查 → main.py 启动时立即 tick 一次。GREETING_SYSTEM_PROMPT 重写（新增 time_of_day + portrait_context + 多样性规则）。nudge_engine 31/31 测试通过。
+
+- **2026-05-19**：日记系统合并 + 会话重置修复 + 任务上下文注入。Notebook 日记并入 Autobiography 自传体（移除 notebook_manager 日记相关代码 + API 端点，自传体时间调整为 23:00）。reset_session 改为 async + 清除 DB conversation_logs + 前端 SettingsPanel 确认对话框。新增 NotebookTaskModule（context_builder priority=8）注入当前待办列表，防止旧对话中已完成承诺被 LLM 误认为仍有效。前端 NotebookPanel 任务完成按钮增加确认提示。日记 tab 数据源改为 autobiography API。
 
 - **2026-05-18（晚间）**：笔记本第二轮优化。前端笔记/任务卡片增加 × 删除按钮（window.confirm 确认），auto_note 相似笔记合并而非新建（_find_similar + touch_note），AttentionScheduler NOTIFY 断头路修复（桥接到 NudgeEngine._pending_greeting），auto_note Flash max_tokens 80→150 修复 TASK 截断丢失，_parse_task_time 全面重写支持中文时间表达（今晚/明晚/下午 + 中文数字）。
 

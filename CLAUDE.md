@@ -24,13 +24,15 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点
 - `packages/shared/database.py` — SQLite 11 表 CRUD + 游标分页查询
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器
-- `packages/agent/nudge_engine.py` — 自主生命节律引擎
+- `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值 + TokenBucket + GreetingBanner）
+- `packages/agent/context_builder.py` — 模块化上下文注入（6模块，含 NotebookTaskModule）
+- `packages/agent/notebook_manager.py` — 笔记本管理器（笔记/关注/任务，日记已并入自传体）
 
 ## 技术约定
 
 - Python 3.12+ async/await，uv 包管理
 - DeepSeek V4-Pro + V4-Flash 纯云端路由（ModelRouter）
-- SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖
+- SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
 - loguru 结构化日志：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`
 - 测试：pytest + pytest-asyncio，asyncio_mode = "strict"
