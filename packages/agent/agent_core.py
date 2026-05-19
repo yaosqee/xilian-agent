@@ -37,6 +37,7 @@ from .context_builder import (
     EmotionModule,
     MemoryModule,
     NotebookModule,
+    NotebookTaskModule,
     PortraitModule,
     AffectionModule,
 )
@@ -119,7 +120,7 @@ class AgentCore:
         self.memory_manager: MemoryManager | None = None
 
         # 阶段 7a: 模块化上下文构建器（v3.1: XML→自然语言）
-        # 4 个模块，按优先级：datetime(1) < emotion(4) < memory(5) < notebook(6)
+        # 模块按优先级注册：datetime(1) < portrait(3) < emotion(4) < memory(5) < notebook(6) < affection(7) < tasks(8)
         self._context_builder = ContextBuilder(total_budget=800)
         self._context_builder.register(DatetimeModule())
         self._context_builder.register(PortraitModule(self.context))
@@ -127,6 +128,7 @@ class AgentCore:
         self._context_builder.register(MemoryModule(self.context))
         self._context_builder.register(NotebookModule())  # 7b 通过 set_notebook() 注入
         self._context_builder.register(AffectionModule())  # 好感度关系感知
+        self._context_builder.register(NotebookTaskModule())  # 待办任务注入
 
         # 阶段 7b: 笔记本管理器占位（子阶段 7b 注入）
         self.notebook_manager: NotebookManager | None = None
@@ -179,10 +181,13 @@ class AgentCore:
                 _db=self._db,
                 _router=self.router,
             )
-        # 注入 NotebookManager 到 ContextBuilder 的 NotebookModule
+        # 注入 NotebookManager 到 ContextBuilder 的 NotebookModule / NotebookTaskModule
         nb_module = self._context_builder.get_module("notebook")
         if nb_module:
             nb_module.set_notebook(self.notebook_manager)
+        task_module = self._context_builder.get_module("notebook_tasks")
+        if task_module:
+            task_module.set_notebook(self.notebook_manager)
 
         # 阶段 8+: 初始化用户印象管理器 + 加载当前印象
         if not self.portrait_manager:
@@ -1001,13 +1006,17 @@ class AgentCore:
 
         return "嗯…（轻轻翻开一页书）人家刚才走神了一下呢。伙伴再说一遍好吗？"
 
-    def reset_session(self) -> None:
-        """重置会话（取消 pending 分析 + 清空历史 + 上下文）"""
+    async def reset_session(self) -> None:
+        """重置会话（取消 pending 分析 + 清空历史 + 上下文 + 清 DB 日志）"""
         if self._pending_analysis and not self._pending_analysis.done():
             self._pending_analysis.cancel()
             self._pending_analysis = None
         self.context.clear()
-        logger.info("agent.session_reset")
+        try:
+            deleted = await self._db.clear_conversation_logs()
+            logger.info("agent.session_reset", db_rows_cleared=deleted)
+        except Exception as e:
+            logger.warning("agent.session_reset_db_failed", error=str(e))
 
     # ============================================================
     # 阶段 2: 情感分析管道

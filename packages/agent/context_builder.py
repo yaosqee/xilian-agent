@@ -331,6 +331,39 @@ class AffectionModule(ContextModule):
             )
 
 
+class NotebookTaskModule(ContextModule):
+    """
+    待办任务注入 — 让昔涟知道当前笔记本里真实的待办列表。
+    防止旧对话中已完成的承诺在上下文中被误认为仍然有效。
+    """
+
+    def __init__(self):
+        super().__init__(name="notebook_tasks", priority=8, max_tokens=100)
+        self._notebook = None
+
+    def set_notebook(self, nb):
+        self._notebook = nb
+
+    def render(self) -> str:
+        return ""
+
+    async def render_async(self) -> str:
+        if not self._notebook:
+            return ""
+        try:
+            lines = await self._notebook.get_pending_tasks_summary()
+            if not lines:
+                return ""
+            tasks_text = "\n".join(lines[:4])
+            return (
+                "（昔涟翻开笔记本的待办页——\n"
+                f"{tasks_text}\n"
+                "以上就是此刻真实的待办。旧对话中的提醒如已不在列表中，说明已完成或取消，不必再提。）"
+            )
+        except Exception:
+            return ""
+
+
 # ═══════════════════════════════════════════════════════════
 # ContextBuilder 协调器
 # ═══════════════════════════════════════════════════════════
@@ -376,8 +409,8 @@ class ContextBuilder:
             if not module.enabled:
                 continue
 
-            # NotebookModule 需要异步渲染
-            if module.name == "notebook":
+            # NotebookModule / NotebookTaskModule 需要异步渲染
+            if module.name in ("notebook", "notebook_tasks"):
                 text, used = await module.render_with_budget_async(remaining)
             else:
                 text, used = module.render_with_budget(remaining)

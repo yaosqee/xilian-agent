@@ -29,10 +29,15 @@ export const SettingsPanel: React.FC = () => {
   }, [status]);
 
   const handleReset = async () => {
+    if (!window.confirm(
+      '确定要重置当前会话吗？\n\n' +
+      '这将清空所有对话记录，开始一段全新的对话。\n' +
+      '昔涟对你的印象、记忆、笔记和好感度不会丢失。'
+    )) return;
     try {
       await resetSession();
       clearMessages();
-      alert('会话已重置');
+      alert('会话已重置 —— 所有对话记录已清空，开始新对话吧 ♪');
     } catch {
       alert('重置失败，请稍后再试');
     }

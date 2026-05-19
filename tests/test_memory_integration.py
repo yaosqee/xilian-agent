@@ -102,7 +102,7 @@ async def test_reset_session(agent):
     agent.context.add_message("user", "test")
     agent.context.emotion_snapshot = {"test": True}
     agent.context.memory_retrieval = [{"test": True}]
-    agent.reset_session()
+    await agent.reset_session()
     assert len(agent.context.history) == 0
     assert agent.context.emotion_snapshot is None
     assert agent.context.memory_retrieval is None

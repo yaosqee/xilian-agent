@@ -440,6 +440,17 @@ class DatabaseManager:
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
 
+    async def clear_conversation_logs(self, user_id: str = "hezi") -> int:
+        """清空对话日志（重置会话时调用）"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "DELETE FROM conversation_logs WHERE user_id = ?",
+            (user_id,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount
+
     async def get_emotion_history(self, limit: int = 50) -> list[dict]:
         """查询有情绪标注的记录（用于情绪趋势）"""
         if not self._conn:

@@ -101,6 +101,10 @@ class HTTPChannel(Channel):
             if self._handler is None:
                 return {"error": "agent not ready"}
 
+            # 更新自主问候回退时间戳
+            if self._nudge_engine:
+                self._nudge_engine.poke()
+
             reply = await self._handler(filtered)
             return {"reply": reply}
 
@@ -127,6 +131,10 @@ class HTTPChannel(Channel):
 
             if self._handler is None:
                 return {"error": "agent not ready"}
+
+            # 更新自主问候回退时间戳
+            if self._nudge_engine:
+                self._nudge_engine.poke()
 
             async def sse_generator():
                 try:
@@ -409,7 +417,7 @@ class HTTPChannel(Channel):
             """重置当前会话"""
             if self._agent is None:
                 return {"error": "agent not available"}
-            self._agent.reset_session()
+            await self._agent.reset_session()
             logger.info("api.session_reset")
             return {"status": "ok", "message": "会话已重置"}
 

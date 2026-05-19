@@ -89,7 +89,7 @@ class TestAutonomyConfig:
     def test_default_values(self):
         cfg = AutonomyConfig()
         assert cfg.greeting_enabled is True
-        assert cfg.greeting_threshold == 6.0
+        assert cfg.greeting_threshold == 3.0
         assert cfg.do_not_disturb is False
 
     def test_from_dict(self):

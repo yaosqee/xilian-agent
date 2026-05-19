@@ -119,6 +119,22 @@ class NotebookManager:
         """获取待办任务。"""
         return await self._db.get_pending_tasks(limit=limit)
 
+    async def get_pending_tasks_summary(self) -> list[str]:
+        """获取待办任务摘要（供 NotebookTaskModule 注入上下文）。"""
+        tasks = await self._db.get_pending_tasks(limit=5)
+        if not tasks:
+            return []
+        lines = []
+        for t in tasks:
+            title = t.get("title", "")[:30]
+            due = t.get("due_at", 0)
+            if due and due > 0:
+                ds = datetime.fromtimestamp(due).strftime("%H:%M")
+                lines.append(f"⏰ {title} @ {ds}")
+            else:
+                lines.append(f"· {title}")
+        return lines
+
     async def complete_task(self, task_id: int) -> None:
         """标记任务完成。"""
         await self._db.complete_task(task_id)

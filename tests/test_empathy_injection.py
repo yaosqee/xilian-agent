@@ -88,16 +88,18 @@ class TestInjectEmpathy:
 class TestResetSession:
     """测试 reset_session() 清理情感状态"""
 
-    def test_reset_clears_snapshot(self, agent):
+    @pytest.mark.asyncio
+    async def test_reset_clears_snapshot(self, agent):
         agent.context.emotion_snapshot = {
             "primary_emotion": "喜悦",
             "need": "分享",
         }
-        agent.reset_session()
+        await agent.reset_session()
         assert agent.context.emotion_snapshot is None
 
-    def test_reset_clears_pending_task(self, agent):
-        agent.reset_session()
+    @pytest.mark.asyncio
+    async def test_reset_clears_pending_task(self, agent):
+        await agent.reset_session()
         assert agent._pending_analysis is None
 
 

@@ -71,6 +71,7 @@ export const NotebookPanel: React.FC = () => {
   };
 
   const markComplete = async (id: number) => {
+    if (!window.confirm('确定要标记为完成吗？\n完成后任务将从列表中移除，昔涟不会再提醒。')) return;
     try {
       await fetch(`${BASE}/notebook/tasks/${id}/complete`, { method: 'POST' });
       fetchTasks();

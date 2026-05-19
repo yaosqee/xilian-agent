@@ -66,10 +66,10 @@ class TestRealPersonality:
     """需要云端模型的对话测试"""
 
     @pytest.fixture(autouse=True)
-    def setup(self):
+    async def setup(self):
         self.agent = AgentCore()
         yield
-        self.agent.reset_session()
+        await self.agent.reset_session()
 
     async def _chat(self, msg: str) -> str:
         event = InternalEvent(
@@ -254,10 +254,11 @@ class TestHeuristicPersonality:
         assert "孤独" in result
         assert "陪伴" in result
 
-    def test_reset_clears_emotion_state(self):
+    @pytest.mark.asyncio
+    async def test_reset_clears_emotion_state(self):
         """reset_session 清除情感快照"""
         from packages.agent import AgentCore
         ag = AgentCore()
         ag.context.emotion_snapshot = {"primary_emotion": "喜悦"}
-        ag.reset_session()
+        await ag.reset_session()
         assert ag.context.emotion_snapshot is None

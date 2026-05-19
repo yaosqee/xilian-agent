@@ -1,10 +1,11 @@
 /* FILE: src/components/layout/MainLayout.tsx */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './Sidebar';
 import { ChatView } from '../chat/ChatView';
 import { SlidePanel } from '../panels/SlidePanel';
 import { BackgroundLayer } from './BackgroundLayer';
 import { fetchBackground } from '../../services/api';
+import { useAutonomyStore } from '../../stores/autonomyStore';
 
 const Atmosphere: React.FC = () => (
   <div className="atmosphere" aria-hidden="true">
@@ -16,6 +17,8 @@ const Atmosphere: React.FC = () => (
 
 export const MainLayout: React.FC = () => {
   const [bgUrl, setBgUrl] = useState<string | null>(null);
+  const checkGreeting = useAutonomyStore((s) => s.checkGreeting);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetchBackground()
@@ -30,8 +33,19 @@ export const MainLayout: React.FC = () => {
       if (url) setBgUrl(url);
     };
     window.addEventListener('background-changed', handler);
-    return () => window.removeEventListener('background-changed', handler);
-  }, []);
+
+    // 每 30 秒轮询一次自主问候
+    intervalRef.current = setInterval(() => {
+      checkGreeting();
+    }, 30000);
+    // 启动时立即检查一次
+    checkGreeting();
+
+    return () => {
+      window.removeEventListener('background-changed', handler);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [checkGreeting]);
 
   return (
     <div

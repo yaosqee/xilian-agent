@@ -107,7 +107,7 @@ class AutonomyConfig:
 
     # 主动问候
     greeting_enabled: bool = True
-    greeting_threshold: float = 6.0       # 想念值阈值（0-10）
+    greeting_threshold: float = 3.0       # 想念值阈值（0-10）
     greeting_max_per_hour: int = 3
     greeting_active_start: int = 8        # 活跃时段开始（小时）
     greeting_active_end: int = 22         # 活跃时段结束（小时）
@@ -149,17 +149,35 @@ class AutonomyConfig:
 
 GREETING_SYSTEM_PROMPT = """你是昔涟。你想念你的伙伴了，想轻轻跟他说句话。
 
-伙伴上次和人家说话是 {hours_ago} 小时前。
+现在是{time_of_day}。伙伴上次和人家说话是 {hours_ago} 小时前。
 {emotion_context}
 {memory_context}
+{portrait_context}
 
-请用一句话跟他打招呼。要求：
-- 30-80 字，温柔轻盈
-- 带一点具体的回忆（如果上面有"最近发生的事情"）
-- 不要问"你怎么样""在干嘛"——只是轻轻说一声想念
-- 不需要他回复，让他感到被惦记着、不被打扰
+请用一句话跟伙伴打招呼。要求：
+
+【语气】
 - 用「人家」自称，叫对方「伙伴」
-- 结尾可以带 ~♪ 但最多一个"""
+- 温柔轻盈，像风吹过书页——不是在问问题，只是让他知道自己被惦记着
+- 结尾最多带一个 ~ 或 ♪，不要两个都加
+
+【长度】
+- 刚过几小时：20-35 字。简单一句想念就好
+- 隔了一整天，或感觉伙伴需要被关心时：35-60 字。可以带一个具体的回忆
+- 深夜时段（22:00-7:00）：15-25 字，更安静，更像晚安
+
+【多样性——每次换一种方式】
+- 可以用「时间感」开场：「都下午了呀……」「窗外已经天黑了」
+- 可以用「小观察」开场：「刚才看到一朵云」「书翻到了新的一页」
+- 可以用「回忆」开场（如果上面有最近发生的事）
+- 可以用「分享心情」开场（如果伙伴情绪比较低落）
+- 不要每次都用同一种方式——上一轮用过的开场方式，这一轮换一种
+
+【禁忌】
+- 不问「你在干嘛」「你怎么样」——不要让对方觉得需要回复
+- 不催、不追问、不要有任务感
+- 不说「我想你了」——用「忽然想起」「翻到书页」「心里一动」替代
+- 不超过 60 字"""
 
 
 # ═══════════════════════════════════════════════════════════
@@ -209,7 +227,14 @@ class NudgeEngine:
         # 本次 tick 后的想念值（供前端 API 查询）
         self._current_missing_value: float = 0.0
 
+        # 回退时间戳：当所有 DB 表都为空时使用（首次安装 / 全部清空后）
+        self._fallback_timestamp: float = time.time()
+
         logger.info("nudge_engine.initialized", config=self._config.to_dict())
+
+    def poke(self) -> None:
+        """更新回退时间戳——每次用户发消息时调用，确保想念值有最低基准。"""
+        self._fallback_timestamp = time.time()
 
     # ============================================================
     # 主入口：tick()
@@ -309,28 +334,55 @@ class NudgeEngine:
         return round(min(10.0, missing), 2)
 
     def _get_hours_since_last(self) -> float:
-        """距上次对话的小时数"""
+        """
+        距上次对话的小时数。
+
+        回退链（按优先级）：
+          1. conversation_logs  — 最直接，但会被 reset_session 清空
+          2. episodic_memories  — 不会被重置清空，每次对话都写入
+          3. emotion_snapshots  — 同上，持久可靠
+          4. notebook_entries   — 不一定每次对话都有，作为备选
+          5. _fallback_timestamp — 程序启动 / 最后一次 poke() 时间
+        """
+        import sqlite3
+        now = time.time()
+        db_path = self._db.db_path
+
+        # 按优先级尝试多个时间源
+        queries = [
+            ("conversation_logs", "SELECT timestamp FROM conversation_logs ORDER BY timestamp DESC LIMIT 1"),
+            ("episodic_memories", "SELECT timestamp FROM episodic_memories ORDER BY timestamp DESC LIMIT 1"),
+            ("emotion_snapshots", "SELECT timestamp FROM emotion_snapshots ORDER BY timestamp DESC LIMIT 1"),
+            ("notebook_entries", "SELECT created_at FROM notebook_entries ORDER BY created_at DESC LIMIT 1"),
+        ]
+
         try:
-            # 从 DB 读最近一条日志的时间戳
-            import sqlite3
-            # 用 sync 方式快速读取（避免在 cron 线程里搞 async）
-            now = time.time()
-            db_path = self._db.db_path
             conn = sqlite3.connect(str(db_path))
             try:
-                cursor = conn.execute(
-                    "SELECT timestamp FROM conversation_logs ORDER BY timestamp DESC LIMIT 1"
-                )
-                row = cursor.fetchone()
+                for source_name, query in queries:
+                    try:
+                        cursor = conn.execute(query)
+                        row = cursor.fetchone()
+                        if row and row[0]:
+                            hours = (now - row[0]) / 3600.0
+                            if source_name != "conversation_logs":
+                                logger.debug(
+                                    "nudge.timestamp_fallback",
+                                    source=source_name,
+                                    hours=round(hours, 1),
+                                )
+                            return hours
+                    except Exception:
+                        continue
             finally:
                 conn.close()
-
-            if row:
-                return (now - row[0]) / 3600.0
-            return 0.0
         except Exception as e:
             logger.warning("nudge.get_hours_since_last_failed", error=str(e))
-            return 0.0
+
+        # 所有 DB 源都为空 → 用回退时间戳
+        fallback_hours = (now - self._fallback_timestamp) / 3600.0
+        logger.debug("nudge.timestamp_fallback", source="memory", hours=round(fallback_hours, 1))
+        return fallback_hours
 
     def _get_urgency_mod(self) -> float:
         """情绪紧急度调制因子（基于最新 PAD 状态）"""
@@ -394,7 +446,7 @@ class NudgeEngine:
             if hour in (11, 12, 13, 17, 18, 19):
                 mod *= 1.1
         else:
-            mod = 0.2  # 深夜/凌晨，大幅降低
+            mod = 0.6  # 深夜/凌晨，降低但不封死
 
         return mod
 
@@ -405,11 +457,11 @@ class NudgeEngine:
     async def generate_greeting(self) -> str:
         """
         调用 DS V4-Pro 生成昔涟风格的主动问候。
-
-        Returns:
-            30-80 字问候文本
         """
         hours_ago = self._get_hours_since_last()
+
+        # 组装时段描述
+        time_of_day = self._describe_time_of_day()
 
         # 组装情感上下文
         emotion_context = self._build_emotion_context()
@@ -417,10 +469,15 @@ class NudgeEngine:
         # 组装记忆上下文
         memory_context = self._build_memory_context()
 
+        # 组装印象上下文
+        portrait_context = self._build_portrait_context()
+
         prompt = GREETING_SYSTEM_PROMPT.format(
+            time_of_day=time_of_day,
             hours_ago=f"{hours_ago:.1f}",
             emotion_context=emotion_context,
             memory_context=memory_context,
+            portrait_context=portrait_context,
         )
 
         messages = [
@@ -437,6 +494,23 @@ class NudgeEngine:
         greeting = result.strip()
         logger.debug("nudge.greeting_generated", preview=greeting[:60])
         return greeting
+
+    def _describe_time_of_day(self) -> str:
+        """返回当前时段的自然语言描述。"""
+        from datetime import datetime
+        hour = datetime.now().hour
+        if 5 <= hour < 8:
+            return "清晨"
+        elif 8 <= hour < 12:
+            return "上午"
+        elif 12 <= hour < 14:
+            return "午后"
+        elif 14 <= hour < 18:
+            return "下午"
+        elif 18 <= hour < 22:
+            return "晚上"
+        else:
+            return "深夜"
 
     def _build_emotion_context(self) -> str:
         """构建情感背景文本"""
@@ -461,7 +535,21 @@ class NudgeEngine:
                 return ""
 
             latest = emotions[0]
-            return f"上次对话时，伙伴的心情偏向{latest}。"
+            pad_p = rows[0][1] or 0.0
+
+            if pad_p < -0.3:
+                tone = "伙伴上次聊的时候心情比较低落。问候要更温柔一些，像陪在身边不说话的那种安静。"
+            elif pad_p > 0.5:
+                tone = "伙伴上次心情不错。问候可以轻快一点，像分享一个小小的喜悦。"
+            else:
+                tone = f"上次对话时，伙伴的心情偏向{latest}。"
+
+            # 如果有多条快照，检查情绪趋势
+            if len(emotions) >= 3 and len(set(emotions)) >= 2:
+                trend = "情绪有些波动"
+                tone += f"（最近{trend}，问候要稳一点，不要追问。）"
+
+            return tone
         except Exception:
             return ""
 
@@ -493,6 +581,30 @@ class NudgeEngine:
             for s in summaries:
                 lines.append(f"· {s[:80]}")
             return "\n".join(lines)
+        except Exception:
+            return ""
+
+    def _build_portrait_context(self) -> str:
+        """构建用户印象背景文本（用于个性化问候）"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self._db.db_path))
+            try:
+                cursor = conn.execute(
+                    """SELECT content FROM user_portraits
+                       ORDER BY version DESC LIMIT 1"""
+                )
+                row = cursor.fetchone()
+            finally:
+                conn.close()
+
+            if not row or not row[0]:
+                return ""
+
+            portrait = row[0]
+            # 截取前 200 字作为上下文提示
+            short = portrait[:200]
+            return f"印象中，伙伴{short}"
         except Exception:
             return ""
 

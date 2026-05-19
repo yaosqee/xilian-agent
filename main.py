@@ -141,6 +141,20 @@ async def main():
             except Exception as e:
                 logger.error("nudge.tick_error", error=str(e))
 
+    # 启动时立即检查一次（不等 15 分钟）
+    try:
+        startup_decision = await nudge.tick()
+        if startup_decision.action == "greet":
+            logger.info(
+                "nudge.startup_greeting",
+                missing=round(nudge._current_missing_value, 2),
+                preview=startup_decision.greeting[:60] if startup_decision.greeting else "",
+            )
+        else:
+            logger.info("nudge.startup_silent", reason=startup_decision.reason)
+    except Exception as e:
+        logger.error("nudge.startup_tick_error", error=str(e))
+
     async def token_refill_loop():
         """每 20 分钟补充令牌"""
         while True:
