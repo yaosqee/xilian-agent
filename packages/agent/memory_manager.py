@@ -169,6 +169,12 @@ class MemoryManager:
         # Step 3: 云端嵌入
         vector = await self._embed_text(summary)
 
+        # Step 3.5: 去重检查 — 与最近记忆比对，高度相似则跳过
+        dup_id = await self._check_duplicate(vector)
+        if dup_id:
+            logger.info("memory.duplicate_skipped", dup_id=dup_id, preview=summary[:40])
+            return dup_id
+
         # Step 4: SQLite 写入（一个事务内完成：episodic_memories + vec）
         raw_json = json.dumps(exchanges, ensure_ascii=False)
         episodic_id = await self._db.insert_episodic_memory(
@@ -288,6 +294,36 @@ class MemoryManager:
         except Exception as e:
             logger.error("memory.embed_failed", error=str(e))
             raise
+
+    async def _check_duplicate(
+        self, embedding: list[float],
+        max_distance: float = 0.4,
+        max_age_hours: float = 24.0,
+    ) -> int | None:
+        """
+        检查新嵌入是否与最近记忆高度重复。
+
+        在最近 24 小时的用户记忆中搜索，若 L2 距离 < max_distance
+        （bge-m3 1024维，0.4 对应极高相似度），返回重复记忆的 id。
+        跳过角色记忆（session_id='character'）。
+        """
+        results = await self._vs.search(embedding, top_k=3)
+        if not results:
+            return None
+
+        now = time.time()
+        for row_id, distance in results:
+            if distance >= max_distance:
+                continue
+            mem = await self._db.get_episodic_memory(row_id)
+            if not mem:
+                continue
+            if mem.get("session_id") == "character":
+                continue
+            age_hours = (now - mem.get("timestamp", 0)) / 3600.0
+            if age_hours < max_age_hours:
+                return row_id
+        return None
 
     # ============================================================
     # 核心：记忆检索管线
