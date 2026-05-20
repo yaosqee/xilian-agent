@@ -720,27 +720,22 @@ class NudgeEngine:
         return greeting_id
 
     def get_pending_greeting(self) -> dict:
-        """获取待展示的问候（前端轮询）"""
+        """获取待展示的问候（读即消费——一次返回，立即清空，不可能重复投递）"""
+        greeting = self._pending_greeting
+        gid = self._pending_greeting_id
+        self._pending_greeting = None
+        self._pending_greeting_id = None
+        if greeting:
+            logger.debug("nudge.greeting_delivered", id=gid)
         return {
-            "has_greeting": self._pending_greeting is not None,
-            "greeting": self._pending_greeting,
-            "id": self._pending_greeting_id,
+            "has_greeting": greeting is not None,
+            "greeting": greeting,
+            "id": gid,
         }
 
     def ack_greeting(self, greeting_id: str) -> bool:
-        """
-        前端确认收到问候，清除 pending。
-
-        Returns:
-            True 如果成功确认，False 如果 ID 不匹配
-        """
-        if greeting_id == self._pending_greeting_id:
-            self._pending_greeting = None
-            self._pending_greeting_id = None
-            logger.debug("nudge.greeting_acked", id=greeting_id)
-            return True
-        logger.warning("nudge.ack_id_mismatch", expected=self._pending_greeting_id, got=greeting_id)
-        return False
+        """前端确认收到问候（保留接口兼容性，实际 get_pending_greeting 已消费）"""
+        return True
 
     # ============================================================
     # 控制接口

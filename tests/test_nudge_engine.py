@@ -224,10 +224,15 @@ class TestNudgeEngine:
         assert engine.ack_greeting(gid) is True
         assert engine.get_pending_greeting()["has_greeting"] is False
 
-    def test_ack_wrong_id(self, engine):
+    def test_get_consumes_greeting(self, engine):
+        """get_pending_greeting 读即消费——一次返回后清空，不可能重复投递"""
         engine._store_greeting("伙伴~")
-        assert engine.ack_greeting("wrong-id") is False
-        assert engine.get_pending_greeting()["has_greeting"] is True  # still pending
+        result = engine.get_pending_greeting()
+        assert result["has_greeting"] is True
+        assert result["greeting"] == "伙伴~"
+        result2 = engine.get_pending_greeting()
+        assert result2["has_greeting"] is False
+        assert result2["greeting"] is None
 
     # ── tick 行为 ──
 
