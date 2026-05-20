@@ -282,11 +282,16 @@ class NotebookModule(ContextModule):
 
             # 取最近的笔记摘要，过滤太短的
             topics = []
+            import time
+            now = time.time()
             for n in notes:
                 content = n.get("content", "")
                 if len(content) > 5:
-                    # 截取前 30 字作为话题提示
                     short = content[:30].replace("\n", " ")
+                    # 检查是否已过期
+                    due = n.get("due_date")
+                    if due and due > 0 and due < now:
+                        short = f"{short}（这件事已经过去啦）"
                     topics.append(short)
 
             if not topics:

@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS notebook_entries (
     tags        TEXT,
     importance  REAL    DEFAULT 0.5,
     is_active   INTEGER DEFAULT 1,
+    due_date    REAL,
     created_at  REAL    NOT NULL,
     session_id  TEXT    NOT NULL
 );
@@ -307,6 +308,13 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_REFLECTION_CRYSTALS)
         await self._conn.execute(_CREATE_AUTONOMY_SETTINGS)
         await self._conn.execute(_CREATE_NOTEBOOK_ENTRIES)
+        # 迁移：为已有 notebook_entries 表补加 due_date 列（幂等）
+        try:
+            await self._conn.execute(
+                "ALTER TABLE notebook_entries ADD COLUMN due_date REAL"
+            )
+        except Exception:
+            pass  # 列已存在
         await self._conn.execute(_CREATE_SCHEDULED_TASKS)
         await self._conn.execute(_CREATE_AUDIT_LOGS)
         await self._conn.execute(_CREATE_AFFECTION)
@@ -1017,6 +1025,7 @@ class DatabaseManager:
     async def insert_notebook(
         self, kind: str, content: str,
         tags: list[str] | None = None, importance: float = 0.5,
+        due_date: float | None = None,
     ) -> int:
         """插入一条笔记本条目。"""
         if not self._conn:
@@ -1024,12 +1033,12 @@ class DatabaseManager:
         tags_json = json.dumps(tags, ensure_ascii=False) if tags else None
         cursor = await self._conn.execute(
             """INSERT INTO notebook_entries
-               (kind, content, tags, importance, created_at, session_id)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (kind, content, tags_json, importance, time.time(), self._session_id),
+               (kind, content, tags, importance, due_date, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (kind, content, tags_json, importance, due_date, time.time(), self._session_id),
         )
         await self._conn.commit()
-        logger.debug("database.insert_notebook", kind=kind)
+        logger.debug("database.insert_notebook", kind=kind, due_date=due_date)
         return cursor.lastrowid
 
     async def get_notebook_notes(

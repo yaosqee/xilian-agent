@@ -88,8 +88,31 @@ class NotebookManager:
     async def add_note(
         self, content: str, tags: list[str] | None = None,
     ) -> int:
-        """手动记录一条笔记。"""
-        return await self._db.insert_notebook("note", content, tags=tags)
+        """手动记录一条笔记。自动从内容中提取时间表达式并解析为 due_date。"""
+        due_date = self._extract_due_date(content)
+        return await self._db.insert_notebook("note", content, tags=tags, due_date=due_date)
+
+    def _extract_due_date(self, content: str) -> float | None:
+        """从笔记内容中提取时间表达式，返回解析后的绝对时间戳。无时间信息返回 None。"""
+        # 匹配常见相对时间模式：下周五、明天下午、后天、这周三、月底 等
+        patterns = [
+            r"下周[一二三四五六日天]",
+            r"这周[一二三四五六日天]",
+            r"本周[一二三四五六日天]",
+            r"明天[早晚上午下午中午]?",
+            r"后天[早晚上午下午中午]?",
+            r"今天[早晚上午下午中午]?",
+            r"\d{1,2}月\d{1,2}[日号]",
+        ]
+        import re
+        for pat in patterns:
+            m = re.search(pat, content)
+            if m:
+                ts = self._parse_task_time(m.group())
+                if ts and ts > 0:
+                    return ts
+        # 没提取到具体时间 → None（兼容旧笔记）
+        return None
 
     # ═══════════════════════════════════════════════════════
     # 关注点（focus）
@@ -248,12 +271,32 @@ class NotebookManager:
         return None
 
     def _parse_task_time(self, time_str: str) -> float:
-        """解析时间字符串为 Unix 时间戳。「19:00」→ 今天 19:00，「明晚8:30」→ 明天 20:30。"""
+        """解析时间字符串为 Unix 时间戳。「19:00」→ 今天 19:00，「明晚8:30」→ 明天 20:30，「下周五」→ 下周对应日期。"""
         import datetime
         import re
         now = datetime.datetime.now()
         original = time_str.strip()
         time_str = original
+
+        # ── 「下周X」/「这周X」日期偏移 ──
+        cn_dow = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+        for cn, dow in cn_dow.items():
+            if f"下周{cn}" in original:
+                days_to_next_monday = (7 - now.weekday()) % 7
+                if days_to_next_monday == 0:
+                    days_to_next_monday = 7
+                next_monday = now + datetime.timedelta(days=days_to_next_monday)
+                target = next_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+                target = target + datetime.timedelta(days=dow)
+                return target.timestamp()
+            if f"这周{cn}" in original or f"本周{cn}" in original:
+                days_since_monday = now.weekday()
+                this_monday = now - datetime.timedelta(days=days_since_monday)
+                target = this_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+                target = target + datetime.timedelta(days=dow)
+                if target > now:
+                    return target.timestamp()
+                return 0.0  # 已过去
 
         # ── 日期偏移 ──
         if "后天" in time_str:

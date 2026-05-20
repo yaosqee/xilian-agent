@@ -52,12 +52,20 @@ class TestNoteOperations:
     @pytest.mark.asyncio
     async def test_add_note_basic(self, nb, mock_db):
         await nb.add_note("盒子说下周三有考试")
-        mock_db.insert_notebook.assert_called_once_with("note", "盒子说下周三有考试", tags=None)
+        call = mock_db.insert_notebook.call_args
+        assert call.args[0] == "note"
+        assert call.args[1] == "盒子说下周三有考试"
+        assert "下周三" in call.args[1]  # 保留原文本
+        assert call.kwargs["due_date"] is not None  # 时间解析正确触发
 
     @pytest.mark.asyncio
     async def test_add_note_with_tags(self, nb, mock_db):
         await nb.add_note("重要提醒", tags=["考试", "提醒"])
-        mock_db.insert_notebook.assert_called_once_with("note", "重要提醒", tags=["考试", "提醒"])
+        call = mock_db.insert_notebook.call_args
+        assert call.args[0] == "note"
+        assert call.args[1] == "重要提醒"
+        assert call.kwargs["tags"] == ["考试", "提醒"]
+        assert call.kwargs["due_date"] is None  # 无时间信息
 
     @pytest.mark.asyncio
     async def test_get_recent_notes(self, nb, mock_db):
@@ -161,14 +169,20 @@ class TestAutoNoteAfterMessage:
         mock_router.route.return_value = "NOTE: 盒子下周三有考试"
 
         await nb.auto_note_after_message("下周三我要考试了", "那人家帮伙伴记下来~")
-        mock_db.insert_notebook.assert_called_once_with("note", "盒子下周三有考试", tags=None)
+        call = mock_db.insert_notebook.call_args
+        assert call.args[0] == "note"
+        assert call.args[1] == "盒子下周三有考试"
+        assert call.kwargs["due_date"] is not None  # 含「下周三」→ 解析出时间戳
 
     @pytest.mark.asyncio
     async def test_task_detected(self, nb, mock_router, mock_db):
         mock_router.route.return_value = "TASK: 提醒考试 @ 下周三上午9点"
 
         await nb.auto_note_after_message("下周考试别忘了", "嗯！人家记住了 ~♪")
-        mock_db.insert_task.assert_called_once_with(title="提醒考试", priority=1, due_at=0.0)
+        call = mock_db.insert_task.call_args
+        assert call.kwargs["title"] == "提醒考试"
+        assert call.kwargs["priority"] == 1
+        assert call.kwargs["due_at"] > 0  # 新增「下周X」解析 → 真实时间戳
 
     @pytest.mark.asyncio
     async def test_pass_no_action(self, nb, mock_router, mock_db):

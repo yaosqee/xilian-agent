@@ -5,6 +5,7 @@ interface Note {
   kind: string;
   content: string;
   tags: string | null;
+  due_date: number | null;
   created_at: number;
 }
 
@@ -135,10 +136,18 @@ export const NotebookPanel: React.FC = () => {
 
       {tab === 'notes' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {notes.map((n) => (
-            <div key={n.id} style={cardStyle}>
+          {notes.map((n) => {
+            const isExpired = n.due_date && n.due_date > 0 && n.due_date * 1000 < Date.now();
+            return (
+            <div key={n.id} style={{
+              ...cardStyle,
+              ...(isExpired ? { opacity: 0.5 } : {}),
+            }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ color: 'var(--color-text)', flex: 1 }}>{n.content || '(空)'}</div>
+                <div style={{ color: isExpired ? 'var(--color-text-dim)' : 'var(--color-text)', flex: 1 }}>
+                  {n.content || '(空)'}
+                  {isExpired && <span style={{ color: 'var(--color-text-muted)', fontSize: 11, marginLeft: 6 }}>已过去</span>}
+                </div>
                 <button
                   onClick={() => deleteNote(n.id)}
                   title="删除笔记"
@@ -159,7 +168,8 @@ export const NotebookPanel: React.FC = () => {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
           {notes.length === 0 && <Empty text="暂无笔记" />}
         </div>
       )}
