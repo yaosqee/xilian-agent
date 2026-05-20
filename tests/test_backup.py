@@ -1,4 +1,6 @@
 """测试 BackupManager（2026-05-15 修订：移除 ChromaDB 备份）"""
+import sys
+sys.path.insert(0, ".")
 import os
 import json
 import pytest
@@ -11,6 +13,7 @@ from packages.shared.backup import BackupManager
 @pytest.fixture
 def tmpdirs():
     """创建临时目录结构"""
+
     with tempfile.TemporaryDirectory() as root:
         src = Path(root) / "src"
         bak = Path(root) / "backups"

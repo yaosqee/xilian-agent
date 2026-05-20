@@ -1,4 +1,7 @@
 """ContextBuilder 单元测试 — v3.1 (自然语言段落)"""
+
+import sys
+sys.path.insert(0, ".")
 import pytest
 from packages.agent.context_builder import (
     ContextBuilder, DatetimeModule, EmotionModule, MemoryModule, NotebookModule,

@@ -1,8 +1,10 @@
 """人格回归测试集 — 20 条固定用例
-
+import sys
+sys.path.insert(0, ".")
 阶段 5 新增。覆盖：日常 / 情绪 / 边界 / 角色一致性 / 工具调用。
 每次修改人格提示词后跑一遍，人工抽查。
 """
+
 import os
 import pytest
 

@@ -1,7 +1,9 @@
 """测试 MemoryManager 核心逻辑（mock 外部服务）
-
+import sys
+sys.path.insert(0, ".")
 2026-05-15 修订：适配 sqlite-vec，移除 ChromaDB/Ollama mock
 """
+
 import os
 import asyncio
 import tempfile

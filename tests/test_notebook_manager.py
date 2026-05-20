@@ -224,7 +224,11 @@ class TestAutoNoteAfterMessage:
 
         await nb.auto_note_after_message("下周考试", "要好好复习哦")
 
-        mock_db.insert_task.assert_called_once_with(title="复习数学", priority=1, due_at=0.0)
+        mock_db.insert_task.assert_called_once()
+        call_args = mock_db.insert_task.call_args
+        assert call_args.kwargs["title"] == "复习数学"
+        assert call_args.kwargs["priority"] == 1
+        assert call_args.kwargs["due_at"] > 0  # 时间解析正确工作，返回真实时间戳
 
     @pytest.mark.asyncio
     async def test_db_write_failure_does_not_raise(self, nb, mock_router, mock_db):

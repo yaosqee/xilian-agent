@@ -1,4 +1,6 @@
 """SkillsLoader + coding_delegate 单元测试 — 阶段 7d"""
+import sys
+sys.path.insert(0, ".")
 import pytest
 import os
 import tempfile
@@ -9,6 +11,7 @@ from packages.agent.tools.coding_delegate import _find_claude, _package_result, 
 
 class TestSkillsLoader:
     """SkillsLoader 加载与校验"""
+
 
     def test_load_valid_skill(self):
         loader = SkillsLoader()

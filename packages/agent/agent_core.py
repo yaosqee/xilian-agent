@@ -1056,6 +1056,11 @@ class AgentCore:
         from pathlib import Path
         import json
 
+        # 防御：mock DB / 未完全初始化的 DB 不执行
+        if self._db._conn is None:
+            logger.debug("character_memories.skip", reason="db_not_initialized")
+            return 0
+
         # 检查已有角色记忆数
         cursor = await self._db._conn.execute(
             "SELECT COUNT(*) FROM episodic_memories WHERE session_id = 'character'"

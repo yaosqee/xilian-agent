@@ -1,7 +1,9 @@
 """测试艾宾浩斯遗忘衰减集成
-
+import sys
+sys.path.insert(0, ".")
 2026-05-15：阶段 5 第二周——验证记忆检索中的遗忘权重
 """
+
 import math
 import time
 import asyncio

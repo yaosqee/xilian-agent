@@ -1,4 +1,7 @@
 """Notebook + Audit + Forget 集成测试 — 阶段 7b+8"""
+
+import sys
+sys.path.insert(0, ".")
 import pytest
 import asyncio
 import os

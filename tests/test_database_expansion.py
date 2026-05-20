@@ -1,4 +1,6 @@
 """测试 episodic_memories + message_queue 表 CRUD"""
+import sys
+sys.path.insert(0, ".")
 import pytest
 
 from packages.shared.database import DatabaseManager
@@ -7,6 +9,7 @@ from packages.shared.database import DatabaseManager
 @pytest.fixture
 def db():
     """同步 fixture — 在当前事件循环中初始化"""
+
     import asyncio
     db = DatabaseManager(":memory:")
     try:

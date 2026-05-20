@@ -1,4 +1,7 @@
 """测试 AgentCore 记忆管道集成（mock 外部服务）"""
+import sys
+sys.path.insert(0, ".")
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,6 +29,7 @@ def agent():
         agent.router = mock_router
         agent.memory_manager = mock_mm
         agent._db.init = AsyncMock()
+        agent._db._conn = None  # mock DB 未初始化状态
         agent._db.insert_log = AsyncMock()
         agent._db.close = AsyncMock()
         yield agent
@@ -118,9 +122,7 @@ async def test_build_messages_with_memory(agent):
     - empathy_text / memory_text 参数保留但不再手动拼接
     """
     agent._personality = "你是昔涟。"
-    memory_text = "[当前记忆]\n· 书页翻到一段回忆：昨天..."
-    empathy_text = "[共情感知]\n伙伴似乎有些疲惫"
-    msgs = await agent._build_messages("今天好累", empathy_text, memory_text)
+    msgs = await agent._build_messages("今天好累")
 
     # system prompt 仅含纯人格
     assert msgs[0]["content"] == "你是昔涟。"
@@ -131,20 +133,17 @@ async def test_build_messages_with_memory(agent):
     last_content = last_msg["content"]
     assert "今天好累" in last_content
 
-    # v3.1: 上下文为自然语言段落（不再使用 XML）
-    # datetime module 总是输出，检查是否包含自然语言格式
+    # ContextBuilder 自然语言上下文（datetime module 总是输出）
     if "---" in last_content:
-        # 有上下文注入时检查格式
-        assert "星期" in last_content  # datetime module
+        assert "星期" in last_content
 
 
 @pytest.mark.asyncio
 async def test_build_messages_no_injections(agent):
     """v3.1: 无数据时 datetime 模块仍有输出（星期信息）"""
     agent._personality = "你是昔涟。"
-    msgs = await agent._build_messages("hello", "", "")
+    msgs = await agent._build_messages("hello")
     assert msgs[0]["content"] == "你是昔涟。"
-    # 用户消息包含原始内容，可能还有日期信息
     last = msgs[-1]["content"]
     assert "hello" in last
 

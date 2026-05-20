@@ -1,4 +1,6 @@
 """安全 + 工具权限 单元测试 — 阶段 8"""
+import sys
+sys.path.insert(0, ".")
 import pytest
 from gateway.security import SecurityFilter
 from packages.agent.tool_registry import ToolRegistry, ToolPermission
@@ -6,6 +8,7 @@ from packages.agent.tool_registry import ToolRegistry, ToolPermission
 
 class TestInjectionDetection:
     """提示注入正则检测"""
+
 
     def setup_method(self):
         self.sf = SecurityFilter()
