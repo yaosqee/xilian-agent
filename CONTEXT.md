@@ -1,8 +1,33 @@
 # 昔涟 V3.3 · 代码导航
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
-> ⚠️ 不要在对话里粘贴代码，告诉 AI 文件路径让它自己 read。
-> 📅 最后更新：2026-05-19（自主问候全面修复 + NotebookTaskModule + 日记合并 + 会话重置）
+> 📅 最后更新：2026-05-20
+
+## 📚 文档导航
+
+### 系统架构（先读这些）
+| 文档 | 说明 |
+|------|------|
+| **[架构总览](docs/architecture-overview.md)** | 🔰 从这里开始 — 系统全景 + 端到端请求追踪 |
+| [记忆系统架构](docs/design/memory-system-architecture.md) | 情景记忆 / Portrait / 笔记本 / 角色记忆 / 自传体 |
+| [情感系统架构](docs/design/emotion-system-architecture.md) | PAD引擎 / EmotionModule / 好感度 |
+| [工具系统架构](docs/design/tool-system-architecture.md) | ToolExecutor / ResultWrapper / 4 工具 |
+
+### 技术参考
+| 文档 | 说明 |
+|------|------|
+| [API 参考](docs/api-reference.md) | 全部 30+ HTTP 端点 |
+| [数据库 Schema](docs/database-schema.md) | 13 张表完整结构 |
+| [提示词总览](docs/prompts-overview.md) | 14 个 Prompt 索引（温度/模型/用途） |
+
+### 运维
+| 文档 | 说明 |
+|------|------|
+| [部署指南](docs/deployment.md) | 环境搭建 / 首次启动 / 故障排查 |
+| [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md) | 项目仪表盘（进度 + 决策记录） |
+| [CLAUDE.md](CLAUDE.md) | AI 助手工作指令 |
+
+---
 
 ---
 
