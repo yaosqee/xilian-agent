@@ -18,7 +18,17 @@ xilian-v3/
 ├── README.md                        # 项目门面
 ├── .env                             # API Key（不入 git）
 ├── photo/                           # 背景图片（xilian.png默认+fengge.txt风格参考+上传存储）
-├── docs/agents/                     # Agent skills 配置（issue-tracker/triage-labels/domain）
+├── docs/
+│   ├── architecture-overview.md       # 系统全景：三大子系统协同 + 端到端请求追踪
+│   ├── api-reference.md               # 全部 HTTP API 端点参考
+│   ├── database-schema.md             # 13 张表完整 Schema
+│   ├── prompts-overview.md            # 14 个提示词索引（温度/模型/用途）
+│   ├── deployment.md                  # 部署与运维指南
+│   ├── design/
+│   │   ├── memory-system-architecture.md   # 记忆系统全景
+│   │   ├── emotion-system-architecture.md  # 情感系统全景
+│   │   └── tool-system-architecture.md     # 工具系统全景
+│   └── agents/                        # Agent skills 配置
 │
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass

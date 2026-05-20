@@ -318,3 +318,11 @@ validate → permission → rate_limit → confirm → execute → audit_log
 ---
 
 *本文档随系统演进持续更新。最后修订：2026-05-20*
+
+## 相关文档
+
+- [架构总览](../architecture-overview.md) — 三大系统如何协同
+- [记忆系统架构](memory-system-architecture.md) — 工具↔记忆联动路径
+- [情感系统架构](emotion-system-architecture.md) — 工具与 PAD 情绪的关系
+- [API 参考](../api-reference.md) — 工具相关端点
+- [数据库 Schema](../database-schema.md) — audit_logs / scheduled_tasks 表

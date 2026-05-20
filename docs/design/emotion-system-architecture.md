@@ -385,3 +385,11 @@ D = coping × 0.5              （能应对=有掌控，不能应对=失控）
 ---
 
 *本文档随系统演进持续更新。最后修订：2026-05-20*
+
+## 相关文档
+
+- [架构总览](../architecture-overview.md) — 三大系统如何协同
+- [记忆系统架构](memory-system-architecture.md) — 情景记忆 + Portrait + 笔记本
+- [工具系统架构](tool-system-architecture.md) — 工具调用管线
+- [数据库 Schema](../database-schema.md) — emotion_snapshots / affection_state 表
+- [提示词系统总览](../prompts-overview.md) — APPRAISAL / ANALYSIS prompt

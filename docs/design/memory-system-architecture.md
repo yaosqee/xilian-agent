@@ -292,3 +292,11 @@
 ---
 
 *本文档随系统演进持续更新。最后修订：2026-05-20*
+
+## 相关文档
+
+- [架构总览](../architecture-overview.md) — 三大系统如何协同
+- [情感系统架构](emotion-system-architecture.md) — PAD 引擎 + 好感度
+- [工具系统架构](tool-system-architecture.md) — 工具调用 + 记忆联动
+- [数据库 Schema](../database-schema.md) — 13 张表结构
+- [提示词系统总览](../prompts-overview.md) — 全部 prompt 索引
