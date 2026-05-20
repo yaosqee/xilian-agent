@@ -14,7 +14,19 @@
 | npm | ≥ 9 | 前端依赖 |
 | sqlite-vec | 0.1.x | 向量存储扩展 |
 
-系统要求：Linux（含 WSL2），macOS 未测试但理论上可行。
+### 操作系统
+
+| 平台 | 状态 | 说明 |
+|------|------|------|
+| **Linux**（含 WSL2） | ✅ 已验证 | 开发和运行环境 |
+| **macOS** | ⚠️ 未测试 | Python + Node 生态一致，理论上可行。sqlite-vec 提供 macOS wheel |
+| **Windows（原生）** | ❌ 不建议 | `sqlite-vec` 是 C/Rust 扩展，PyPI 仅提供 Linux/macOS wheel。Windows 需从源码编译 sqlite-vec，未测试。建议使用 WSL2 |
+
+如果必须在 Windows 上运行，推荐：
+```powershell
+# 在 WSL2 中安装 Ubuntu，然后按下方 Linux 步骤操作
+wsl --install -d Ubuntu
+```
 
 ---
 
