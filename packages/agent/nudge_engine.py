@@ -965,7 +965,7 @@ class AttentionScheduler:
                 "memory_encoding",  # Flash
                 [{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=60,
+                max_tokens=100,  # 60 太紧，NOTIFY 偶尔被截断
             )
             result = result.strip()
             if result.startswith("NOTIFY"):
