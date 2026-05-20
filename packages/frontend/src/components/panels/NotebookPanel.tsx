@@ -36,11 +36,23 @@ export const NotebookPanel: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // 切换 tab 时立即拉取
   useEffect(() => {
     setError(null);
     if (tab === 'notes') fetchNotes();
     if (tab === 'diary') fetchDiaries();
     if (tab === 'tasks') fetchTasks();
+  }, [tab]);
+
+  // 30 秒定时轮询当前 tab（组件挂载期间持续刷新）
+  useEffect(() => {
+    const fetchCurrent = () => {
+      if (tab === 'notes') fetchNotes();
+      else if (tab === 'diary') fetchDiaries();
+      else if (tab === 'tasks') fetchTasks();
+    };
+    const interval = setInterval(fetchCurrent, 30000);
+    return () => clearInterval(interval);
   }, [tab]);
 
   const safeJson = async (res: Response) => {

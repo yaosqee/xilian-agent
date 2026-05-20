@@ -430,6 +430,8 @@ class AgentCore:
                     event.payload, reply
                 )
             )
+        else:
+            logger.warning("notebook.manager_missing")
 
         # ── 8c. 阶段 8+: 冷启动印象文档 ──
         self._schedule_portrait_cold_start()

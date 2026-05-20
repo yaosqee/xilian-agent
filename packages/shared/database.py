@@ -1099,11 +1099,11 @@ class DatabaseManager:
         return cursor.rowcount
 
     async def delete_notebook_entry(self, entry_id: int) -> bool:
-        """软删除一条笔记本条目（设置 is_active=0）。"""
+        """真实删除一条笔记本条目。"""
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
         cursor = await self._conn.execute(
-            "UPDATE notebook_entries SET is_active=0 WHERE id=?",
+            "DELETE FROM notebook_entries WHERE id=?",
             (entry_id,),
         )
         await self._conn.commit()
