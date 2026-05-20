@@ -67,7 +67,7 @@ class MemoryManager:
         self._max_records = max_records
 
         # ── 编码调度状态 ──
-        self._idle_timeout: float = 30.0
+        self._idle_timeout: float = 120.0  # 最短编码间隔：快速聊天合并为一条记忆
         self._force_timeout: float = 5.0
         self._force_threshold: int = 20
         self._idle_event: asyncio.Event = asyncio.Event()
@@ -473,7 +473,7 @@ class MemoryManager:
 
         all_records = await self._db.get_all_episodic()
         now = time.time()
-        LAMBDA = 0.01
+        LAMBDA = 0.099  # ln(2)/7，与检索衰减一致
 
         scored = []
         for r in all_records:
