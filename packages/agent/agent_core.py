@@ -175,6 +175,9 @@ class AgentCore:
         )
         await self.memory_manager.startup()
 
+        # 阶段 9: 确保角色情景记忆已导入（幂等，新项目首次启动自动执行）
+        await self._ensure_character_memories()
+
         # 阶段 7b: 初始化 NotebookManager
         if not self.notebook_manager:
             self.notebook_manager = NotebookManager(
@@ -1042,6 +1045,98 @@ class AgentCore:
             logger.info("agent.session_reset", db_rows_cleared=deleted)
         except Exception as e:
             logger.warning("agent.session_reset_db_failed", error=str(e))
+
+    async def _ensure_character_memories(self) -> int:
+        """
+        确保角色情景记忆已导入数据库（幂等，项目首次启动自动执行）。
+
+        检查 episodic_memories 中 source='character' 的记录数。
+        若不足 24 条，从 data/character_memories.json 读取并向量化导入。
+        """
+        from pathlib import Path
+        import json
+
+        # 检查已有角色记忆数
+        cursor = await self._db._conn.execute(
+            "SELECT COUNT(*) FROM episodic_memories WHERE session_id = 'character'"
+        )
+        row = await cursor.fetchone()
+        existing = row[0] if row else 0
+
+        if existing >= 24:
+            logger.info("character_memories.ok", count=existing)
+            return 0
+
+        # 读取 JSON
+        json_path = Path(__file__).resolve().parent.parent.parent / "data" / "character_memories.json"
+        if not json_path.exists():
+            logger.warning("character_memories.json_missing", path=str(json_path))
+            return 0
+
+        logger.info("character_memories.seeding", existing=existing, total=24)
+        with open(json_path) as f:
+            data = json.load(f)
+
+        source = data.get("source", "character")
+        inserted = 0
+        for entry in data.get("entries", []):
+            eid = entry["id"]
+            summary = entry["content"]
+
+            try:
+                # 去重：文本匹配
+                dup = await self._db._conn.execute(
+                    "SELECT COUNT(*) FROM episodic_memories WHERE session_id = ? AND summary = ?",
+                    (source, summary),
+                )
+                if (await dup.fetchone())[0] > 0:
+                    continue
+
+                # 向量化
+                vector = await self.router.embed(summary)
+
+                # 写入 episodic_memories
+                import json as _json
+                emotion_tags = _json.dumps({
+                    "character_id": eid,
+                    "category": entry["category"],
+                    "tags": entry["tags"],
+                    "source": source,
+                }, ensure_ascii=False)
+
+                cursor = await self._db._conn.execute(
+                    """INSERT INTO episodic_memories
+                       (timestamp, summary, raw_conversation, emotion_tags, importance,
+                        embedding_model, embedding_version, embedding_status, session_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                    (
+                        __import__("time").time(),
+                        summary,
+                        summary,
+                        emotion_tags,
+                        entry["importance"],
+                        self.router._embed_model,
+                        "v1",
+                        source,
+                    ),
+                )
+                episodic_id = cursor.lastrowid
+                await self._db._conn.commit()
+
+                # 写入向量
+                await self._vector_store.insert(row_id=episodic_id, embedding=vector)
+
+                # 标记完成
+                await self._db.update_embedding_status(episodic_id, "done", eid)
+
+                inserted += 1
+                logger.debug("character_memories.seeded", id=eid, episodic_id=episodic_id)
+
+            except Exception as exc:
+                logger.error("character_memories.seed_error", id=eid, error=str(exc)[:120])
+
+        logger.info("character_memories.seeded_done", inserted=inserted, total=len(data.get("entries", [])))
+        return inserted
 
     # ============================================================
     # 阶段 2: 情感分析管道
