@@ -2,6 +2,9 @@
 
 2026-05-15：阶段 5 第一周测试——自传体写作 + 反思
 """
+import sys
+sys.path.insert(0, ".")
+
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock

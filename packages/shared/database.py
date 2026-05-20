@@ -240,6 +240,7 @@ class DatabaseManager:
         初始化数据库：Alembic 迁移优先，降级为手动建表（幂等）。
 
         阶段 7d: 首选 alembic upgrade head，失败或不可用时手动建表。
+        注意：alembic.ini 硬编码了 data/xilian.db，非默认路径时跳过 alembic。
         """
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -250,8 +251,10 @@ class DatabaseManager:
         await self._conn.execute("PRAGMA journal_mode=WAL;")
         await self._conn.execute("PRAGMA foreign_keys=ON;")
 
-        # 阶段 7d: 尝试 Alembic 迁移
-        migrated = await self._try_alembic_migrate()
+        # 阶段 7d: 尝试 Alembic 迁移（仅默认路径）
+        default_db = Path("data/xilian.db").resolve()
+        is_default = self.db_path.resolve() == default_db
+        migrated = await self._try_alembic_migrate() if is_default else False
 
         if not migrated:
             # 降级：手动建表（幂等）

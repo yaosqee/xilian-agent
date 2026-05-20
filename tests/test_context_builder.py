@@ -28,7 +28,7 @@ class TestEmotionModule:
         ctx.emotion_snapshot = {'primary_emotion': '快乐', 'primary_intensity': 0.8}
         m = EmotionModule(ctx)
         result = m.render()
-        assert '快乐' in result
+        assert '心里亮亮的' in result
 
     def test_empty_when_no_primary_emotion(self):
         ctx = AgentContext()
