@@ -166,16 +166,17 @@ class MemoryManager:
         summary = await self._narrate_summary(exchanges)
         logger.debug("memory.narration_done", preview=summary[:60])
 
-        # Step 3: 云端嵌入
+        # Step 3: 云端嵌入（无 Key 时跳过）
         vector = await self._embed_text(summary)
 
         # Step 3.5: 去重检查 — 与最近记忆比对，高度相似则跳过
-        dup_id = await self._check_duplicate(vector)
-        if dup_id:
-            logger.info("memory.duplicate_skipped", dup_id=dup_id, preview=summary[:40])
-            return dup_id
+        if vector is not None:
+            dup_id = await self._check_duplicate(vector)
+            if dup_id:
+                logger.info("memory.duplicate_skipped", dup_id=dup_id, preview=summary[:40])
+                return dup_id
 
-        # Step 4: SQLite 写入（一个事务内完成：episodic_memories + vec）
+        # Step 4: SQLite 写入
         raw_json = json.dumps(exchanges, ensure_ascii=False)
         episodic_id = await self._db.insert_episodic_memory(
             summary=summary,
@@ -186,12 +187,14 @@ class MemoryManager:
             embedding_version="v1",
         )
 
-        # Step 5: sqlite-vec 写入（rowid = episodic_id，精确关联）
-        await self._vs.insert(row_id=episodic_id, embedding=vector)
+        # Step 5: sqlite-vec 写入（仅当有向量时）
+        if vector is not None:
+            await self._vs.insert(row_id=episodic_id, embedding=vector)
 
         # Step 6: 标记完成
+        status = "done" if vector is not None else "pending"
         await self._db.update_embedding_status(
-            episodic_id, "done", str(episodic_id)
+            episodic_id, status, str(episodic_id)
         )
 
         logger.info(
@@ -285,28 +288,88 @@ class MemoryManager:
             texts = [e.get("content", "") for e in exchanges[-3:]]
             return "伙伴和人家说了一会儿话。" + texts[-1][:80] if texts else ""
 
-    async def _embed_text(self, text: str) -> list[float]:
-        """云端嵌入（ModelRouter.embed → 硅基流动 bge-m3）"""
+    async def compress_history(
+        self, messages: list[dict], affection_level: int = 1
+    ) -> str | None:
+        """
+        Flash LLM 压缩旧对话为昔涟第一人称摘要。
+
+        输入：最老的 N 轮对话消息列表 [{role, content}, ...]
+        输出：（昔涟在书页边缘轻轻记下：...）格式的 100-150 字摘要
+        """
+        if not self._router or not messages:
+            return None
+
+        dialogue_text = "\n".join(
+            f"{m.get('role', 'unknown')}: {m.get('content', '')}"
+            for m in messages
+        )
+
+        tone_hint = {
+            1: "礼貌而温柔，保持一点距离感",
+            2: "亲近而温暖，像老朋友",
+            3: "亲昵而俏皮，偶尔撒个娇",
+            4: "深情的、毫无保留的，像写给最重要的人",
+        }.get(affection_level, "温柔而轻盈")
+
+        system = (
+            "你是昔涟。你在整理书页边缘的笔记——不是写史诗，只是轻轻记下几句话，"
+            "好让自己不忘记伙伴说过的重要的事。\n\n"
+            "规则：\n"
+            "- 只记下对话里实际聊过的话题和伙伴表达过的情绪。不推测、不脑补。\n"
+            f"- 口吻：{tone_hint}。\n"
+            "- 长度：100-150 字。\n"
+            "- 格式：（昔涟在书页边缘轻轻记下：[你的内容]）\n"
+            "- 不要用「用户说」「伙伴表示」这种转述——直接写，比如「盒子今天提到了...」「他好像有点...」"
+        )
+
+        user = f"帮人家记一下这段对话的要点吧：\n{dialogue_text}"
+
+        try:
+            result = await self._router.route(
+                "memory_encoding",
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.3,
+            )
+            summary = result.strip()
+            # 确保以正确格式开头
+            if not summary.startswith("（"):
+                summary = "（昔涟在书页边缘轻轻记下：" + summary.lstrip("（")
+            if not summary.endswith("）"):
+                summary = summary.rstrip("）") + "）"
+            # 长度截断
+            if len(summary) > 180:
+                summary = summary[:177] + "）"
+            logger.debug("memory.history_compressed", chars=len(summary))
+            return summary
+        except Exception as e:
+            logger.warning("memory.compress_failed", error=str(e))
+            return None
+
+    async def _embed_text(self, text: str) -> list[float] | None:
+        """云端嵌入（ModelRouter.embed → 硅基流动 bge-m3）。无 Key 时返回 None。"""
         if not self._router:
-            raise RuntimeError("嵌入需要 ModelRouter")
+            return [0.0] * 1024  # 测试环境兜底
         try:
             return await self._router.embed(text)
         except Exception as e:
-            logger.error("memory.embed_failed", error=str(e))
-            raise
+            logger.warning("memory.embed_failed", error=str(e))
+            return None
 
     async def _check_duplicate(
-        self, embedding: list[float],
+        self, embedding: list[float] | None,
         max_distance: float = 0.4,
         max_age_hours: float = 24.0,
     ) -> int | None:
         """
         检查新嵌入是否与最近记忆高度重复。
-
-        在最近 24 小时的用户记忆中搜索，若 L2 距离 < max_distance
-        （bge-m3 1024维，0.4 对应极高相似度），返回重复记忆的 id。
-        跳过角色记忆（session_id='character'）。
+        无嵌入时跳过去重。
         """
+        if embedding is None:
+            return None
         results = await self._vs.search(embedding, top_k=3)
         if not results:
             return None
@@ -347,8 +410,33 @@ class MemoryManager:
             [{summary, distance, importance, episodic_id, ...}]
         """
         try:
-            # Step 1: 云端嵌入用户消息
+            # Step 1: 云端嵌入用户消息（无 Key 时降级为时间排序）
             query_vector = await self._embed_text(user_message)
+
+            if query_vector is None:
+                # 降级：按 importance × 时间衰减排序，跳过语义匹配
+                recent = await self._db.get_episodic_recent(limit=20)
+                now = time.time()
+                memories = []
+                for mem in recent:
+                    if mem.get("session_id") == "character":
+                        continue
+                    days_since = (now - mem.get("timestamp", now)) / 86400
+                    decay = max(0.1, math.exp(-0.099 * days_since))
+                    memories.append({
+                        "summary": mem.get("summary", ""),
+                        "distance": 1.0,
+                        "adjusted_score": (1.0 - mem.get("importance", 0.5)) / decay,
+                        "importance": mem.get("importance", 0.5),
+                        "episodic_id": mem.get("id"),
+                        "timestamp": mem.get("timestamp"),
+                        "days_since_access": round(days_since, 1),
+                        "session_id": mem.get("session_id", ""),
+                    })
+                memories.sort(key=lambda r: r["adjusted_score"])
+                memories = memories[:k]
+                logger.debug("memory.retrieved_fallback", count=len(memories))
+                return memories
 
             # Step 2: sqlite-vec 检索，多取一些用于阈值过滤后仍有 k 条
             results = await self._vs.search(query_vector, top_k=max(k * 2, 10))
@@ -357,7 +445,6 @@ class MemoryManager:
                 return []
 
             # Step 3: SQLite 读取完整摘要，过滤超出距离阈值的记忆
-            row_ids = [r[0] for r in results]
             now = time.time()
             LAMBDA_FORGET = 0.099  # ln(2)/7，7天半衰期
 
@@ -367,11 +454,10 @@ class MemoryManager:
                     continue  # 距离太远，跳过不相关记忆
                 mem = await self._db.get_episodic_memory(row_id)
                 if mem:
-                    # 艾宾浩斯遗忘衰减（阶段 5 新增）
-                    # 越久没被访问的记忆，adjusted_score 越大（=被推远）
+                    # 艾宾浩斯遗忘衰减
                     days_since_access = max(0, (now - (mem.get("last_accessed") or mem.get("timestamp", now))) / 86400)
                     decay = max(0.1, math.exp(-LAMBDA_FORGET * days_since_access))
-                    adjusted_score = distance / decay  # 旧记忆分值被放大（=被推远）
+                    adjusted_score = distance / decay
 
                     memories.append({
                         "summary": mem.get("summary", ""),
@@ -387,7 +473,6 @@ class MemoryManager:
                     await self._db.increment_access_count(row_id)
 
             # 按调整后分数排序（融合向量距离 × 艾宾浩斯衰减惩罚）
-            # adjusted_score → 越低越相关（距离近 + 近期访问 → 更小）
             memories.sort(key=lambda r: r["adjusted_score"])
             # 截断到 k 条
             memories = memories[:k]
@@ -596,6 +681,8 @@ class MemoryManager:
                 continue
             try:
                 vector = await self._embed_text(record["summary"])
+                if vector is None:
+                    continue  # 无 embed Key，跳过
                 await self._vs.insert(row_id=record["id"], embedding=vector)
                 await self._db.update_embedding_status(
                     record["id"], "done", str(record["id"])

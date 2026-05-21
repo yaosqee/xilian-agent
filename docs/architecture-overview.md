@@ -1,13 +1,14 @@
 # 昔涟 V3.3 · 系统架构总览
 
-版本: 2026-05-20
+版本: 2026-05-21
 
 ---
 
-本文档是三大子系统的顶层串联。阅读完本文后，可按需要深入：
+本文档是四大子系统的顶层串联。阅读完本文后，可按需要深入：
 - [记忆系统架构](design/memory-system-architecture.md)
 - [情感系统架构](design/emotion-system-architecture.md)
 - [工具系统架构](design/tool-system-architecture.md)
+- **上下文管理**（V3.4 新增）：滑动窗口 + Flash 压缩摘要 + 跨会话恢复
 
 ## 一、系统全景
 

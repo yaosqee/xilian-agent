@@ -166,36 +166,47 @@ class ModelRouter:
 
     # ========== 嵌入 ==========
 
-    async def embed(self, text: str) -> list[float]:
+    async def embed(self, text: str) -> list[float] | None:
         """
         云端嵌入 API（硅基流动 bge-m3）。
         1024 维向量，与 sqlite-vec 索引维度一致。
+        无 Key 时返回 None，由调用方降级处理。
         """
         if not self._embed_client:
-            raise RuntimeError("嵌入 API 未配置（EMBED_API_KEY 缺失）")
+            logger.debug("embed.unavailable")
+            return None
 
-        response = await asyncio.wait_for(
-            self._embed_client.embeddings.create(
-                model=self._embed_model,
-                input=text,
-            ),
-            timeout=30,
-        )
-        return response.data[0].embedding
+        try:
+            response = await asyncio.wait_for(
+                self._embed_client.embeddings.create(
+                    model=self._embed_model,
+                    input=text,
+                ),
+                timeout=30,
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.warning("embed.failed", error=str(e)[:120])
+            return None
 
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """批量嵌入（合并请求省 API 调用）"""
+    async def embed_batch(self, texts: list[str]) -> list[list[float]] | None:
+        """批量嵌入。无 Key 或调用失败时返回 None。"""
         if not self._embed_client:
-            raise RuntimeError("嵌入 API 未配置")
+            logger.debug("embed.unavailable")
+            return None
 
-        response = await asyncio.wait_for(
-            self._embed_client.embeddings.create(
-                model=self._embed_model,
-                input=texts,
-            ),
-            timeout=60,
-        )
-        return [d.embedding for d in response.data]
+        try:
+            response = await asyncio.wait_for(
+                self._embed_client.embeddings.create(
+                    model=self._embed_model,
+                    input=texts,
+                ),
+                timeout=60,
+            )
+            return [d.embedding for d in response.data]
+        except Exception as e:
+            logger.warning("embed_batch.failed", error=str(e)[:120])
+            return None
 
     # ========== 底层调用 ==========
 

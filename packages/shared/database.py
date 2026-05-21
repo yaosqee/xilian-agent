@@ -188,6 +188,13 @@ CREATE TABLE IF NOT EXISTS user_portrait (
 );
 """
 
+_CREATE_CRON_RUNS = """
+CREATE TABLE IF NOT EXISTS cron_runs (
+    task_name TEXT PRIMARY KEY,
+    last_run  REAL NOT NULL
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -263,6 +270,7 @@ class DatabaseManager:
         else:
             # Alembic 路径：确保新增表也创建（Alembic 迁移未覆盖时兜底）
             await self._conn.execute(_CREATE_USER_PORTRAIT)
+            await self._conn.execute(_CREATE_CRON_RUNS)
             for idx_sql in _CREATE_INDEXES_SQL:
                 if "user_portrait" in idx_sql or "portrait_version" in idx_sql:
                     await self._conn.execute(idx_sql)
@@ -319,6 +327,7 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_AUDIT_LOGS)
         await self._conn.execute(_CREATE_AFFECTION)
         await self._conn.execute(_CREATE_USER_PORTRAIT)
+        await self._conn.execute(_CREATE_CRON_RUNS)
         for idx_sql in _CREATE_INDEXES_SQL:
             await self._conn.execute(idx_sql)
         await self._conn.commit()
@@ -1441,6 +1450,31 @@ class DatabaseManager:
 
         logger.info("privacy.forgotten", deleted=deleted)
         return {"deleted": deleted}
+
+    # ============================================================
+    # cron_runs CRUD（启动补执行）
+    # ============================================================
+
+    async def get_cron_last_run(self, task_name: str) -> float | None:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT last_run FROM cron_runs WHERE task_name = ?",
+            (task_name,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def set_cron_last_run(self, task_name: str, timestamp: float | None = None):
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        ts = timestamp if timestamp is not None else time.time()
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO cron_runs (task_name, last_run) VALUES (?, ?)",
+            (task_name, ts),
+        )
+        await self._conn.commit()
+
     # ============================================================
 
     @property

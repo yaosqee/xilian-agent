@@ -20,13 +20,21 @@
 |------|------|------|
 | **Linux**（含 WSL2） | ✅ 已验证 | 开发和运行环境 |
 | **macOS** | ⚠️ 未测试 | Python + Node 生态一致，理论上可行。sqlite-vec 提供 macOS wheel |
-| **Windows（原生）** | ❌ 不建议 | `sqlite-vec` 是 C/Rust 扩展，PyPI 仅提供 Linux/macOS wheel。Windows 需从源码编译 sqlite-vec，未测试。建议使用 WSL2 |
+| **Windows（原生）** | ✅ 已验证 | PyInstaller 打包为单文件 exe，双击运行。sqlite-vec 提供 Windows wheel |
 
-如果必须在 Windows 上运行，推荐：
+### Windows 打包分发
+
 ```powershell
-# 在 WSL2 中安装 Ubuntu，然后按下方 Linux 步骤操作
-wsl --install -d Ubuntu
+# 在 Windows 上（需 Python 3.12+ + Node.js）
+python -m venv .venv
+.venv\Scripts\activate
+pip install openai python-dotenv loguru fastapi uvicorn aiosqlite apscheduler sqlite-vec rich alembic pyyaml python-multipart pystray Pillow pyinstaller pywin32
+cd packages\frontend && npm install && npm run build && cd ..\..
+pyinstaller xilian.spec --noconfirm
+# 产物：dist/昔涟.exe
 ```
+
+首次双击 exe 进入 API Key 引导页，配置后自动重启进入主界面。详见 `.env.example`。
 
 ---
 
@@ -212,4 +220,4 @@ pkill -f main.py && uv run python main.py
 
 ---
 
-*本文档随部署环境变更持续更新。最后修订：2026-05-20*
+*本文档随部署环境变更持续更新。最后修订：2026-05-21*

@@ -1,7 +1,7 @@
 # 昔涟 V3.3 · 代码导航
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
-> 📅 最后更新：2026-05-20
+> 📅 最后更新：2026-05-21
 
 ## 📚 文档导航
 
@@ -35,14 +35,17 @@
 
 ```
 xilian-v3/
-├── main.py                          # 启动入口：加载环境 → Agent → Gateway → cron调度 → 前端挂载 → 并发启动
-├── pyproject.toml                   # uv 项目配置 + 依赖
+├── main.py                          # 启动入口：加载环境 → 引导检测 → Agent → Gateway → cron调度 → 前端挂载 → 并发启动
+├── pyproject.toml                   # uv 项目配置 + 依赖（tray 可选组：pystray+Pillow）
+├── xilian.spec                      # PyInstaller 打包配置（单文件 exe，含所有数据文件）
+├── hooks/                           # PyInstaller 自定义 hooks（sqlite-vec 等）
+├── .env.example                     # 环境变量模板（DeepSeek/硅基/天气/搜索/运行参数）
 ├── CLAUDE.md                        # Agent skills 配置（GitHub Issues/标签/领域文档）
 ├── PROJECT_PROGRESS.md              # 项目仪表盘
 ├── CONTEXT.md                       # 代码导航（本文件）
 ├── README.md                        # 项目门面
 ├── .env                             # API Key（不入 git）
-├── photo/                           # 背景图片（xilian.png默认+fengge.txt风格参考+上传存储）
+├── photo/                           # 图片资源（背景+托盘图标+应用图标）
 ├── docs/
 │   ├── architecture-overview.md       # 系统全景：三大子系统协同 + 端到端请求追踪
 │   ├── api-reference.md               # 全部 HTTP API 端点参考
@@ -66,7 +69,7 @@ xilian-v3/
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
 │   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + LLM function calling + 确认回路 + 记忆联动 + 笔记本自动记录
-│   ├── agent_context.py             # AgentContext：对话历史 + 情绪快照 + 记忆注入
+│   ├── agent_context.py             # AgentContext：对话历史 + 滑动窗口压缩 + 跨会话感知
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器 + autodiscover + to_openai_tools()
 │   ├── tool_executor.py             # ToolExecutor：校验→权限→频率→确认→执行→审计（打磨期）
 │   ├── tool_result.py               # ToolResult + ToolContext dataclass（打磨期）
@@ -110,7 +113,8 @@ xilian-v3/
 │   ├── vite.config.ts               # Vite proxy /api → localhost:8000
 │   ├── dist/                        # Vite build 产物（生产模式 serve 用）
 │   ├── src/
-│   │   ├── main.tsx / App.tsx       # 入口 + 根组件
+│   │   ├── main.tsx / App.tsx       # 入口 + 根组件（含引导页检测 /api/config/check）
+│   │   ├── OnboardingPage.tsx   # 首次启动 API Key 引导页
 │   │   ├── components/
 │   │   │   ├── layout/              # MainLayout + Sidebar(8入口SVG图标) + BackgroundLayer(全页背景)
 │   │   │   ├── chat/                # ChatView + MessageBubble + Textarea毛玻璃输入

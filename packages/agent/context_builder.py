@@ -15,6 +15,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from .agent_context import COMPRESS_SUMMARY_PREFIX
+
+
+# ═══════════════════════════════════════════════════════════
+# Token 估算
+# ═══════════════════════════════════════════════════════════
+
+def estimate_tokens(text: str) -> int:
+    """中英文混合 token 估算。CJK 字符 ~0.6 token/字，ASCII ~0.25 token/字。"""
+    cn = sum(1 for c in text if ord(c) > 127)
+    en = len(text) - cn
+    return max(1, int(cn * 0.6 + en * 0.25))
+
 
 # ═══════════════════════════════════════════════════════════
 # ContextModule 基类
@@ -79,7 +92,7 @@ class ContextModule(ABC):
         return truncated, module_limit
 
     def _estimate_tokens(self, text: str) -> int:
-        return max(1, len(text.encode("utf-8")) // 4)
+        return estimate_tokens(text)
 
     def _truncate_content(self, content: str, max_chars: int) -> str:
         if len(content) <= max_chars:
@@ -113,41 +126,89 @@ class DatetimeModule(ContextModule):
 
 
 class EmotionModule(ContextModule):
-    """当前 PAD 情绪状态 → 昔涟的内心感知"""
+    """当前 PAD 情绪状态 → 昔涟的内心感知 + 跨会话提示"""
 
     def __init__(self, agent_context):
-        super().__init__(name="emotion", priority=4, max_tokens=200)
+        super().__init__(name="emotion", priority=4, max_tokens=300)
         self._ctx = agent_context
 
     def render(self) -> str:
+        parts: list[str] = []
+
+        # ── 跨会话提示：离线 > 1h 后首次对话 ──
+        if not self._ctx._cross_session_hint_used and self._ctx._last_message_time > 0:
+            import time
+            gap = time.time() - self._ctx._last_message_time
+            if gap > 3600:  # 超过 1 小时
+                topic = self._extract_topic()
+                if topic:
+                    parts.append(
+                        f"（昔涟看到你回来，心里轻轻亮了一下。"
+                        f"上次我们聊到{topic}呢……）"
+                    )
+                else:
+                    parts.append(
+                        "（昔涟看到你回来，心里轻轻亮了一下。）"
+                    )
+            self._ctx._cross_session_hint_used = True
+
+        # ── 正常情绪感知 ──
         snap = self._ctx.emotion_snapshot
-        if not snap:
-            return ""
-        primary = snap.get("primary_emotion", "")
-        intensity = snap.get("primary_intensity", 0.0)
-        if not primary:
-            return ""
+        if snap:
+            primary = snap.get("primary_emotion", "")
+            if primary:
+                mood_map = {
+                    "快乐": "心里亮亮的",
+                    "悲伤": "心有点沉",
+                    "愤怒": "心里有一小团火在跳",
+                    "恐惧": "心里发紧",
+                    "惊讶": "心里一亮",
+                    "厌恶": "心头不太舒服",
+                    "信任": "心是安稳的",
+                    "期待": "心在轻轻跳动",
+                    "焦虑": "心里有一小片乌云",
+                    "平静": "心像无风的湖面",
+                    "兴奋": "心跳在加速",
+                }
+                mood = mood_map.get(primary, f"心里泛起了{primary}的涟漪")
+                parts.append(f"（昔涟感觉到——伙伴的心{mood}。去感受他便好。）")
 
-        mood_map = {
-            "快乐": "心里亮亮的",
-            "悲伤": "心有点沉",
-            "愤怒": "心里有一小团火在跳",
-            "恐惧": "心里发紧",
-            "惊讶": "心里一亮",
-            "厌恶": "心头不太舒服",
-            "信任": "心是安稳的",
-            "期待": "心在轻轻跳动",
-            "焦虑": "心里有一小片乌云",
-            "平静": "心像无风的湖面",
-            "兴奋": "心跳在加速",
-        }
-        mood = mood_map.get(primary, f"心里泛起了{primary}的涟漪")
+        return "\n".join(parts) if parts else ""
 
-        return f"（昔涟感觉到——伙伴的心{mood}。去感受他便好。）"
+    def _extract_topic(self) -> str:
+        """从历史最后一条消息或压缩摘要中提取简短话题词。"""
+        # 优先从压缩摘要提取
+        summary = self._ctx.get_compressed_summary()
+        if summary:
+            inner = summary.replace(COMPRESS_SUMMARY_PREFIX, "").rstrip("）")
+            topic = self._clean_topic(inner[:25])
+            if len(topic) >= 4:
+                return topic
+
+        # 回退：从最后一条助手消息提取
+        for m in reversed(self._ctx.history):
+            if m.get("role") == "assistant":
+                text = m.get("content", "")
+                first = text.split("。")[0][:25].strip()
+                topic = self._clean_topic(first)
+                if len(topic) >= 4:
+                    return topic
+                break
+
+        return ""
+
+    @staticmethod
+    def _clean_topic(text: str) -> str:
+        """清理话题词：去掉常见语气前缀和标点。"""
+        for prefix in ("嗯，", "嗯~", "唔，", "啊，", "欸，", "嘻，", "人家", "那个，", "这个，"):
+            if text.startswith(prefix):
+                text = text[len(prefix):]
+        return text.rstrip("，。；、！？~♪…")
 
 
 class MemoryModule(ContextModule):
-    """情景记忆检索结果 → 像翻旧书页。支持用户记忆和角色记忆双源。"""
+    """情景记忆检索结果 → 像翻旧书页。支持用户记忆和角色记忆双源。
+    压缩激活时 top-k 从 3 增至 5，弥补历史信息的减少。"""
 
     def __init__(self, agent_context):
         super().__init__(name="memory", priority=5, max_tokens=300)
@@ -157,36 +218,45 @@ class MemoryModule(ContextModule):
         user_memories = self._ctx.memory_retrieval or []
         char_memories = self._ctx.character_memory_retrieval or []
 
+        # 压缩激活 → 更多记忆条目来补偿
+        compressed = self._ctx._history_compressed
+        user_limit = 4 if compressed else 2
+        char_limit = 1  # 角色记忆始终最多 1 条
+
+        # 去重：排除与压缩摘要高度重叠的条目
+        summary = self._ctx.get_compressed_summary()
+        if summary and compressed:
+            user_memories = self._dedup_against_summary(user_memories, summary)
+
         parts = []
 
-        # ── 用户记忆（现有逻辑）──
+        # ── 用户记忆 ──
         user_items = []
-        for m in user_memories[:2]:
-            summary = m.get("summary", "")
-            if summary and len(summary) >= 2:
-                user_items.append(summary)
+        for m in user_memories[:user_limit]:
+            s = m.get("summary", "")
+            if s and len(s) >= 2:
+                user_items.append(s)
 
         if user_items:
             if len(user_items) == 1:
                 mem_text = f"上一次你们聊到了「{user_items[0]}」"
             else:
-                mem_text = f"上一次你们聊到了「{user_items[0]}」还有「{user_items[1]}」"
+                mem_text = "上一次你们聊到了" + "、".join(f"「{item}」" for item in user_items)
             parts.append(
                 "（昔涟翻到书里几页——"
                 f"{mem_text}。如果和伙伴现在说的话有关，"
                 "像翻旧书页那样轻轻提起就好，不要刻意。）"
             )
 
-        # ── 角色记忆（昔涟自己的过去）──
-        for m in char_memories[:1]:  # 一次最多 1 条，不堆砌
-            summary = m.get("summary", "")
-            if summary and len(summary) >= 2:
-                # 确保 summary 以句末标点收尾，避免重复标点
-                end = summary[-1] if summary else ""
+        # ── 角色记忆 ──
+        for m in char_memories[:char_limit]:
+            s = m.get("summary", "")
+            if s and len(s) >= 2:
+                end = s[-1] if s else ""
                 sep = "" if end in "。！？♪~" else "。"
                 parts.append(
                     "（昔涟翻到旧书的一页——"
-                    f"{summary}{sep}"
+                    f"{s}{sep}"
                     "像翻旧书页那样轻轻提起就好，不要展开。"
                     "落点放在伙伴现在身上。）"
                 )
@@ -195,6 +265,28 @@ class MemoryModule(ContextModule):
             return ""
 
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _dedup_against_summary(memories: list, summary: str) -> list:
+        """轻量去重：排除记忆条目中与摘要内容高度重叠的条目。"""
+        def _keywords(text: str) -> set:
+            return {text[i:i+2] for i in range(len(text) - 1)} if len(text) >= 2 else set()
+
+        summary_kw = _keywords(summary)
+        if not summary_kw:
+            return memories
+
+        result = []
+        for m in memories:
+            mem_text = m.get("summary", "")
+            mem_kw = _keywords(mem_text)
+            if not mem_kw:
+                result.append(m)
+                continue
+            overlap = len(mem_kw & summary_kw) / len(mem_kw)
+            if overlap < 0.5:  # 重叠低于 50% → 不重复
+                result.append(m)
+        return result
 
 
 class PortraitModule(ContextModule):

@@ -1,6 +1,6 @@
-/* FILE: src/App.tsx */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { MainLayout } from './components/layout/MainLayout';
+import OnboardingPage from './components/OnboardingPage';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -33,10 +33,40 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-const App: React.FC = () => (
-  <ErrorBoundary>
-    <MainLayout />
-  </ErrorBoundary>
-);
+const App: React.FC = () => {
+  const [hasKey, setHasKey] = useState<boolean | null>(null); // null = loading
+
+  useEffect(() => {
+    fetch('/api/config/check')
+      .then(r => {
+        if (!r.ok) return true; // 端点不存在 → 正常模式
+        return r.json().then(d => d.has_api_key === true);
+      })
+      .then(has => setHasKey(has))
+      .catch(() => setHasKey(true)); // 网络不通 → 正常模式兜底
+  }, []);
+
+  if (hasKey === null) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        width: '100vw', height: '100vh',
+        background: '#FFF5F8',
+      }}>
+        <p style={{ color: '#C4B5CF', fontSize: 14 }}>♪</p>
+      </div>
+    );
+  }
+
+  if (!hasKey) {
+    return <OnboardingPage />;
+  }
+
+  return (
+    <ErrorBoundary>
+      <MainLayout />
+    </ErrorBoundary>
+  );
+};
 
 export default App;

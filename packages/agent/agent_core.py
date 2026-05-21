@@ -10,6 +10,7 @@ ActorMind 推理链（阶段 7）：
 阶段 7a：ContextBuilder 模块化上下文（替换手工拼接）
 """
 import asyncio
+import time
 import os
 from pathlib import Path
 from loguru import logger
@@ -32,7 +33,7 @@ from .skills_loader import SkillsLoader
 
 # 阶段 7a: 模块化上下文
 from .context_builder import (
-    ContextBuilder,
+    ContextBuilder, estimate_tokens,
     DatetimeModule,
     EmotionModule,
     MemoryModule,
@@ -178,6 +179,13 @@ class AgentCore:
         # 阶段 9: 确保角色情景记忆已导入（幂等，新项目首次启动自动执行）
         await self._ensure_character_memories()
 
+        # 阶段 B: 注册上下文压缩回调（Fire-and-forget，不影响主流程）
+        self.context.set_compress_callback(
+            lambda msgs: self.memory_manager.compress_history(
+                msgs, affection_level=self._affection_level
+            )
+        )
+
         # 阶段 7b: 初始化 NotebookManager
         if not self.notebook_manager:
             self.notebook_manager = NotebookManager(
@@ -262,20 +270,64 @@ class AgentCore:
         except Exception:
             logger.debug("affection.load_skipped")
 
-        # 恢复最近对话历史到 context（跨会话记忆连续性）
+        # 阶段 C: 恢复最近对话历史（时间优先 + token 预算）
         try:
-            logs = await self._db.get_conversation_history(limit=20)
-            for row in reversed(logs):
-                user_msg = row["user_message"]
-                # 主动问候的 user_message 为空 → 用标记代替，让 LLM 知道这是昔涟主动发起的
-                if not user_msg:
-                    user_msg = "（昔涟轻轻推了推伙伴——她主动发来了一句问候。）"
-                self.context.history.append({"role": "user", "content": user_msg})
-                self.context.history.append({"role": "assistant", "content": row["assistant_reply"]})
-            if logs:
-                logger.info("agent.context_restored", rounds=len(logs))
+            recover_hours = 4
+            recover_budget = 2000
+            now = time.time()
+            logs = await self._db.get_conversation_history(limit=40)
+            logger.debug("context_restore.fetched", log_count=len(logs))
+
+            if not logs:
+                logger.debug("context_restore.empty_db")
+                self.context._last_message_time = 0.0
+            else:
+                recovered: list[dict] = []
+                seen_ids: set[int] = set()
+                last_msg_time = 0.0
+
+                # Pass 1: 最近 N 小时内的对话全部恢复
+                for row in reversed(logs):
+                    ts = row.get("timestamp", 0) or 0
+                    if now - ts <= recover_hours * 3600:
+                        recovered.append(row)
+                        seen_ids.add(row.get("id", 0))
+                        last_msg_time = max(last_msg_time, ts)
+
+                # Pass 2: token 预算补全
+                recovered_tokens = sum(
+                    estimate_tokens(r.get("user_message") or "") + estimate_tokens(r.get("assistant_reply") or "")
+                    for r in recovered
+                )
+                for row in reversed(logs):
+                    rid = row.get("id", 0)
+                    if rid in seen_ids:
+                        continue
+                    extra = estimate_tokens(row.get("user_message") or "") + estimate_tokens(row.get("assistant_reply") or "")
+                    if recovered_tokens + extra > recover_budget:
+                        break
+                    recovered.append(row)
+                    seen_ids.add(rid)
+                    recovered_tokens += extra
+                    last_msg_time = max(last_msg_time, row.get("timestamp", 0) or 0)
+
+                # 按时间排序后注入 context
+                recovered.sort(key=lambda r: r.get("id", 0))
+                for row in recovered:
+                    user_msg = row.get("user_message") or ""
+                    if not user_msg:
+                        user_msg = "（昔涟轻轻推了推伙伴——她主动发来了一句问候。）"
+                    self.context.history.append({"role": "user", "content": user_msg})
+                    self.context.history.append({"role": "assistant", "content": row.get("assistant_reply") or ""})
+
+                self.context._last_message_time = last_msg_time
+                logger.info("agent.context_restored",
+                    rounds=len(recovered),
+                    tokens=recovered_tokens,
+                    last_msg_age_minutes=round((now - last_msg_time) / 60, 1) if last_msg_time else 0,
+                )
         except Exception as e:
-            logger.warning("agent.context_restore_failed", error=str(e))
+            logger.warning(f"agent.context_restore_failed: {type(e).__name__} — {e}")
 
         logger.info("agent.startup_complete")
 
@@ -736,7 +788,12 @@ class AgentCore:
         # 纯静态系统提示（前缀缓存友好，永远不变）
         messages = [{"role": "system", "content": self._personality}]
 
-        # 历史消息（与前一轮前缀高度一致）
+        # 压缩摘要（插入在人格提示词之后、原始历史之前，作为前缀锚点）
+        summary = self.context.get_compressed_summary()
+        if summary:
+            messages.append({"role": "system", "content": summary})
+
+        # 历史消息（与前一版本前缀高度一致，压缩不影响缓存命中率）
         history = self.context.get_messages(limit=20)
         messages.extend(history)
 
@@ -750,6 +807,15 @@ class AgentCore:
             user_content = user_msg
 
         messages.append({"role": "user", "content": user_content})
+
+        # Token 总量告警（仅日志，不裁剪）
+        total_tokens = sum(estimate_tokens(m["content"]) for m in messages)
+        if total_tokens > 8000:
+            logger.warning("context.token_high",
+                total=total_tokens,
+                history_rounds=len(history) // 2,
+                ctx_len=len(ctx_notes or ""),
+            )
 
         return messages
 
@@ -1081,7 +1147,7 @@ class AgentCore:
             return 0
 
         logger.info("character_memories.seeding", existing=existing, total=24)
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
 
         source = data.get("source", "character")
@@ -1099,8 +1165,8 @@ class AgentCore:
                 if (await dup.fetchone())[0] > 0:
                     continue
 
-                # 向量化
-                vector = await self.router.embed(summary)
+                # 向量化（无 Key 时跳过）
+                vector = await self.router.embed(summary) if self.router else None
 
                 # 写入 episodic_memories
                 import json as _json
@@ -1122,7 +1188,7 @@ class AgentCore:
                         summary,
                         emotion_tags,
                         entry["importance"],
-                        self.router._embed_model,
+                        self.router._embed_model if self.router else "bge-m3",
                         "v1",
                         source,
                     ),
@@ -1130,11 +1196,14 @@ class AgentCore:
                 episodic_id = cursor.lastrowid
                 await self._db._conn.commit()
 
-                # 写入向量
-                await self._vector_store.insert(row_id=episodic_id, embedding=vector)
+                # 写入向量（无 Key 时跳过）
+                if vector is not None:
+                    await self._vector_store.insert(row_id=episodic_id, embedding=vector)
 
-                # 标记完成
-                await self._db.update_embedding_status(episodic_id, "done", eid)
+                # 标记状态
+                await self._db.update_embedding_status(
+                    episodic_id, "done" if vector is not None else "pending", eid
+                )
 
                 inserted += 1
                 logger.debug("character_memories.seeded", id=eid, episodic_id=episodic_id)

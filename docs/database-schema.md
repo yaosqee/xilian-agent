@@ -1,6 +1,6 @@
 # 昔涟 V3.3 · 数据库 Schema
 
-版本: 2026-05-20  
+版本: 2026-05-21  
 引擎: SQLite 3.45+ (WAL模式) + sqlite-vec 0.1.x  
 路径: `data/xilian.db`
 
@@ -221,7 +221,20 @@ CREATE TABLE user_portrait (
 
 ---
 
-### 11-13. 其余表
+### 11. cron_runs — 定时任务执行记录
+
+```sql
+CREATE TABLE IF NOT EXISTS cron_runs (
+    task_name TEXT PRIMARY KEY,
+    last_run  REAL NOT NULL
+);
+```
+
+**用途**：记录每个定时任务的最后执行时间。启动时检查是否有因关机错过的任务并补执行。
+
+---
+
+### 12-14. 其余表
 
 | 表 | 用途 |
 |----|------|

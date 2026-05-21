@@ -610,7 +610,7 @@ class NudgeEngine:
             conn = sqlite3.connect(str(self._db.db_path))
             try:
                 cursor = conn.execute(
-                    """SELECT content FROM user_portraits
+                    """SELECT content FROM user_portrait
                        ORDER BY version DESC LIMIT 1"""
                 )
                 row = cursor.fetchone()

@@ -25,7 +25,20 @@ dev = [
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
 ]
+tray = [
+    "pystray>=0.19",
+    "Pillow>=10.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.20.0",
+]
+tray = [
+    "pillow>=12.2.0",
+    "pystray>=0.19.5",
+]
