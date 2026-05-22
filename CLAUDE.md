@@ -22,10 +22,10 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/agent/tools/` — 4 个工具：search_memory / query_weather / search_web / coding_delegate
 - `packages/shared/events.py` — InternalEvent 统一消息结构
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点
-- `packages/shared/database.py` — SQLite 11 表 CRUD + 游标分页查询
+- `packages/shared/database.py` — SQLite 13 表 CRUD + 游标分页查询
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器
 - `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值 + TokenBucket + GreetingBanner）
-- `packages/agent/context_builder.py` — 模块化上下文注入（7模块，含 NotebookTaskModule + MemoryModule双源渲染）
+- `packages/agent/context_builder.py` — 模块化上下文注入（7模块: Datetime/Portrait/Emotion/Memory/Notebook/Affection/NotebookTask，P1 阈值门控缓存）
 - `packages/agent/notebook_manager.py` — 笔记本管理器（笔记/关注/任务，日记已并入自传体）
 - `data/character_memories.json` — 昔涟角色情景记忆（25条，session_id='character'）
 - `scripts/seed_character_memories.py` — 角色记忆导入脚本（幂等，bge-m3向量化）

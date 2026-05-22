@@ -218,6 +218,25 @@ class ModelRouter:
         logger.debug(f"DS Pro 选取 key[{idx}]")
         return self._ds_pro_clients[idx]
 
+    @staticmethod
+    def _log_cache_usage(response, model_label: str) -> None:
+        """提取 DeepSeek 前缀缓存命中率并记录日志。"""
+        usage = getattr(response, "usage", None)
+        if not usage:
+            return
+        hit = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
+        miss = getattr(usage, "prompt_cache_miss_tokens", 0) or 0
+        total_prompt = (getattr(usage, "prompt_tokens", 0) or 0)
+        if hit + miss == 0:
+            return
+        rate = round(hit / (hit + miss) * 100, 1)
+        logger.debug("cache.hit_rate",
+                     model=model_label,
+                     hit_tokens=hit,
+                     miss_tokens=miss,
+                     total_prompt=total_prompt,
+                     hit_rate_pct=rate)
+
     async def _call_ds_pro(self, messages: list, timeout: int = 90, **kwargs):
         """DS Pro（双 Key 轮询 + fallback）。有 tools 时返回完整 message 对象。"""
         has_tools = bool(kwargs.get("tools"))
@@ -242,14 +261,14 @@ class ModelRouter:
                 )
                 elapsed = (_time_module.time() - t0) * 1000
                 logger.debug("ds_pro.call_ok", key=attempt, elapsed_ms=round(elapsed))
+                if not kwargs.get("stream"):
+                    self._log_cache_usage(response, "ds_pro")
                 if kwargs.get("stream"):
                     return response
                 choice = response.choices[0]
                 finish = choice.finish_reason
                 if finish == "length":
-                    logger.warning("model_router.truncated",
-                                  model=self.ds_pro_model,
-                                  reason="max_tokens reached",
+                    logger.warning(f"{self.ds_pro_model} output truncated (max_tokens reached)",
                                   usage=str(response.usage))
                 msg = choice.message
                 # 有 tools 时返回完整 message（可能含 tool_calls）；否则返回 content 字符串
@@ -299,14 +318,14 @@ class ModelRouter:
 
         elapsed = (_time_module.time() - t0) * 1000
         logger.debug("ds_flash.call_ok", elapsed_ms=round(elapsed))
+        if not kwargs.get("stream"):
+            self._log_cache_usage(response, "ds_flash")
         if kwargs.get("stream"):
             return response
         choice = response.choices[0]
         finish = choice.finish_reason
         if finish == "length":
-            logger.warning("model_router.truncated",
-                          model=self.ds_flash_model,
-                          reason="max_tokens reached",
+            logger.warning(f"{self.ds_flash_model} output truncated (max_tokens reached)",
                           usage=str(response.usage))
         msg = choice.message
         return msg if has_tools else msg.content

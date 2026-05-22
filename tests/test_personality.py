@@ -173,31 +173,12 @@ class TestHeuristicPersonality:
         assert "人家" in DEGRADED_REPLY
         assert "伙伴" in DEGRADED_REPLY
 
-    def test_tool_placeholder_has_personality(self):
-        """工具占位语应符合昔涟人设"""
-        from packages.agent.agent_core import TOOL_PLACEHOLDER
-        assert "人家" in TOOL_PLACEHOLDER
-        assert "学习" in TOOL_PLACEHOLDER
-
     def test_clean_reply_handles_empty(self):
         """空回复清理后应有内容"""
         from packages.agent import AgentCore
         ag = AgentCore()
         result = ag._clean_reply("")
         assert len(result) > 0
-
-    def test_perceive_detects_tool_intent(self):
-        from packages.agent import AgentCore
-        ag = AgentCore()
-        result = ag._perceive("帮我查一下天气")
-        assert result["is_tool_request"] is True
-        assert result["intent"] == "tool_request"
-
-    def test_perceive_chat_not_tool(self):
-        from packages.agent import AgentCore
-        ag = AgentCore()
-        result = ag._perceive("你好呀今天怎么样")
-        assert result["is_tool_request"] is False
 
     def test_perceive_emotion_positive(self):
         from packages.agent import AgentCore

@@ -202,8 +202,12 @@ class NotebookManager:
           4. 不阻塞、不抛异常到调用方
         """
         try:
-            # 获取已有笔记作为去重上下文
             existing = await self.get_recent_notes(limit=10)
+        except Exception as e:
+            logger.warning(f"notebook.auto_note_failed at get_recent_notes: {type(e).__name__} — {e}")
+            return
+
+        try:
             if existing:
                 lines = [f"· {n['content']}" for n in existing]
                 existing_str = "\n".join(lines)
@@ -226,7 +230,6 @@ class NotebookManager:
             if result.startswith("NOTE:"):
                 content = result[5:].strip()
                 if content:
-                    # 写入前合并去重：相似笔记刷新时间戳而非新建
                     similar_id = await self._find_similar(content)
                     if similar_id:
                         await self.touch_note(similar_id)
@@ -249,7 +252,7 @@ class NotebookManager:
             elif result:
                 logger.debug("notebook.auto_note_pass", result=result[:80])
         except Exception as e:
-            logger.warning("notebook.auto_note_failed", error=str(e))
+            logger.warning(f"notebook.auto_note_failed at decision/write: {type(e).__name__} — {e}")
 
     # ═══════════════════════════════════════════════════════
     # 查询

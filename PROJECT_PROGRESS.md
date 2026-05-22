@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-19 20:30 CST
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（角色历史融入 + 自主问候 + 情绪面板 + API 超时修复）
+> 📅 最后更新：2026-05-22
+> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（前缀缓存优化 + 回复长度控制 + Windows 打包 + 上下文管理）
 
 ---
 
@@ -266,9 +266,25 @@
 和风天气 API Key 需在控制台激活（当前使用 Zhipu 搜索 fallback，功能正常）。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
+## 打磨期最新交付（2026-05-20 ~ 2026-05-22）
+
+| # | 交付物 | 说明 |
+|---|--------|------|
+| 十八 | Windows 打包 + 首次引导 | PyInstaller 单文件 exe 打包(xilian.spec+hooks)、首次启动 API Key 引导页(OnboardingPage.tsx+临时API端点)、启动 cron 补执行(catch_up)、系统托盘(pystray+pywin32)、embed 优雅降级(单 DeepSeek Key 无硅基流动)、GBK 编码/路径/重启等多平台修复 |
+| 十九 | 上下文管理系统（阶段 B/C） | 滑动窗口(COMPRESS_SOFT_LIMIT=12+MAX_RAW_ROUNDS=16)+Flash 压缩摘要(昔涟第一人称 100-150 字+好感度匹配口吻)、启动恢复(4h全量+token预算填充至2000)、跨会话提示(离线>1h 触发 warm greeting)、修复 token 漂移(移除/注入时同步计数) |
+| 二十 | 工具系统修复 | 天气/时间编造防护：OOC 第11条(禁止编造实时信息)+_sanitize_fabrication()正则替换。DatetimeModule 增加精确时间。SkillsLoader base_path 参数(PyInstaller 兼容) |
+| 二十一 | 前缀缓存优化（P0+P1+P3） | P0: ctx_notes 从 user 消息前置→独立 system 消息(history 之后 user 之前)实现 APPEND-ONLY LOG。P1: EmotionModule 阈值门控(primary_emotion 不变时复用)+DatetimeModule 降精度(移除精确分钟)。P3: model_router 缓存命中率 DEBUG 日志(prompt_cache_hit_tokens/prompt_cache_miss_tokens/hit_rate_pct)。Reasonix 三区模型调研+方案对齐 |
+| 二十二 | 回复长度控制 | 方案1: max_tokens 1500→800。方案2: personality_v4.md 末尾「开口前先问自己」简洁锚点。方案4: 示例最前加 3 个 1 句话极短范例(⭐大多数时候这样就行) |
+| 二十三 | 测试修复 + 日志改善 | 删除3个死代码测试(TOOL_PLACEHOLDER/_perceive is_tool_request)。model_router truncated 日志增加模型名。notebook auto_note 错误日志增加步骤定位+error_type。main.py backup/cleanup missing await 修复 |
+| — | Git commit: 待提交 | —
+
 ---
 
 ## 最近决策
+
+- **2026-05-22**：回复长度控制系统性优化。根因分析：① ctx_notes 文学体作为 system 消息示范了叙事散文语域 ② 完整 history 保留长回复形成自我模仿正反馈 ③ 负面长度指令（"不要写长"）固有弱点 ④ max_tokens=1500 给了太多空间。执行方案 1（max_tokens→800）+ 方案 2（prompt 末尾简洁锚点）+ 方案 4（极短 1 句示例）。方案 3（ctx_notes 去叙事化）暂不实行。
+
+- **2026-05-22**：前缀缓存优化 P0+P1+P3。调研 Reasonix 三区模型（IMMUTABLE PREFIX / APPEND-ONLY LOG / VOLATILE SCRATCH）后确认方案 A 与 APPEND-ONLY LOG 思路一致。P0：ctx_notes 独立 system 消息（history 后 user 前）。P1：EmotionModule 阈值门控 + DatetimeModule 降精度。P3：model_router 缓存命中率 DEBUG 日志。不照搬 Reasonix 的永不压缩策略（陪伴场景极少触发压缩，20 轮门槛），维持 16 轮硬上限。
 
 - **2026-05-19（晚间）**：昔涟角色历史融入系统。方案评估后选择三层混合架构（人格提示词增强 + 情景记忆语义检索 + 叙事口吻指令），非单一方案。25条角色记忆以昔涟第一人称撰写，对齐样本四特质（知道过去不沉溺、过去是引子现在是正文、温柔不卖弄痛苦、面向未来）。检索复用现有episodic_memories+sqlite-vec管道，零新工具零新ContextModule。关键词触发+session_id分流实现角色/用户记忆双源渲染，token增加可控。
 

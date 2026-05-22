@@ -1,7 +1,7 @@
 # 昔涟 V3.3 · 代码导航
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
-> 📅 最后更新：2026-05-21
+> 📅 最后更新：2026-05-22
 
 ## 📚 文档导航
 
@@ -74,7 +74,7 @@ xilian-v3/
 │   ├── tool_executor.py             # ToolExecutor：校验→权限→频率→确认→执行→审计（打磨期）
 │   ├── tool_result.py               # ToolResult + ToolContext dataclass（打磨期）
 │   ├── result_wrapper.py            # ResultWrapper：工具结果→昔涟语言（规则模板 + LLM包装双轨，打磨期）
-│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Portrait/Emotion/Memory/Notebook/NotebookTask 6模块）
+│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Portrait/Emotion/Memory/Notebook/Affection/NotebookTask 7模块 + 阈值门控）
 │   ├── notebook_manager.py          # NotebookManager：笔记/关注/任务 + 自动记笔记（阶段7b，日记已并入自传体）
 │   ├── portrait_manager.py          # PortraitManager：用户印象文档定期重写 + mark_dirty（阶段8+）
 │   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载（阶段7d）
@@ -187,7 +187,7 @@ main.py 启动
   │     ├─ 加载 personality_v4.md → self._personality
   │     ├─ 初始化 ToolRegistry + 注册 coding_delegate
   │     ├─ 初始化 AgentContext（对话历史容器）
-  │     ├─ 初始化 ContextBuilder（Datetime/Portrait/Emotion/Memory/Notebook/NotebookTask 6模块）
+  │     ├─ 初始化 ContextBuilder（Datetime/Portrait/Emotion/Memory/Notebook/NotebookTask 7模块）
   │     ├─ 初始化 ModelRouter（纯云端 DeepSeek Pro双Key + Flash + 工具降级）
   │     ├─ 初始化 EmotionEngine（PAD 情感引擎，常驻内存）
   │     ├─ 初始化 MemoryManager（sqlite-vec 向量检索）
@@ -219,7 +219,7 @@ main.py 启动
 agent.process(event) 内部（阶段 7 + 打磨期）：
   _perceive() → 情绪基调检测
   _retrieve_memories() → sqlite-vec 向量化 → top-3 + 艾宾浩斯衰减权重
-  _build_messages() → ContextBuilder 自然语言上下文组装（6模块：DateTime/Portrait/Emotion/Memory/Notebook/NotebookTask）
+  _build_messages() → ContextBuilder 自然语言上下文组装（7模块：DateTime/Portrait/Emotion/Memory/Notebook/NotebookTask）
   router.route("chat", tools=[...]) → LLM function calling 工具选择 →
     ├─ 文本回复 → MarkerParser 后处理 → 返回
     └─ tool_calls → ToolExecutor.execute() → ResultWrapper.wrap() → 回传 LLM → 最终回复
@@ -262,7 +262,7 @@ AttentionScheduler 任务提醒流程：
 | `memory_manager.py` | 情景记忆全管线：编码/检索/艾宾浩斯衰减/调度/容量 | `encode_memory()`, `retrieve_memories()`, `schedule_encoding()`, `manage_capacity()` |
 | `autobiography_writer.py` | 每日自传体 + 每周反思结晶 | `write_daily()`, `reflect_weekly()` |
 | `portrait_manager.py` | 用户印象文档定期重写 + 破冰主动问候 + 冷启动 | `consolidate()`, `ensure_exists()` |
-| `context_builder.py` | 模块化上下文组装（6模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
+| `context_builder.py` | 模块化上下文组装（7模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
 | `notebook_manager.py` | 笔记/关注/任务 + 自动记笔记（日记已并入自传体） | `add_note()`, `auto_note_after_message()`, `get_pending_tasks_summary()` |
 | `skills_loader.py` | Agent Skills 加载 + 质量双门控 | `load_all()`, `match()` |
 | `marker_parser.py` | 5种标记流式解析 + SSML接口 | `MarkerParser.feed()`, `flush()` |

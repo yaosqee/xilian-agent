@@ -120,11 +120,11 @@ async def main():
     scheduler = AsyncIOScheduler()
 
     async def _backup_job():
-        backup.run_backup()
+        await backup.run_backup()
         await agent._db.set_cron_last_run("daily_backup")
 
     async def _cleanup_job():
-        backup.cleanup_old()
+        await backup.cleanup_old()
         await agent._db.set_cron_last_run("cleanup_old_backups")
 
     scheduler.add_job(_backup_job, trigger="cron", hour=3, minute=0, id="daily_backup")

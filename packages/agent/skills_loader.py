@@ -31,22 +31,26 @@ class SkillsLoader:
     技能加载器。
 
     扫描 skills/{manual,auto_generated}/ → 解析 → 质量校验 → 注册。
+    base_path 用于 PyInstaller 打包时定位 bundled 数据文件。
     """
 
     _skills: dict[str, Skill] = field(default_factory=dict)
+    _base_path: str = ""
+
     _skill_dirs: list[str] = field(default_factory=lambda: [
         "skills/manual",
         "skills/auto_generated",
     ])
 
-    def load_all(self) -> dict[str, Skill]:
-        """扫描全部技能目录，加载有效技能。"""
+    def load_all(self, base_path: str = "") -> dict[str, Skill]:
+        """扫描全部技能目录，加载有效技能。base_path 为项目根目录。"""
         for skill_dir in self._skill_dirs:
-            if not os.path.isdir(skill_dir):
+            full_dir = os.path.join(base_path, skill_dir) if base_path else skill_dir
+            if not os.path.isdir(full_dir):
                 continue
-            for fname in os.listdir(skill_dir):
+            for fname in os.listdir(full_dir):
                 if fname.endswith(".md"):
-                    skill = self._load_skill(os.path.join(skill_dir, fname))
+                    skill = self._load_skill(os.path.join(full_dir, fname))
                     if skill:
                         self._skills[skill.name] = skill
                         logger.info("skills.loaded", name=skill.name,

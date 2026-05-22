@@ -1,6 +1,6 @@
 # 昔涟 V3.3 · 系统架构总览
 
-版本: 2026-05-21
+版本: 2026-05-22
 
 ---
 
@@ -8,7 +8,7 @@
 - [记忆系统架构](design/memory-system-architecture.md)
 - [情感系统架构](design/emotion-system-architecture.md)
 - [工具系统架构](design/tool-system-architecture.md)
-- **上下文管理**（V3.4 新增）：滑动窗口 + Flash 压缩摘要 + 跨会话恢复
+- **上下文管理 + 前缀缓存优化**（v4 新增）：滑动窗口 + Flash 压缩 + 启动恢复 + APPEND-ONLY LOG + 阈值门控缓存
 
 ## 一、系统全景
 
@@ -126,19 +126,24 @@
 
 ## 四、ContextBuilder 注入管线
 
-8 个 Module 按 priority 排序，每个有独立的 budget (token)：
+7 个 Module 按 priority 排序，每个有独立的 budget (token)：
 
 ```
-Priority 1  DatetimeModule      (50 tokens)    → "现在是星期二的晚上。"
+Priority 1  DatetimeModule      (50 tokens)    → "现在是星期五的下午。"（仅时段，不含分钟）
 Priority 3  PortraitModule      (300 tokens)   → 昔涟对伙伴的印象（版本门控）
-Priority 4  EmotionModule       (200 tokens)   → "伙伴的心心里亮亮的"
-Priority 5  MemoryModule        (300 tokens)   → 用户记忆 + 角色记忆双源
+Priority 4  EmotionModule       (300 tokens)   → "伙伴的心情: 平静"（阈值门控，情绪不变时复用缓存）
+Priority 5  MemoryModule        (300 tokens)   → 用户记忆 + 角色记忆双源（压缩时 top-k 加倍）
 Priority 6  NotebookModule      (200 tokens)   → 笔记本最近条目（async）
 Priority 7  AffectionModule     (150 tokens)   → 好感度话术引导
 Priority 8  NotebookTaskModule  (100 tokens)   → 待办任务列表（async）
 ```
 
-**总 budget**: ~1400 tokens 上限。每个 Module 独立渲染，超过 budget 截断。
+**总 budget**: 800 tokens 上限。每个 Module 独立渲染，超过 budget 截断。
+
+**前缀缓存优化（v4）**：
+- P0：ctx_notes 作为独立 system 消息放在 history 之后、user 之前（APPEND-ONLY LOG 模式）。history 中每条消息存储原始内容，跨轮字节稳定
+- P1：EmotionModule/DatetimeModule 阈值门控 + 降精度，减少 ctx_notes 自身缓存抖动
+- 预期效果：cache hit rate 从 ~60% 提升至 ~85%+
 
 **版本门控**：PortraitModule 检查 `_current_portrait_version != _portrait_version_injected`，版本未变时跳过注入——利用 LLM 前缀缓存。
 
@@ -172,7 +177,7 @@ asyncio event loop
 
 ---
 
-*本文档随系统演进持续更新。最后修订：2026-05-20*
+*本文档随系统演进持续更新。最后修订：2026-05-22*
 
 ## 相关文档
 

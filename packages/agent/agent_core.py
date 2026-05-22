@@ -10,6 +10,7 @@ ActorMind 推理链（阶段 7）：
 阶段 7a：ContextBuilder 模块化上下文（替换手工拼接）
 """
 import asyncio
+import re
 import time
 import os
 from pathlib import Path
@@ -209,8 +210,10 @@ class AgentCore:
 
         # 阶段 7d: 初始化技能加载器
         if not self._skills_loader:
+            # PyInstaller 打包时 skills/ 在 bundled 目录而非 CWD
+            base = str(Path(__file__).resolve().parent.parent.parent)
             self._skills_loader = SkillsLoader()
-            self._skills_loader.load_all()
+            self._skills_loader.load_all(base_path=base)
         if not self.context.user_portrait:
             try:
                 latest = await self._db.get_latest_portrait()
@@ -436,12 +439,13 @@ class AgentCore:
         if self.tool_executor and len(self.tool_registry) > 0:
             tools = self.tool_registry.to_openai_tools()
 
+        tools_called = False
         try:
             result = await self.router.route(
                 "chat",
                 messages,
                 temperature=0.65,
-                max_tokens=1500,
+                max_tokens=800,
                 stream=stream,
                 tools=tools,
                 tool_choice="auto" if tools else None,
@@ -456,7 +460,7 @@ class AgentCore:
                 reply, tool_results = await self._handle_tool_calls(
                     result, event, messages, trace_log
                 )
-                # 工具调用后处理：记忆编码 + 印象更新
+                tools_called = bool(tool_results)
                 if tool_results:
                     self._process_tool_side_effects(tool_results, event.payload)
         except Exception as e:
@@ -499,9 +503,10 @@ class AgentCore:
                 pass
         await self._write_conversation_log(event, reply)
 
-        # ── 10. 记录历史 ──
+        # ── 10. 记录历史（编造数据先清洗再入上下文，防止下轮当事实）──
         self.context.add_message("user", event.payload)
-        self.context.add_message("assistant", reply)
+        clean_for_ctx = self._sanitize_fabrication(reply, tools_called)
+        self.context.add_message("assistant", clean_for_ctx)
 
         trace_log.info(
             "agent.process.done",
@@ -774,16 +779,17 @@ class AgentCore:
 
     async def _build_messages(self, user_msg: str) -> list[dict]:
         """
-        构建模型输入消息列表（阶段 7a：ContextBuilder 模块化）。
+        构建模型输入消息列表。
 
-        结构：
-          [system: 人格提示词] → [历史消息] → [自然语言上下文 + 用户消息]
+        结构（前缀缓存优化 v4）：
+          [system: 人格提示词]          ← IMMUTABLE PREFIX，永远缓存
+          [system: 压缩摘要（若有）]     ← 极少变化
+          [user₁][asst₁][user₂][asst₂]... ← APPEND-ONLY LOG，跨轮字节稳定
+          [system: ctx_notes（若有）]    ← VOLATILE，每轮重建，不破坏前缀
+          [user: raw_msg]               ← 当前消息
 
-        优化要点：
-        - 系统提示只含静态人格 → 前缀缓存 100% 命中
-        - 历史消息与前一轮高度一致 → 高缓存命中率
-        - 上下文由 ContextBuilder 组装为自然语言段落 → 注入到用户消息底部
-        - 每个模块独立渲染、可按 priority + budget 控制
+        关键不变量：history 中每条消息存储原始内容，绝不嵌入动态 ctx_notes。
+        这确保 request N+1 的 history 前缀与 request N 的子前缀逐字节一致。
         """
         # 纯静态系统提示（前缀缓存友好，永远不变）
         messages = [{"role": "system", "content": self._personality}]
@@ -793,20 +799,17 @@ class AgentCore:
         if summary:
             messages.append({"role": "system", "content": summary})
 
-        # 历史消息（与前一版本前缀高度一致，压缩不影响缓存命中率）
+        # 历史消息 — APPEND-ONLY LOG：只追加不改写，保持跨轮字节稳定
         history = self.context.get_messages(limit=20)
         messages.extend(history)
 
-        # 阶段 7a: ContextBuilder 组装上下文（v3.1: 自然语言段落）
+        # ctx_notes 作为独立 system 消息放在 history 之后、user 之前
+        # VOLATILE SCRATCH 语义：每轮重建，不影响 history 前缀缓存
         ctx_notes = await self._context_builder.build()
-
-        # 动态注入 + 用户消息收到底部
         if ctx_notes:
-            user_content = f"{ctx_notes}\n\n---\n\n{user_msg}"
-        else:
-            user_content = user_msg
+            messages.append({"role": "system", "content": ctx_notes})
 
-        messages.append({"role": "user", "content": user_content})
+        messages.append({"role": "user", "content": user_msg})
 
         # Token 总量告警（仅日志，不裁剪）
         total_tokens = sum(estimate_tokens(m["content"]) for m in messages)
@@ -924,7 +927,7 @@ class AgentCore:
             try:
                 result = await self.router.route(
                     "chat", follow_up,
-                    temperature=0.65, max_tokens=1500,
+                    temperature=0.65, max_tokens=800,
                 )
             except Exception as e:
                 # LLM 回传失败 → 降级返回已包装的工具结果
@@ -1009,6 +1012,27 @@ class AgentCore:
             return "……♪"
         # 第一层语音兜底：如果清洗后只有动作描述没有实际对话，立即补
         return self._enforce_speech_rule(cleaned)
+
+    # ── 编造检测：LLM 编造的天气/时间数据不入上下文 ──
+
+    _FABRICATED_WEATHER_RE = re.compile(
+        r'\d{1,2}到\d{1,2}度|'           # 17到26度
+        r'[1-7]级[东西南北]*风|'          # 3级北风
+        r'(晴|阴|雨|雪|多云|雾|霾|雷)(转|到)|'  # 多云转晴
+        r'气温\s*\d+|'                    # 气温 25
+        r'\d+%\s*湿度'                    # 80% 湿度
+    )
+
+    def _sanitize_fabrication(self, reply: str, tools_called: bool) -> str:
+        """如果本轮没调工具但回复含编造的天气数据，替换具体数值为占位符。
+        这样后续对话上下文不会把编造数据当事实。"""
+        if tools_called:
+            return reply
+        # 只影响存入 context 的版本，不影响用户看到的原始回复
+        sanitized = self._FABRICATED_WEATHER_RE.sub('（未查询）', reply)
+        if sanitized != reply:
+            logger.debug("fabrication.sanitized", preview=reply[:60])
+        return sanitized
 
     def _extract_markers(self, text: str) -> tuple[str, list]:
         """

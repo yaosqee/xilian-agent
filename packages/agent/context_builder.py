@@ -105,7 +105,7 @@ class ContextModule(ABC):
 # ═══════════════════════════════════════════════════════════
 
 class DatetimeModule(ContextModule):
-    """当前时间与星期（轻量，只给时段提示）"""
+    """当前时间与星期（轻量，仅时段，降低精度以减少缓存抖动）"""
 
     def __init__(self):
         super().__init__(name="datetime", priority=1, max_tokens=50)
@@ -126,54 +126,79 @@ class DatetimeModule(ContextModule):
 
 
 class EmotionModule(ContextModule):
-    """当前 PAD 情绪状态 → 昔涟的内心感知 + 跨会话提示"""
+    """当前 PAD 情绪状态 → 昔涟的内心感知 + 跨会话提示。
+    阈值门控：primary_emotion 未变化时复用上次渲染结果，减少缓存抖动。"""
 
     def __init__(self, agent_context):
         super().__init__(name="emotion", priority=4, max_tokens=300)
         self._ctx = agent_context
+        self._last_primary: str = ""
+        self._last_emotion_text: str = ""
 
     def render(self) -> str:
         parts: list[str] = []
 
         # ── 跨会话提示：离线 > 1h 后首次对话 ──
-        if not self._ctx._cross_session_hint_used and self._ctx._last_message_time > 0:
-            import time
-            gap = time.time() - self._ctx._last_message_time
-            if gap > 3600:  # 超过 1 小时
-                topic = self._extract_topic()
-                if topic:
-                    parts.append(
-                        f"（昔涟看到你回来，心里轻轻亮了一下。"
-                        f"上次我们聊到{topic}呢……）"
-                    )
-                else:
-                    parts.append(
-                        "（昔涟看到你回来，心里轻轻亮了一下。）"
-                    )
-            self._ctx._cross_session_hint_used = True
+        hint = self._render_hint()
+        if hint:
+            parts.append(hint)
 
-        # ── 正常情绪感知 ──
-        snap = self._ctx.emotion_snapshot
-        if snap:
-            primary = snap.get("primary_emotion", "")
-            if primary:
-                mood_map = {
-                    "快乐": "心里亮亮的",
-                    "悲伤": "心有点沉",
-                    "愤怒": "心里有一小团火在跳",
-                    "恐惧": "心里发紧",
-                    "惊讶": "心里一亮",
-                    "厌恶": "心头不太舒服",
-                    "信任": "心是安稳的",
-                    "期待": "心在轻轻跳动",
-                    "焦虑": "心里有一小片乌云",
-                    "平静": "心像无风的湖面",
-                    "兴奋": "心跳在加速",
-                }
-                mood = mood_map.get(primary, f"心里泛起了{primary}的涟漪")
-                parts.append(f"（昔涟感觉到——伙伴的心{mood}。去感受他便好。）")
+        # ── 正常情绪感知（阈值门控）──
+        emotion = self._render_emotion()
+        if emotion:
+            parts.append(emotion)
 
         return "\n".join(parts) if parts else ""
+
+    def _render_hint(self) -> str:
+        """跨会话提示（one-shot，不缓存）。"""
+        if self._ctx._cross_session_hint_used or self._ctx._last_message_time <= 0:
+            return ""
+        import time
+        gap = time.time() - self._ctx._last_message_time
+        self._ctx._cross_session_hint_used = True
+        if gap > 3600:
+            topic = self._extract_topic()
+            if topic:
+                return f"（昔涟看到你回来，心里轻轻亮了一下。上次我们聊到{topic}呢……）"
+            return "（昔涟看到你回来，心里轻轻亮了一下。）"
+        return ""
+
+    def _render_emotion(self) -> str:
+        """情绪感知渲染（阈值门控：primary_emotion 不变则复用缓存）。"""
+        snap = self._ctx.emotion_snapshot
+        if not snap:
+            self._last_primary = ""
+            self._last_emotion_text = ""
+            return ""
+        primary = snap.get("primary_emotion", "")
+        if not primary:
+            self._last_primary = ""
+            self._last_emotion_text = ""
+            return ""
+
+        # 阈值门控：情绪标签未变 → 复用
+        if primary == self._last_primary and self._last_emotion_text:
+            return self._last_emotion_text
+
+        mood_map = {
+            "快乐": "心里亮亮的",
+            "悲伤": "心有点沉",
+            "愤怒": "心里有一小团火在跳",
+            "恐惧": "心里发紧",
+            "惊讶": "心里一亮",
+            "厌恶": "心头不太舒服",
+            "信任": "心是安稳的",
+            "期待": "心在轻轻跳动",
+            "焦虑": "心里有一小片乌云",
+            "平静": "心像无风的湖面",
+            "兴奋": "心跳在加速",
+        }
+        mood = mood_map.get(primary, f"心里泛起了{primary}的涟漪")
+        text = f"（昔涟感觉到——伙伴的心{mood}。去感受他便好。）"
+        self._last_primary = primary
+        self._last_emotion_text = text
+        return text
 
     def _extract_topic(self) -> str:
         """从历史最后一条消息或压缩摘要中提取简短话题词。"""
