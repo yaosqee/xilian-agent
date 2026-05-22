@@ -13,3 +13,5 @@ data/
 *Zone.Identifier
 packages/frontend/node_modules/
 packages/frontend/dist/
+build/
+dist/
