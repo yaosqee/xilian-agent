@@ -282,7 +282,7 @@ class MemoryManager:
                 messages,
                 temperature=0.3,  # 低温度 → 少脑补，只记录事实
             )
-            return summary.strip()
+            return summary.content.strip() if hasattr(summary, 'content') else summary.strip()
         except Exception as e:
             logger.error("memory.narration_failed", error=str(e))
             texts = [e.get("content", "") for e in exchanges[-3:]]
@@ -334,7 +334,7 @@ class MemoryManager:
                 ],
                 temperature=0.3,
             )
-            summary = result.strip()
+            summary = result.content.strip() if hasattr(result, 'content') else result.strip()
             # 确保以正确格式开头
             if not summary.startswith("（"):
                 summary = "（昔涟在书页边缘轻轻记下：" + summary.lstrip("（")
@@ -653,8 +653,9 @@ class MemoryManager:
                 temperature=0.5,
             )
             if compressed:
+                content = compressed.content.strip() if hasattr(compressed, 'content') else compressed.strip()
                 await self._db.insert_episodic_memory(
-                    summary=f"[遥远记忆] {compressed.strip()}",
+                    summary=f"[遥远记忆] {content}",
                     raw_conversation=combined,
                     importance=0.05,
                 )

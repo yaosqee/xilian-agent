@@ -114,20 +114,21 @@ class AutobiographyWriter:
             logger.error("autobiography.llm_failed", date=date_str, error=str(e))
             return None
 
-        if not content or len(content.strip()) < 20:
+        content_text = content.content if hasattr(content, 'content') else content
+        if not content_text or len(content_text.strip()) < 20:
             logger.warning("autobiography.too_short", date=date_str)
             return None
 
         # 5. 提取元数据
         mood = self._extract_mood(today_snapshots)
         key_ids = ",".join(str(m.get("id", "")) for m in today_memories[:10])
-        word_count = len(content.strip())
+        word_count = len(content_text.strip())
 
         # 6. 写入 DB
         try:
             await self._db.insert_autobiography(
                 date=date_str,
-                content=content.strip(),
+                content=content_text.strip(),
                 mood_summary=mood,
                 key_memories=key_ids,
                 word_count=word_count,
@@ -142,7 +143,7 @@ class AutobiographyWriter:
         except Exception as e:
             logger.error("autobiography.db_write_failed", date=date_str, error=str(e))
 
-        return content.strip()
+        return content_text.strip()
 
     # ── 每周反思 ────────────────────────────────────────
 
@@ -197,7 +198,8 @@ class AutobiographyWriter:
                 ],
                 temperature=0.3,  # 低温度防脑补
             )
-            result = self._parse_reflection_json(raw)
+            raw_text = raw.content if hasattr(raw, 'content') else raw
+            result = self._parse_reflection_json(raw_text)
         except Exception as e:
             logger.error("reflection.llm_failed", week=week_start, error=str(e))
             return None

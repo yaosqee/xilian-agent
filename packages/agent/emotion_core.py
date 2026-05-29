@@ -483,6 +483,8 @@ class AppraisalExtractor:
             temperature=0.3,  # 低温度保证稳定输出
         )
 
+        raw = raw.content if hasattr(raw, 'content') else raw
+
         # 解析 JSON
         result = self._parse_response(raw)
         if result is None:

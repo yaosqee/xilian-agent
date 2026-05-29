@@ -225,3 +225,74 @@ export async function fetchUserPortrait(): Promise<{
   const res = await fetch(`${BASE}/user/portrait`);
   return res.json();
 }
+
+// ═══════════════════════════════════════════════
+// Model config API (V3.4: multi-provider)
+// ═══════════════════════════════════════════════
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  models: ModelInfo[];
+}
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  cost_per_1k_in: number;
+  cost_per_1k_out: number;
+  supports_tools: boolean;
+  supports_thinking?: boolean;
+}
+
+export interface TierModelConfig {
+  provider: string;
+  model: string;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface ModelConfigResponse {
+  tiers: Record<string, TierModelConfig>;
+  overrides: Record<string, TierModelConfig>;
+  embed: { provider: string; model: string; base_url?: string } | null;
+  adapters: string[];
+}
+
+export interface ModelConfigPatch {
+  tiers?: Record<string, { provider: string; model: string; temperature?: number; max_tokens?: number }>;
+  api_keys?: Record<string, string>;
+  base_urls?: Record<string, string>;
+}
+
+/** 获取可用供应商和模型列表 */
+export async function fetchModelProviders(): Promise<{ providers: ProviderInfo[] }> {
+  const res = await fetch(`${BASE}/models/providers`);
+  return res.json();
+}
+
+/** 获取当前模型配置 */
+export async function fetchModelConfig(): Promise<ModelConfigResponse> {
+  const res = await fetch(`${BASE}/models/config`);
+  return res.json();
+}
+
+/** 更新模型配置 */
+export async function saveModelConfig(patch: ModelConfigPatch): Promise<{ status: string; errors?: string[] }> {
+  const res = await fetch(`${BASE}/models/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+/** 验证 API Key */
+export async function validateApiKey(provider: string, apiKey: string): Promise<{ valid: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/models/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, api_key: apiKey }),
+  });
+  return res.json();
+}

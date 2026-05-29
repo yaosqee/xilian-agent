@@ -224,6 +224,8 @@ class TestTickBehavior:
     @pytest.mark.asyncio
     async def test_tick_dedup_skips_recent(self):
         s = AttentionScheduler()
+        s.dnd_start = 25  # 禁用 DND
+        s.dnd_end = -1
         s._router = Mock()
         s._router.route = AsyncMock(return_value="SILENT")
         s._last_event_time["task_reminder"] = time.time()  # 刚刚触发过
@@ -237,6 +239,8 @@ class TestTickBehavior:
     @pytest.mark.asyncio
     async def test_tick_process_immediate(self):
         s = AttentionScheduler()
+        s.dnd_start = 25  # 禁用 DND，避免时间段影响测试
+        s.dnd_end = -1
         s._router = Mock()
         s._router.route = AsyncMock(return_value="NOTIFY: 重要提醒")
         s.event_queue.put_nowait(AttentionEvent(
@@ -266,6 +270,8 @@ class TestLifecycle:
     async def test_start_loop_depletes_queue_over_time(self):
         """模拟启动循环后处理队列（不真正启动 asyncio Task）"""
         s = AttentionScheduler()
+        s.dnd_start = 25  # 禁用 DND，避免时间段影响测试
+        s.dnd_end = -1
         s._router = Mock()
         s._router.route = AsyncMock(return_value="SILENT")
         s.event_queue.put_nowait(AttentionEvent(

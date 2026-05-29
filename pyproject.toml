@@ -29,6 +29,9 @@ tray = [
     "pystray>=0.19",
     "Pillow>=10.0",
 ]
+	anthropic = [
+	    "anthropic>=0.49",
+	]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

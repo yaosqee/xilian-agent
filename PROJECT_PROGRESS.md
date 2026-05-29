@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-22
-> 🔖 当前阶段：阶段 8 ✅ 完成 → 打磨期（前缀缓存优化 + 回复长度控制 + Windows 打包 + 上下文管理）
+> 📅 最后更新：2026-05-29
+> 🔖 当前阶段：打磨期 → 多供应商模型路由系统（V3.4）
 
 ---
 
@@ -27,6 +27,26 @@
 | 阶段 7（内心世界+工具执行+表达管道） | ✅ 完成 |
 | 阶段 8（安全纵深+管理面板+后台驻留） | ✅ 完成 |
 | 总进度 | 9/10 阶段（阶段9远期探索） |
+| 打磨期 · 多供应商路由 | ✅ 完成（2026-05-29） |
+
+---
+
+## 打磨期 · 多供应商模型路由（V3.4）
+
+| # | 交付物 | 文件 |
+|---|--------|------|
+| 一 | ProviderAdapter Protocol + ModelInfo（含 contextWindow / reasoning / input_modalities） | `packages/shared/providers/base.py` |
+| 二 | DeepSeekAdapter / OpenAIAdapter / AnthropicAdapter / GoogleAdapter | `packages/shared/providers/` 目录 |
+| 三 | ModelRouter v2：Tier路由（task→tier→provider+model）+ 热切换 reload_config() | `packages/shared/model_router.py` |
+| 四 | model_configs + embed_config DB表 + Alembic 004 迁移 + CRUD | `packages/shared/database.py` + `alembic/versions/004_model_config.py` |
+| 五 | 5 个模型配置 API 端点（providers/config/validate） | `gateway/channels/http_channel.py` |
+| 六 | 引导页多供应商选择（DeepSeek/OpenAI/Anthropic/Google） | `packages/frontend/src/components/OnboardingPage.tsx` |
+| 七 | 设置面板模型设置（主力/后台 Tier选择 + 高级任务覆盖 + 添加供应商 + 费用估算） | `packages/frontend/src/components/panels/SettingsPanel.tsx` |
+| 八 | modelStore (Zustand) + API 函数 | `packages/frontend/src/stores/modelStore.ts` + `services/api.ts` |
+
+**支持供应商：** DeepSeek (V4 Pro / Flash / Reasoner) · OpenAI (GPT-5.4 / 5.4 Mini / 5.4 Nano / o4 Mini / GPT-4.1) · Anthropic (Claude Sonnet 4.6 / Haiku 4.6 / Opus 4.6) · Google (Gemini 2.5 Pro / Flash / Flash Lite)
+
+**Tier 分工：** `powerful`（对话/人格检查）→ 强力模型 · `fast`（记忆编码/情感分析等 9 个后台任务）→ 廉价模型 · `reasoning`（复杂推理）→ reasoning 模型 · `embed`（向量嵌入）→ 固定硅基流动 bge-m3
 
 ---
 

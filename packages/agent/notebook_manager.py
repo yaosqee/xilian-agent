@@ -225,10 +225,11 @@ class NotebookManager:
                 temperature=0.6,
                 max_tokens=150,
             )
-            result = (result or "").strip()
+            result_text = result.content if hasattr(result, 'content') else result
+            result_text = (result_text or "").strip()
 
-            if result.startswith("NOTE:"):
-                content = result[5:].strip()
+            if result_text.startswith("NOTE:"):
+                content = result_text[5:].strip()
                 if content:
                     similar_id = await self._find_similar(content)
                     if similar_id:
@@ -237,8 +238,8 @@ class NotebookManager:
                         return
                     await self.add_note(content)
                     logger.info("notebook.auto_note", content=content[:40])
-            elif result.startswith("TASK:"):
-                task_str = result[5:].strip()
+            elif result_text.startswith("TASK:"):
+                task_str = result_text[5:].strip()
                 if "@" in task_str:
                     title_part, time_part = task_str.split("@", 1)
                     title = title_part.strip()
@@ -249,8 +250,8 @@ class NotebookManager:
                 if title:
                     await self.schedule_task(title=title, priority=1, due_at=due_at)
                     logger.info("notebook.auto_task", title=title[:40], due_at=due_at)
-            elif result:
-                logger.debug("notebook.auto_note_pass", result=result[:80])
+            elif result_text:
+                logger.debug("notebook.auto_note_pass", result=result_text[:80])
         except Exception as e:
             logger.warning(f"notebook.auto_note_failed at decision/write: {type(e).__name__} — {e}")
 

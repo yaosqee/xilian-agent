@@ -121,7 +121,7 @@ class EmotionAnalyzer:
                 temperature=0.3,
                 timeout=30,
             )
-            return result if isinstance(result, str) else str(result)
+            return result.content if hasattr(result, 'content') else str(result) if result else None
         except asyncio.TimeoutError:
             logger.warning("emotion.timeout")
             return None

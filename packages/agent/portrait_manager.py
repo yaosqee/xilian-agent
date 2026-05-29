@@ -152,15 +152,18 @@ class PortraitManager:
             return None
 
         # 6. 解析 JSON
+        raw_text = raw.content if hasattr(raw, 'content') else raw
+        if not raw_text:
+            return None
         try:
-            data = json.loads(raw)
+            data = json.loads(raw_text)
         except json.JSONDecodeError:
             try:
-                start = raw.index("{")
-                end = raw.rindex("}") + 1
-                data = json.loads(raw[start:end])
+                start = raw_text.index("{")
+                end = raw_text.rindex("}") + 1
+                data = json.loads(raw_text[start:end])
             except (ValueError, json.JSONDecodeError):
-                logger.warning("portrait.json_parse_failed", preview=raw[:100])
+                logger.warning("portrait.json_parse_failed", preview=raw_text[:100])
                 return None
 
         portrait_text = data.get("portrait", "").strip()

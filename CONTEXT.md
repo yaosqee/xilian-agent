@@ -60,7 +60,8 @@ xilian-v3/
 │
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
-│   ├── model_router.py              # ModelRouter：纯云端路由核心（Pro双Key轮询 + Flash后台 + 工具降级 + 截断检测）
+│   ├── model_router.py              # ModelRouter：多供应商 Tier 路由（task→tier→provider+model，支持 DeepSeek/OpenAI/Anthropic + 热切换）
+│   ├── providers/                    # 供应商适配器（deepseek.py / openai_adapter.py / anthropic.py + base.py）
 │   ├── database.py                  # DatabaseManager：SQLite 13张表 + 完整CRUD + 游标分页 + Alembic优先
 │   ├── vector_store.py              # VectorStore：sqlite-vec 向量检索（零外部依赖）
 │   ├── backup.py                    # BackupManager：每日备份 + 清理 + 恢复（阶段 3）
@@ -188,7 +189,7 @@ main.py 启动
   │     ├─ 初始化 ToolRegistry + 注册 coding_delegate
   │     ├─ 初始化 AgentContext（对话历史容器）
   │     ├─ 初始化 ContextBuilder（Datetime/Portrait/Emotion/Memory/Notebook/NotebookTask 7模块）
-  │     ├─ 初始化 ModelRouter（纯云端 DeepSeek Pro双Key + Flash + 工具降级）
+  │     ├─ 初始化 ModelRouter（Tier路由 + 多供应商adapter + DB配置加载 + 热切换reload_config）
   │     ├─ 初始化 EmotionEngine（PAD 情感引擎，常驻内存）
   │     ├─ 初始化 MemoryManager（sqlite-vec 向量检索）
   │     └─ 初始化 NudgeEngine（TokenBucket + 想念值 + 自主问候）
@@ -252,7 +253,7 @@ AttentionScheduler 任务提醒流程：
 | 模块 | 单句职责 | 关键方法 |
 |------|---------|---------|
 | `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, payload, is_owner)` |
-| `model_router.py` | 纯云端 DeepSeek 路由（Pro双Key + Flash + 工具降级） | `route(task_type, messages, tools, tool_choice)` |
+| `model_router.py` | 多供应商 Tier 路由（DeepSeek/OpenAI/Anthropic，task→tier→adapter，热切换） | `route(task_type, messages, tools, tool_choice)` + `reload_config()` |
 | `database.py` | SQLite 11张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
 | `vector_store.py` | sqlite-vec 向量插入 + 精确检索 | `insert(row_id, embedding)`, `search(query_vec, top_k)` |
 | `backup.py` | 每日备份+清理+恢复 | `run_backup()`, `cleanup_old()`, `verify_backup()`, `restore()` |

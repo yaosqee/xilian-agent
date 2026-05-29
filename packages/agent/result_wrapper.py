@@ -115,7 +115,7 @@ class ResultWrapper:
             temperature=0.7,
             max_tokens=300,
         )
-        return result.strip() if result else self._fallback_text(tool_name, data)
+        return result.content.strip() if hasattr(result, 'content') and result.content else self._fallback_text(tool_name, data)
 
     def _fallback_text(self, tool_name: str, data) -> str:
         """无 LLM 时的兜底展示。"""

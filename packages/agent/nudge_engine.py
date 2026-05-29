@@ -510,7 +510,7 @@ class NudgeEngine:
             temperature=0.8,
         )
 
-        greeting = result.strip()
+        greeting = result.content.strip() if hasattr(result, 'content') else result.strip()
         logger.debug("nudge.greeting_generated", preview=greeting[:60])
         return greeting
 
@@ -967,12 +967,12 @@ class AttentionScheduler:
                 temperature=0.7,
                 max_tokens=100,  # 60 太紧，NOTIFY 偶尔被截断
             )
-            result = result.strip()
-            if result.startswith("NOTIFY"):
-                text = result[6:].lstrip(":： ").strip()
-                return {"action": "notify", "text": text if text else result}
-            elif result.startswith("NOTE"):
-                return {"action": "note", "text": result[4:].lstrip(":： ").strip()}
+            result_text = result.content.strip() if hasattr(result, 'content') else result.strip()
+            if result_text.startswith("NOTIFY"):
+                text = result_text[6:].lstrip(":： ").strip()
+                return {"action": "notify", "text": text if text else result_text}
+            elif result_text.startswith("NOTE"):
+                return {"action": "note", "text": result_text[4:].lstrip(":： ").strip()}
             return {"action": "silent"}
         except Exception as e:
             logger.warning("attention.decision_failed", error=str(e))

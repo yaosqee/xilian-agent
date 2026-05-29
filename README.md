@@ -40,6 +40,7 @@
 - 🛠️ **4 个工具** — 记忆检索 / 天气查询 / 网络搜索 / 编码委托（LLM function calling 驱动）
 - 🖥️ **9 个前端面板** — 情绪雷达 / 记忆时间线 / 笔记本 / 自传体 / 审计日志 / 技能管理 / 伙伴印象 / 设置 / PAD 轨迹
 - 🎨 **浅色梦幻风** — 毛玻璃卡片 + SVG 侧栏图标 + 樱花粉色系 + 可定制全页背景
+- 🔀 **多模型供应商** — 支持 DeepSeek / OpenAI / Anthropic，按任务难度自动分工（强力模型对话 + 廉价模型后台），设置面板热切换无需重启
 
 ---
 
@@ -117,17 +118,30 @@ cd xilian-v3
 
 昔涟的大脑在云端，需要 API Key 才能"思考"。不同 Key 的作用不同——有的必须，有的可选。
 
-#### 4.1 DeepSeek API Key（**必须**）
+#### 4.1 大模型 API Key（**三选一，必须至少配一个**）
 
-昔涟的核心对话能力依赖 DeepSeek 大模型。没有这个 Key，昔涟无法运行。（选择deepseek因为便宜好注册，后续会支持多模型，现在忙不过来了）
+昔涟现在支持三个模型供应商，任选其一即可启动。首次启动的引导页可以选择供应商，后续在设置面板随时切换。
+
+**DeepSeek（推荐，便宜好注册）：**
 
 1. 访问 [platform.deepseek.com](https://platform.deepseek.com)
 2. 用手机号注册（支持中国大陆手机号）
 3. 进入「API Keys」页面，点击「创建 API Key」
-4. 复制 Key（形如 `sk-xxxx`），**立即保存到安全地方，关闭页面后无法再次查看**
-5. **建议再创建一个 Key 作为备用**（两个 Key 轮询使用，避免触发频率限制）
+4. 复制 Key（形如 `sk-xxxx`）
+5. 建议再创建一个 Key 作为备用
 
-> **费用参考**：DeepSeek V4-Pro 约 ¥1/百万 token，Flash 约 ¥0.1/百万 token。日常聊天每天几毛钱，首次注册通常有免费额度。
+**OpenAI：**
+
+1. 访问 [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. 创建 Key（形如 `sk-...`）
+
+**Anthropic（Claude）：**
+
+1. 访问 [console.anthropic.com](https://console.anthropic.com)
+2. 创建 Key（形如 `sk-ant-...`）
+3. 需要安装额外依赖：`uv sync --extra anthropic`
+
+> **费用参考**：DeepSeek V4-Pro ≈ ¥1/百万 token，V4-Flash ≈ ¥0.1；GPT-4o ≈ ¥35/百万 token，GPT-4o-mini ≈ ¥1；Claude Sonnet 4 ≈ ¥21/百万 token，Haiku 4 ≈ ¥5.6。日常聊天每天几毛到几块钱，取决于所选模型。
 
 #### 4.2 硅基流动 API Key（**推荐，免费**）
 

@@ -75,7 +75,10 @@ async def main():
     logger.info("=" * 40)
 
     # ── 检查 API Key ──
-    has_api_key = bool(os.getenv("DEEPSEEK_API_KEY"))
+    # V3.4: 检查所有已配置供应商的 API Key
+    has_api_key = any(os.getenv(k) for k in (
+        "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
+    ))
     if not has_api_key:
         logger.info("引导模式：未检测到 API Key，等待用户配置")
         await _start_onboarding()
@@ -490,29 +493,40 @@ async def _start_onboarding():
     @http.app.post("/api/config/save")
     async def save_config(request: Request):
         body = await request.json()
-        deepseek_key = (body.get("deepseek_key") or "").strip()
+        # 新增：支持多供应商选择（V3.4+）
+        provider = (body.get("provider") or "deepseek").strip()
+        api_key = (body.get("deepseek_key") or body.get("api_key") or "").strip()
         siliconflow_key = (body.get("siliconflow_key") or "").strip()
 
-        if not deepseek_key:
-            return JSONResponse({"status": "error", "message": "DeepSeek API Key 不能为空"}, status_code=400)
+        if not api_key:
+            return JSONResponse({"status": "error", "message": "API Key 不能为空"}, status_code=400)
+
+        # Provider → env var mapping
+        env_var_map = {
+            "deepseek": "DEEPSEEK_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }
+        target_env_var = env_var_map.get(provider, "DEEPSEEK_API_KEY")
 
         env_path = _get_env_dir() / ".env"
         env_lines: list[str] = []
         if env_path.exists():
             env_lines = env_path.read_text(encoding="utf-8").splitlines()
 
-        updated_deepseek = False
+        updated_main = False
         updated_embed = False
         for i, line in enumerate(env_lines):
-            if line.startswith("DEEPSEEK_API_KEY="):
-                env_lines[i] = f"DEEPSEEK_API_KEY={deepseek_key}"
-                updated_deepseek = True
+            if line.startswith(f"{target_env_var}="):
+                env_lines[i] = f"{target_env_var}={api_key}"
+                updated_main = True
             elif line.startswith("EMBED_API_KEY=") and siliconflow_key:
                 env_lines[i] = f"EMBED_API_KEY={siliconflow_key}"
                 updated_embed = True
 
-        if not updated_deepseek:
-            env_lines.append(f"DEEPSEEK_API_KEY={deepseek_key}")
+        if not updated_main:
+            env_lines.append(f"{target_env_var}={api_key}")
         if siliconflow_key and not updated_embed:
             env_lines.append(f"EMBED_API_KEY={siliconflow_key}")
         if siliconflow_key:
@@ -524,17 +538,18 @@ async def _start_onboarding():
         env_path.write_text(content, encoding="utf-8")
         logger.info("config.saved",
             env_path=str(env_path),
+            provider=provider,
             wrote_bytes=len(content),
             verify_exists=env_path.exists(),
             verify_size=env_path.stat().st_size if env_path.exists() else -1,
         )
 
-        os.environ["DEEPSEEK_API_KEY"] = deepseek_key
+        os.environ[target_env_var] = api_key
         if siliconflow_key:
             os.environ["EMBED_API_KEY"] = siliconflow_key
 
         _done.set()
-        return {"status": "ok", "message": "配置已保存"}
+        return {"status": "ok", "message": "配置已保存", "provider": provider}
 
     @http.app.get("/api/config/debug")
     async def debug_config():
@@ -551,7 +566,14 @@ async def _start_onboarding():
 
     @http.app.get("/api/config/check")
     async def check_config():
-        return {"has_api_key": bool(os.getenv("DEEPSEEK_API_KEY"))}
+        # V3.4+: 检查任意供应商的 API Key
+        has_key = bool(
+            os.getenv("DEEPSEEK_API_KEY") or
+            os.getenv("OPENAI_API_KEY") or
+            os.getenv("ANTHROPIC_API_KEY") or
+            os.getenv("GOOGLE_API_KEY")
+        )
+        return {"has_api_key": has_key}
 
     # 静态文件挂载
     base = _get_base_dir()

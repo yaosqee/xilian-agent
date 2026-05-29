@@ -195,6 +195,36 @@ CREATE TABLE IF NOT EXISTS cron_runs (
 );
 """
 
+_CREATE_MODEL_CONFIGS = """
+CREATE TABLE IF NOT EXISTS model_configs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_key  TEXT NOT NULL UNIQUE,
+    provider    TEXT NOT NULL,
+    model_name  TEXT NOT NULL,
+    api_key     TEXT NOT NULL DEFAULT '',
+    base_url    TEXT DEFAULT '',
+    temperature REAL DEFAULT 0.7,
+    max_tokens  INTEGER DEFAULT 800,
+    is_active   INTEGER DEFAULT 1,
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+);
+"""
+
+_CREATE_EMBED_CONFIG = """
+CREATE TABLE IF NOT EXISTS embed_config (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider    TEXT NOT NULL,
+    model_name  TEXT NOT NULL,
+    api_key     TEXT NOT NULL DEFAULT '',
+    base_url    TEXT DEFAULT '',
+    dimensions  INTEGER DEFAULT 1024,
+    is_active   INTEGER DEFAULT 1,
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -228,6 +258,11 @@ _CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_affection_updated ON affection_state(updated_at);",
     # user_portrait
     "CREATE INDEX IF NOT EXISTS idx_portrait_version ON user_portrait(version);",
+    # model_configs
+    "CREATE INDEX IF NOT EXISTS idx_model_config_key ON model_configs(config_key);",
+    "CREATE INDEX IF NOT EXISTS idx_model_config_provider ON model_configs(provider, is_active);",
+    # embed_config
+    "CREATE INDEX IF NOT EXISTS idx_embed_config_provider ON embed_config(provider, is_active);",
 ]
 
 
@@ -328,6 +363,8 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_AFFECTION)
         await self._conn.execute(_CREATE_USER_PORTRAIT)
         await self._conn.execute(_CREATE_CRON_RUNS)
+        await self._conn.execute(_CREATE_MODEL_CONFIGS)
+        await self._conn.execute(_CREATE_EMBED_CONFIG)
         for idx_sql in _CREATE_INDEXES_SQL:
             await self._conn.execute(idx_sql)
         await self._conn.commit()
@@ -1472,6 +1509,125 @@ class DatabaseManager:
         await self._conn.execute(
             "INSERT OR REPLACE INTO cron_runs (task_name, last_run) VALUES (?, ?)",
             (task_name, ts),
+        )
+        await self._conn.commit()
+
+    # ============================================================
+    # 模型配置 CRUD（Phase B: 多供应商路由）
+    # ============================================================
+
+    async def insert_model_config(
+        self, config_key: str, provider: str, model_name: str,
+        api_key: str = "", base_url: str = "",
+        temperature: float = 0.7, max_tokens: int = 800,
+        is_active: int = 1, created_at: float | None = None,
+        updated_at: float | None = None,
+    ):
+        """插入或替换一条模型配置。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        now = time.time()
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO model_configs
+               (config_key, provider, model_name, api_key, base_url,
+                temperature, max_tokens, is_active, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (config_key, provider, model_name, api_key, base_url,
+             temperature, max_tokens, is_active,
+             created_at or now, updated_at or now),
+        )
+        await self._conn.commit()
+
+    async def get_model_configs(self) -> list[dict]:
+        """获取所有活跃的模型配置（含 tier 和 override）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT * FROM model_configs WHERE is_active = 1"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_model_config(self, config_key: str) -> dict | None:
+        """获取单条模型配置。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT * FROM model_configs WHERE config_key = ? AND is_active = 1",
+            (config_key,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_model_config(
+        self, config_key: str, **kwargs,
+    ):
+        """更新模型配置的部分字段。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        kwargs["updated_at"] = time.time()
+        sets = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [config_key]
+        await self._conn.execute(
+            f"UPDATE model_configs SET {sets} WHERE config_key = ?",
+            values,
+        )
+        await self._conn.commit()
+
+    async def delete_model_config(self, config_key: str):
+        """软删除一条模型配置（设为 inactive）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        await self._conn.execute(
+            "UPDATE model_configs SET is_active = 0, updated_at = ? WHERE config_key = ?",
+            (time.time(), config_key),
+        )
+        await self._conn.commit()
+
+    # ── Embed config ──────────────────────────────────────────
+
+    async def insert_embed_config(
+        self, provider: str, model_name: str,
+        api_key: str = "", base_url: str = "",
+        dimensions: int = 1024, is_active: int = 1,
+        created_at: float | None = None,
+        updated_at: float | None = None,
+    ):
+        """插入或替换嵌入配置（单行：id=1）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        now = time.time()
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO embed_config
+               (id, provider, model_name, api_key, base_url,
+                dimensions, is_active, created_at, updated_at)
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (provider, model_name, api_key, base_url,
+             dimensions, is_active,
+             created_at or now, updated_at or now),
+        )
+        await self._conn.commit()
+
+    async def get_embed_config(self) -> dict | None:
+        """获取当前活跃的嵌入配置。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT * FROM embed_config WHERE is_active = 1 LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_embed_config(self, **kwargs):
+        """更新嵌入配置。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        kwargs["updated_at"] = time.time()
+        sets = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values())
+        await self._conn.execute(
+            f"UPDATE embed_config SET {sets} WHERE id = 1",
+            values,
         )
         await self._conn.commit()
 

@@ -31,12 +31,13 @@ async def test_ds_flash_chat():
 
     try:
         reply = await router.route("memory_encoding", messages)
+        reply_text = reply.content if hasattr(reply, 'content') else reply
         logger.info(
             "heartbeat.ds_flash_ok",
             trace_id=trace_id,
-            reply_preview=reply[:100],
+            reply_preview=reply_text[:100],
         )
-        assert len(reply) > 0, "DS Flash 应返回非空回复"
+        assert len(reply_text) > 0, "DS Flash 应返回非空回复"
     except Exception as e:
         logger.error("heartbeat.ds_flash_fail", trace_id=trace_id, error=str(e))
         pytest.fail(f"DS Flash 连接失败: {e}")
@@ -53,7 +54,8 @@ async def test_ds_pro_chat():
 
     try:
         reply = await router.route("chat", messages)
-        assert len(reply) > 0, "DS Pro 应返回非空回复"
+        reply_text = reply.content if hasattr(reply, 'content') else reply
+        assert len(reply_text) > 0, "DS Pro 应返回非空回复"
     except Exception as e:
         pytest.fail(f"DS Pro 连接失败: {e}")
 
@@ -86,11 +88,11 @@ async def test_routing():
 
     # chat → DS Pro
     reply = await router.route("chat", messages)
-    assert len(reply) > 0
+    assert len(reply.content) > 0
 
     # memory_encoding → DS Flash
     reply = await router.route("memory_encoding", messages)
-    assert len(reply) > 0
+    assert len(reply.content) > 0
 
 
 async def main():

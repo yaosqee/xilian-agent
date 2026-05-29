@@ -1,27 +1,37 @@
 import React, { useState } from 'react';
 
+const PROVIDERS = [
+  { id: 'deepseek', name: 'DeepSeek', keyLabel: 'DeepSeek API Key', keyHint: 'sk-...', getUrl: 'https://platform.deepseek.com' },
+  { id: 'openai', name: 'OpenAI', keyLabel: 'OpenAI API Key', keyHint: 'sk-...', getUrl: 'https://platform.openai.com/api-keys' },
+  { id: 'anthropic', name: 'Anthropic', keyLabel: 'Anthropic API Key', keyHint: 'sk-ant-...', getUrl: 'https://console.anthropic.com' },
+  { id: 'google', name: 'Google', keyLabel: 'Google API Key', keyHint: 'AIza...', getUrl: 'https://aistudio.google.com/apikey' },
+];
+
 const OnboardingPage: React.FC = () => {
-  const [deepseekKey, setDeepseekKey] = useState('');
+  const [provider, setProvider] = useState('deepseek');
+  const [apiKey, setApiKey] = useState('');
   const [siliconflowKey, setSiliconflowKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
 
+  const currentProvider = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
+
   const handleSave = async () => {
-    if (!deepseekKey.trim()) {
-      setError('DeepSeek API Key 是必需的哦……');
+    if (!apiKey.trim()) {
+      setError(`${currentProvider.name} API Key 是必需的哦……`);
       return;
     }
     setSaving(true);
     setError('');
 
     try {
-      // Step 1: save config
       const res = await fetch('/api/config/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          deepseek_key: deepseekKey.trim(),
+          provider: provider,
+          api_key: apiKey.trim(),
           siliconflow_key: siliconflowKey.trim(),
         }),
       });
@@ -33,8 +43,6 @@ const OnboardingPage: React.FC = () => {
       }
 
       setDone(true);
-
-      // 等旧进程退出 + 新进程启动
       await new Promise(resolve => setTimeout(resolve, 3000));
 
       let attempts = 0;
@@ -47,7 +55,7 @@ const OnboardingPage: React.FC = () => {
             window.location.reload();
           }
         } catch {
-          // server not up yet, keep polling
+          // server not up yet
         }
         if (attempts > 30) {
           clearInterval(poll);
@@ -74,20 +82,42 @@ const OnboardingPage: React.FC = () => {
           </div>
         ) : (
           <>
+            {/* Provider selector */}
             <div style={styles.field}>
               <label style={styles.label}>
-                DeepSeek API Key <span style={styles.required}>*</span>
+                模型供应商 <span style={styles.required}>*</span>
+              </label>
+              <select
+                style={styles.select}
+                value={provider}
+                onChange={(e) => {
+                  setProvider(e.target.value);
+                  setApiKey('');
+                }}
+                disabled={saving}
+              >
+                {PROVIDERS.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* API Key */}
+            <div style={styles.field}>
+              <label style={styles.label}>
+                {currentProvider.keyLabel} <span style={styles.required}>*</span>
               </label>
               <input
                 type="password"
                 style={styles.input}
-                placeholder="sk-..."
-                value={deepseekKey}
-                onChange={(e) => setDeepseekKey(e.target.value)}
+                placeholder={currentProvider.keyHint}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
                 disabled={saving}
               />
             </div>
 
+            {/* SiliconFlow key (embed) */}
             <div style={styles.field}>
               <label style={styles.label}>
                 硅基流动 API Key{' '}
@@ -105,12 +135,12 @@ const OnboardingPage: React.FC = () => {
 
             <div style={styles.links}>
               <a
-                href="https://platform.deepseek.com"
+                href={currentProvider.getUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={styles.link}
               >
-                获取 DeepSeek API Key →
+                获取 {currentProvider.name} API Key →
               </a>
               <a
                 href="https://siliconflow.cn"
@@ -206,6 +236,20 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#5E4B66',
     outline: 'none',
     boxSizing: 'border-box' as const,
+  },
+  select: {
+    width: '100%',
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: '1px solid rgba(216, 180, 226, 0.4)',
+    background: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    color: '#5E4B66',
+    outline: 'none',
+    boxSizing: 'border-box' as const,
+    cursor: 'pointer',
+    appearance: 'none' as const,
   },
   links: {
     display: 'flex',

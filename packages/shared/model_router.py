@@ -1,30 +1,37 @@
-"""ModelRouter — 纯云端路由核心，进程内路由
+"""ModelRouter — 多供应商模型路由核心
 
-2026-05-15 修订（V3.3）：纯云端方案，砍掉本地模型。
-  · 高质量（用户直接感知/安全攸关）→ DeepSeek V4-Pro（双 Key 轮询）
-  · 后台异步（记忆编码/情感分析/格式化）→ DeepSeek V4-Flash
-  · 嵌入向量 → 硅基流动 bge-m3（OpenAI 兼容 API）
-  · 架构保留模型切换点，未来可接入本地或其他云端模型
+V3.3 → V3.4 升级：硬编码 DeepSeek Pro/Flash 二分 → Tier 系统 + Provider Adapter 委派。
+
+路由流程:
+    task_type → tier (TASK_TIER_MAP) → TierConfig (provider + model) → adapter.chat()
+
+向后兼容:
+    仅设置 DEEPSEEK_API_KEY 的用户自动使用 DeepSeekAdapter，行为完全不变。
+    新增供应商只需配置 DB 或 .env 中的对应 API Key。
 """
-import os
+from __future__ import annotations
+
 import asyncio
-import itertools
+import os
 import time as _time_module
 from typing import Literal
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
+
 import httpx
 from loguru import logger
 
-load_dotenv()
+from .providers import (
+    TaskType, TierName,
+    TASK_TIER_MAP, TierConfig, ProviderResponse, TaskOverride,
+    DEFAULT_TIER_MODELS, DEFAULT_EMBED_MODELS, detect_configured_providers,
+)
+from .providers.base import ProviderAdapter
+from .providers.deepseek import DeepSeekAdapter
 
-TaskType = Literal[
-    "chat", "empathy",
-    "memory_encoding", "autobiography", "reflection", "dream",
-    "reasoning", "code", "planning",
-    "personality_check", "prompt_injection_detect", "approval_text",
-    "emotion_analysis", "tool_result_wrap",
-    "proactive_greeting", "image_response",
+# Re-export for backward compat
+__all__ = [
+    "ModelRouter",
+    "TaskType",
+    "ToolRelatedError",
 ]
 
 
@@ -34,84 +41,285 @@ class ToolRelatedError(Exception):
 
 
 class ModelRouter:
+    """多供应商模型路由器。
+
+    用法:
+        router = ModelRouter()
+        await router.initialize()     # Phase B: async init with DB config
+        # 或不调 initialize()，自动使用 DeepSeek-only 默认配置
+
+        response = await router.route("chat", messages, tools=...)
+        print(response.content)
     """
-    纯云端路由拓扑（2026-05-15 修订）：
-    · 核心对话/共情/推理/代码/规划/安全检测 → DS V4-Pro（双Key轮询）
-    · 记忆编码/自传体/反思/梦幻/审批/情感分析/工具包装 → DS V4-Flash
-    · 嵌入向量 → 硅基流动 bge-m3（OpenAI 兼容 embeddings API）
-    · 架构保留所有路由点的 model_override，便于调试对比
-    """
 
-    # ========== 路由表 ==========
-    ROUTE_DS_PRO = {
-        "chat", "empathy",
-        "reasoning", "code", "planning",
-        "personality_check", "prompt_injection_detect",
-        "proactive_greeting", "image_response",
-    }
-    ROUTE_DS_FLASH = {
-        "memory_encoding", "autobiography", "reflection", "dream",
-        "approval_text", "emotion_analysis", "tool_result_wrap",
-    }
+    def __init__(self, db=None):
+        """
+        Args:
+            db: DatabaseManager (optional). Needed for DB-backed tier config and hot-reload.
+                If None, uses env-vars only (backward compat).
+        """
+        self._db = db
 
-    def __init__(self):
-        # 统一超时配置：connect=15s（默认 5s 太短，网络波动时大量超时）
-        _api_timeout = httpx.Timeout(connect=15.0, read=120.0, write=120.0, pool=30.0)
+        # ── Adapter cache: provider_name → ProviderAdapter ──
+        self._adapters: dict[str, ProviderAdapter] = {}
 
-        # === DeepSeek V4-Pro 客户端（多 Key 轮询）===
-        self._ds_pro_keys = [
-            k for k in [
-                os.getenv("DEEPSEEK_API_KEY"),
-                os.getenv("DEEPSEEK_API_KEY_2"),
-            ] if k
-        ]
-        self._ds_pro_clients = [
-            AsyncOpenAI(api_key=k, base_url="https://api.deepseek.com", timeout=_api_timeout, max_retries=1)
-            for k in self._ds_pro_keys
-        ] if self._ds_pro_keys else []
-        self._pro_key_cycle = itertools.cycle(range(len(self._ds_pro_clients)))
-        self.ds_pro_model = "deepseek-v4-pro"
+        # ── Tier configs: tier_name → TierConfig ──
+        self._tier_configs: dict[str, TierConfig] = {}
 
-        # === DeepSeek V4-Flash 客户端 ===
-        flash_key = os.getenv("DEEPSEEK_API_KEY_2") or os.getenv("DEEPSEEK_API_KEY")
-        self._ds_flash = AsyncOpenAI(
-            api_key=flash_key, base_url="https://api.deepseek.com", timeout=_api_timeout, max_retries=1
-        ) if flash_key else None
-        self.ds_flash_model = "deepseek-v4-flash"
+        # ── Task overrides: task_type → TaskOverride (from DB) ──
+        self._task_overrides: dict[str, TaskOverride] = {}
 
-        # === 嵌入 API（硅基流动 bge-m3，OpenAI 兼容）===
-        embed_key = os.getenv("EMBED_API_KEY") or flash_key
-        embed_base = os.getenv("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
-        self._embed_client = AsyncOpenAI(
-            api_key=embed_key,
-            base_url=embed_base,
-        ) if embed_key else None
-        self._embed_model = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
+        # ── Embed config (separate from tier configs) ──
+        self._embed_config: dict | None = None  # {provider, model_name, base_url, api_key, dimensions}
 
-        # === Qwen（保留备查，当前路由表不引用）===
-        qwen_key = os.getenv("DASHSCOPE_API_KEY")
-        self.qwen = AsyncOpenAI(
-            api_key=qwen_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        ) if qwen_key else None
-        self.qwen_model = "qwen3.6-plus"
-
-        # === 阶段 7a: 工具兼容性缓存 ===
+        # ── Tool compatibility cache (per model_key, 24h TTL) ──
         self._tools_support_cache: dict[str, bool] = {}
         self._tools_cache_reset_interval = 86400  # 24h
         self._tools_cache_last_reset = _time_module.time()
 
+        # ── Lazy init: create default DeepSeek adapter immediately ──
+        self._init_default_adapter()
+
         logger.info(
-            "ModelRouter 就绪 (纯云端 mode)",
-            ds_pro_keys=len(self._ds_pro_clients),
-            ds_flash=bool(self._ds_flash),
-            embed_provider=embed_base.split("//")[1].split("/")[0] if embed_base else "none",
-            embed_model=self._embed_model,
+            "ModelRouter 就绪 (multi-provider mode)",
+            adapters=list(self._adapters.keys()),
+            tiers=list(self._tier_configs.keys()),
         )
 
-    # ========== 路由 ==========
+    def _init_default_adapter(self):
+        """Create default DeepSeek adapter from env vars (backward compat).
 
-    # ========== 路由 ==========
+        Auto-detects:
+        - If DEEPSEEK_API_KEY is set → create DeepSeekAdapter, map deepseek models to all tiers
+        - If no keys at all → empty (will fail on first route() with clear error)
+        """
+        ds_key = os.getenv("DEEPSEEK_API_KEY")
+        if ds_key:
+            adapter = DeepSeekAdapter()
+            self._adapters["deepseek"] = adapter
+
+            # Default tier configs (all tiers use DeepSeek)
+            self._tier_configs["powerful"] = TierConfig(
+                tier="powerful", provider="deepseek",
+                model_name="deepseek-v4-pro", temperature=0.65, max_tokens=800,
+            )
+            self._tier_configs["fast"] = TierConfig(
+                tier="fast", provider="deepseek",
+                model_name="deepseek-v4-flash", temperature=0.3, max_tokens=800,
+            )
+            self._tier_configs["reasoning"] = TierConfig(
+                tier="reasoning", provider="deepseek",
+                model_name="deepseek-v4-pro", temperature=0.3, max_tokens=2000,
+            )
+
+            # Embed config (from env, may use SiliconFlow)
+            embed_key = os.getenv("EMBED_API_KEY") or os.getenv("DEEPSEEK_API_KEY_2") or ds_key
+            embed_base = os.getenv("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
+            embed_model = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
+            embed_provider = "siliconflow" if "siliconflow" in embed_base else "deepseek"
+            self._embed_config = {
+                "provider": embed_provider,
+                "model_name": embed_model,
+                "base_url": embed_base,
+                "api_key": embed_key,
+                "dimensions": 1024,
+            }
+        else:
+            logger.warning("ModelRouter: 未检测到任何 API Key，需引导配置")
+
+    # ══════════════════════════════════════════════════════════
+    # Phase B: DB-backed initialization
+    # ══════════════════════════════════════════════════════════
+
+    async def initialize(self):
+        """异步初始化：从 DB 加载 tier 配置并创建适配器。
+
+        若 DB 无配置，fallback 到 _init_default_adapter() 的结果。
+        调用时机：agent.startup() 完成后（DB 已初始化）。
+        """
+        if not self._db:
+            logger.info("model_router.no_db — using env-var defaults")
+            return
+
+        try:
+            # 加载 tier 配置
+            db_configs = await self._db.get_model_configs()
+            if db_configs:
+                self._adapters.clear()
+                self._tier_configs.clear()
+                self._task_overrides.clear()
+
+                for row in db_configs:
+                    key = row["config_key"]
+                    if key.startswith("tier:"):
+                        tier = key.split(":", 1)[1]
+                        self._tier_configs[tier] = TierConfig(
+                            tier=tier,
+                            provider=row["provider"],
+                            model_name=row["model_name"],
+                            temperature=row.get("temperature", 0.7),
+                            max_tokens=row.get("max_tokens", 800),
+                            is_active=bool(row.get("is_active", 1)),
+                        )
+                    elif key.startswith("override:"):
+                        task_type = key.split(":", 1)[1]
+                        self._task_overrides[task_type] = TaskOverride(
+                            task_type=task_type,
+                            provider=row["provider"],
+                            model_name=row["model_name"],
+                        )
+
+                # 创建各 provider 的 adapter
+                await self._create_adapters_from_configs()
+                logger.info(
+                    "model_router.db_loaded",
+                    tiers=list(self._tier_configs.keys()),
+                    adapters=list(self._adapters.keys()),
+                    overrides=list(self._task_overrides.keys()),
+                )
+            else:
+                # DB 无配置 → auto-seed from env vars
+                await self._auto_seed_db()
+
+            # 加载 embed 配置
+            db_embed = await self._db.get_embed_config()
+            if db_embed:
+                self._embed_config = db_embed
+
+        except Exception as e:
+            logger.warning("model_router.db_load_failed", error=str(e))
+
+    async def _auto_seed_db(self):
+        """首次升级：从 .env 检测现有配置，自动播种 DB。"""
+        if not self._db:
+            return
+
+        providers = detect_configured_providers()
+        if not providers:
+            return
+
+        # 确定主供应商
+        primary = "deepseek" if "deepseek" in providers else providers[0]
+
+        # 写入 tier 配置
+        now = _time_module.time()
+        tier_defaults = DEFAULT_TIER_MODELS.get(primary, DEFAULT_TIER_MODELS["deepseek"])
+        for tier, model in tier_defaults.items():
+            api_key = os.getenv(f"{primary.upper()}_API_KEY", "")
+            # Per-tier defaults
+            if tier == "powerful":
+                temp, mt = 0.65, 800
+            elif tier == "reasoning":
+                temp, mt = 0.3, 2000
+            else:
+                temp, mt = 0.3, 800
+            try:
+                await self._db.insert_model_config(
+                    config_key=f"tier:{tier}",
+                    provider=primary,
+                    model_name=model,
+                    api_key=api_key,
+                    temperature=temp,
+                    max_tokens=mt,
+                    is_active=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            except Exception:
+                pass  # 可能已存在（唯一约束冲突）
+
+            # 更新内存中的 tier config
+            self._tier_configs[tier] = TierConfig(
+                tier=tier, provider=primary, model_name=model,
+                temperature=temp, max_tokens=mt,
+            )
+
+        # 写入 embed 配置
+        if "siliconflow" in providers or os.getenv("EMBED_API_KEY"):
+            embed_defaults = DEFAULT_EMBED_MODELS.get("siliconflow")
+            try:
+                await self._db.insert_embed_config(
+                    provider=embed_defaults["provider"],
+                    model_name=embed_defaults["model_name"],
+                    api_key=os.getenv("EMBED_API_KEY", ""),
+                    base_url=embed_defaults["base_url"],
+                    dimensions=embed_defaults["dimensions"],
+                    is_active=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._embed_config = dict(embed_defaults, api_key=os.getenv("EMBED_API_KEY", ""))
+            except Exception:
+                pass
+
+        logger.info("model_router.auto_seeded", primary=primary, tiers=list(tier_defaults.keys()))
+
+    async def _create_adapters_from_configs(self):
+        """从 tier configs 创建各 provider 的 adapter 实例。"""
+        for tier_cfg in self._tier_configs.values():
+            provider = tier_cfg.provider
+            if provider not in self._adapters:
+                adapter = self._create_adapter(provider)
+                if adapter:
+                    self._adapters[provider] = adapter
+
+    def _create_adapter(self, provider: str) -> ProviderAdapter | None:
+        """创建指定供应商的 adapter。"""
+        if provider == "deepseek":
+            return DeepSeekAdapter()
+        elif provider == "openai":
+            # Lazy import to avoid requiring openai SDK at startup
+            try:
+                from .providers.openai_adapter import OpenAIAdapter
+                return OpenAIAdapter()
+            except ImportError as e:
+                logger.warning("openai_adapter.import_failed", error=str(e))
+                return None
+        elif provider == "anthropic":
+            try:
+                from .providers.anthropic import AnthropicAdapter
+                return AnthropicAdapter()
+            except ImportError as e:
+                logger.warning("anthropic_adapter.import_failed", error=str(e))
+                return None
+        elif provider == "google":
+            from .providers.google_adapter import GoogleAdapter
+            return GoogleAdapter()
+        else:
+            logger.warning("model_router.unknown_provider", provider=provider)
+            return None
+
+    # ══════════════════════════════════════════════════════════
+    # Hot reload
+    # ══════════════════════════════════════════════════════════
+
+    async def reload_config(self):
+        """热重载配置（无需重启进程）。
+
+        从 DB 重新读取 tier configs，重建 adapter 实例。
+        asyncio 下原子引用替换，线程安全。
+        """
+        if not self._db:
+            logger.warning("model_router.reload_no_db")
+            return
+
+        # 保存旧配置供回退
+        old_adapters = self._adapters
+        old_tiers = self._tier_configs
+
+        try:
+            await self.initialize()
+            logger.info("model_router.reloaded", providers=list(self._adapters.keys()))
+        except Exception as e:
+            # 回退
+            self._adapters = old_adapters
+            self._tier_configs = old_tiers
+            logger.error("model_router.reload_failed", error=str(e))
+            raise
+
+    # ══════════════════════════════════════════════════════════
+    # Route — main entry point
+    # ══════════════════════════════════════════════════════════
 
     async def route(
         self,
@@ -120,228 +328,178 @@ class ModelRouter:
         tools: list | None = None,
         tool_choice: str | None = None,
         **kwargs,
-    ):
-        """
-        路由主入口。
+    ) -> ProviderResponse | object:
+        """路由主入口。
 
-        阶段 7a 新增 tools/tool_choice 参数，自动降级：
-        - 若目标模型标记为不支持 tools → 自动移除 tools 参数
-        - 若调用时抛出 ToolRelatedError → 标记不兼容 + 无 tools 重试
-        """
-        model_key = self._get_model_key(task_type)
+        1. 解析 task_type → tier
+        2. 检查 task_type 覆盖
+        3. 解析 tier → provider + model
+        4. 调用 adapter.chat()
 
-        # 阶段 7a: 工具兼容性检查
+        Returns:
+            ProviderResponse (normal) or raw stream object (when stream=True)
+        """
+        # ── 1. 解析 tier ──
+        tier = TASK_TIER_MAP.get(task_type, "powerful")
+        tier_cfg = self._tier_configs.get(tier)
+
+        # ── 2. 检查 task_type 覆盖（高级设置）──
+        override = self._task_overrides.get(task_type)
+        if override:
+            tier_cfg = TierConfig(
+                tier=tier,
+                provider=override.provider,
+                model_name=override.model_name,
+                temperature=kwargs.get("temperature", 0.7),
+                max_tokens=kwargs.get("max_tokens", 800),
+            )
+
+        # ── 3. 获取 adapter ──
+        if tier_cfg is None:
+            # 无配置 → fallback 到第一个可用 adapter
+            if self._adapters:
+                provider = next(iter(self._adapters.keys()))
+                adapter = self._adapters[provider]
+                model = DEFAULT_TIER_MODELS.get(provider, {}).get(tier, f"{provider}-default")
+                logger.warning("model_router.no_tier_config", tier=tier,
+                             fallback_provider=provider, fallback_model=model)
+            else:
+                raise RuntimeError(
+                    "没有可用的模型供应商。请配置至少一个 API Key（如 DEEPSEEK_API_KEY）。"
+                )
+        else:
+            provider = tier_cfg.provider
+            adapter = self._adapters.get(provider)
+            if adapter is None:
+                # Adapter 未加载 → 尝试创建
+                adapter = self._create_adapter(provider)
+                if adapter:
+                    self._adapters[provider] = adapter
+                else:
+                    # 回退到任意可用 adapter
+                    if not self._adapters:
+                        raise RuntimeError(f"供应商 '{provider}' 不可用且无其他可用供应商。")
+                    fallback_provider = next(iter(self._adapters.keys()))
+                    adapter = self._adapters[fallback_provider]
+                    logger.warning("model_router.provider_fallback",
+                                 requested=provider, fallback=fallback_provider)
+                    provider = fallback_provider
+
+            model = tier_cfg.model_name
+            # Merge tier-level defaults with call-site kwargs
+            kwargs.setdefault("temperature", tier_cfg.temperature)
+            kwargs.setdefault("max_tokens", tier_cfg.max_tokens)
+
+        # ── 4. Tool compatibility check ──
+        model_key = f"{provider}:{model}"
         if tools and not self._supports_tools(model_key):
             logger.info("model_router.tools_degraded", model=model_key)
             tools = None
             tool_choice = None
 
-        kwargs["tools"] = tools
-        kwargs["tool_choice"] = tool_choice
-
+        # ── 5. Call adapter ──
         try:
-            # --- DS Pro ---
-            if task_type in self.ROUTE_DS_PRO:
-                return await self._call_ds_pro(messages, **kwargs)
-
-            # --- DS Flash ---
-            if task_type in self.ROUTE_DS_FLASH:
-                return await self._call_ds_flash(messages, **kwargs)
-
-            # fallback
-            logger.warning("未知任务类型，fallback DS Pro", task_type=task_type)
-            return await self._call_ds_pro(messages, **kwargs)
-
-        except ToolRelatedError as e:
-            logger.warning("model_router.tool_error", model=model_key, error=str(e))
-            self._tools_support_cache[model_key] = False
-            if tools:
-                # 移除 tools 重试
-                kwargs["tools"] = None
-                kwargs["tool_choice"] = None
-                if task_type in self.ROUTE_DS_PRO:
-                    return await self._call_ds_pro(messages, **kwargs)
-                return await self._call_ds_flash(messages, **kwargs)
-            raise
-
-    # ========== 嵌入 ==========
-
-    async def embed(self, text: str) -> list[float] | None:
-        """
-        云端嵌入 API（硅基流动 bge-m3）。
-        1024 维向量，与 sqlite-vec 索引维度一致。
-        无 Key 时返回 None，由调用方降级处理。
-        """
-        if not self._embed_client:
-            logger.debug("embed.unavailable")
-            return None
-
-        try:
-            response = await asyncio.wait_for(
-                self._embed_client.embeddings.create(
-                    model=self._embed_model,
-                    input=text,
-                ),
-                timeout=30,
+            result = await adapter.chat(
+                model=model,
+                messages=messages,
+                temperature=kwargs.get("temperature", 0.7),
+                max_tokens=kwargs.get("max_tokens", 800),
+                stream=kwargs.get("stream", False),
+                tools=tools,
+                tool_choice=tool_choice,
             )
-            return response.data[0].embedding
+            return result
         except Exception as e:
-            logger.warning("embed.failed", error=str(e)[:120])
-            return None
-
-    async def embed_batch(self, texts: list[str]) -> list[list[float]] | None:
-        """批量嵌入。无 Key 或调用失败时返回 None。"""
-        if not self._embed_client:
-            logger.debug("embed.unavailable")
-            return None
-
-        try:
-            response = await asyncio.wait_for(
-                self._embed_client.embeddings.create(
-                    model=self._embed_model,
-                    input=texts,
-                ),
-                timeout=60,
-            )
-            return [d.embedding for d in response.data]
-        except Exception as e:
-            logger.warning("embed_batch.failed", error=str(e)[:120])
-            return None
-
-    # ========== 底层调用 ==========
-
-    def _pick_pro_client(self) -> AsyncOpenAI:
-        """轮询选取 Pro 客户端"""
-        if not self._ds_pro_clients:
-            raise RuntimeError("DeepSeek V4-Pro 未配置 API Key")
-        idx = next(self._pro_key_cycle)
-        logger.debug(f"DS Pro 选取 key[{idx}]")
-        return self._ds_pro_clients[idx]
-
-    @staticmethod
-    def _log_cache_usage(response, model_label: str) -> None:
-        """提取 DeepSeek 前缀缓存命中率并记录日志。"""
-        usage = getattr(response, "usage", None)
-        if not usage:
-            return
-        hit = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
-        miss = getattr(usage, "prompt_cache_miss_tokens", 0) or 0
-        total_prompt = (getattr(usage, "prompt_tokens", 0) or 0)
-        if hit + miss == 0:
-            return
-        rate = round(hit / (hit + miss) * 100, 1)
-        logger.debug("cache.hit_rate",
-                     model=model_label,
-                     hit_tokens=hit,
-                     miss_tokens=miss,
-                     total_prompt=total_prompt,
-                     hit_rate_pct=rate)
-
-    async def _call_ds_pro(self, messages: list, timeout: int = 90, **kwargs):
-        """DS Pro（双 Key 轮询 + fallback）。有 tools 时返回完整 message 对象。"""
-        has_tools = bool(kwargs.get("tools"))
-        for attempt in range(len(self._ds_pro_clients)):
-            t0 = _time_module.time()
-            try:
-                client = self._ds_pro_clients[attempt]
-                api_kwargs = dict(
-                    model=self.ds_pro_model,
+            # Tool error → mark incompatible and retry without tools
+            if tools and _is_tool_error(e):
+                logger.warning("model_router.tool_error", model=model_key, error=str(e))
+                self._tools_support_cache[model_key] = False
+                return await adapter.chat(
+                    model=model,
                     messages=messages,
                     temperature=kwargs.get("temperature", 0.7),
+                    max_tokens=kwargs.get("max_tokens", 800),
                     stream=kwargs.get("stream", False),
+                    tools=None,
+                    tool_choice=None,
                 )
-                if kwargs.get("max_tokens"):
-                    api_kwargs["max_tokens"] = kwargs["max_tokens"]
-                if has_tools:
-                    api_kwargs["tools"] = kwargs["tools"]
-                    api_kwargs["tool_choice"] = kwargs.get("tool_choice", "auto")
-                response = await asyncio.wait_for(
-                    client.chat.completions.create(**api_kwargs),
-                    timeout=timeout,
-                )
-                elapsed = (_time_module.time() - t0) * 1000
-                logger.debug("ds_pro.call_ok", key=attempt, elapsed_ms=round(elapsed))
-                if not kwargs.get("stream"):
-                    self._log_cache_usage(response, "ds_pro")
-                if kwargs.get("stream"):
-                    return response
-                choice = response.choices[0]
-                finish = choice.finish_reason
-                if finish == "length":
-                    logger.warning(f"{self.ds_pro_model} output truncated (max_tokens reached)",
-                                  usage=str(response.usage))
-                msg = choice.message
-                # 有 tools 时返回完整 message（可能含 tool_calls）；否则返回 content 字符串
-                return msg if has_tools else msg.content
-            except Exception as e:
-                elapsed = (_time_module.time() - t0) * 1000
-                err_type = type(e).__name__
-                err_msg = str(e)[:300]
-                logger.warning(f"DS Pro key[{attempt}] 失败: {err_type}",
-                              elapsed_ms=round(elapsed),
-                              detail=err_msg)
-                if attempt == len(self._ds_pro_clients) - 1:
-                    raise
-                continue
-
-    async def _call_ds_flash(self, messages: list, timeout: int = 90, **kwargs):
-        """DS Flash。有 tools 时返回完整 message 对象。"""
-        if not self._ds_flash:
-            logger.warning("DS Flash 不可用，fallback DS Pro")
-            return await self._call_ds_pro(messages, **kwargs)
-
-        has_tools = bool(kwargs.get("tools"))
-        t0 = _time_module.time()
-        api_kwargs = dict(
-            model=self.ds_flash_model,
-            messages=messages,
-            temperature=kwargs.get("temperature", 0.7),
-            stream=kwargs.get("stream", False),
-        )
-        if kwargs.get("max_tokens"):
-            api_kwargs["max_tokens"] = kwargs["max_tokens"]
-        if has_tools:
-            api_kwargs["tools"] = kwargs["tools"]
-            api_kwargs["tool_choice"] = kwargs.get("tool_choice", "auto")
-
-        try:
-            response = await asyncio.wait_for(
-                self._ds_flash.chat.completions.create(**api_kwargs),
-                timeout=timeout,
-            )
-        except Exception as e:
-            elapsed = (_time_module.time() - t0) * 1000
-            logger.warning(f"DS Flash 失败: {type(e).__name__}",
-                          elapsed_ms=round(elapsed),
-                          detail=str(e)[:300])
             raise
 
-        elapsed = (_time_module.time() - t0) * 1000
-        logger.debug("ds_flash.call_ok", elapsed_ms=round(elapsed))
-        if not kwargs.get("stream"):
-            self._log_cache_usage(response, "ds_flash")
-        if kwargs.get("stream"):
-            return response
-        choice = response.choices[0]
-        finish = choice.finish_reason
-        if finish == "length":
-            logger.warning(f"{self.ds_flash_model} output truncated (max_tokens reached)",
-                          usage=str(response.usage))
-        msg = choice.message
-        return msg if has_tools else msg.content
+    # ══════════════════════════════════════════════════════════
+    # Embedding
+    # ══════════════════════════════════════════════════════════
 
-    # ========== 工具兼容性 ==========
+    @property
+    def _embed_model(self) -> str:
+        """Backward compat: model name used for embeddings."""
+        if self._embed_config:
+            return self._embed_config.get("model_name", "BAAI/bge-m3")
+        return os.getenv("EMBED_MODEL", "BAAI/bge-m3")
+
+    async def embed(self, text: str) -> list[float] | None:
+        """单文本嵌入。
+
+        优先使用 embed_config 的 provider，fallback 到 DeepSeekAdapter 的 embed。
+        """
+        config = self._embed_config
+        if config:
+            provider = config.get("provider", "deepseek")
+            adapter = self._adapters.get(provider)
+            if adapter and hasattr(adapter, 'embed'):
+                result = await adapter.embed(config.get("model_name"), [text])
+                if result:
+                    return result[0]
+
+        # Fallback: use any adapter that supports embedding
+        for adapter in self._adapters.values():
+            if hasattr(adapter, 'embed'):
+                result = await adapter.embed(self._embed_model, [text])
+                if result:
+                    return result[0]
+
+        logger.debug("embed.unavailable")
+        return None
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]] | None:
+        """批量嵌入。"""
+        config = self._embed_config
+        if config:
+            provider = config.get("provider", "deepseek")
+            adapter = self._adapters.get(provider)
+            if adapter and hasattr(adapter, 'embed'):
+                return await adapter.embed(config.get("model_name"), texts)
+
+        # Fallback
+        for adapter in self._adapters.values():
+            if hasattr(adapter, 'embed'):
+                return await adapter.embed(self._embed_model, texts)
+
+        logger.debug("embed_batch.unavailable")
+        return None
+
+    # ══════════════════════════════════════════════════════════
+    # Tool compatibility
+    # ══════════════════════════════════════════════════════════
 
     def _get_model_key(self, task_type: str) -> str:
-        """根据 task_type 返回模型标识（用于缓存 key）。"""
-        if task_type in self.ROUTE_DS_PRO:
-            return "ds-pro"
-        return "ds-flash"
+        """返回路由标识（用于工具兼容性缓存）。
+
+        Backward compat: 保持 "ds-pro" / "ds-flash" key 格式，
+        同时也支持新的 "{provider}:{model}" 格式。
+        """
+        tier = TASK_TIER_MAP.get(task_type, "powerful")
+        tier_cfg = self._tier_configs.get(tier)
+        if tier_cfg:
+            return f"{tier_cfg.provider}:{tier_cfg.model_name}"
+        # Legacy format for backward compat
+        if task_type in TASK_TIER_MAP:
+            return f"tier:{TASK_TIER_MAP[task_type]}"
+        return "unknown"
 
     def _supports_tools(self, model_key: str) -> bool:
-        """
-        检查模型是否支持工具调用。
-        每日自动重置缓存（避免因临时故障永久禁用）。
+        """检查模型是否支持工具调用。
+
+        每日自动重置缓存（避免因临时故障永久禁用工具）。
         """
         now = _time_module.time()
         if now - self._tools_cache_last_reset > self._tools_cache_reset_interval:
@@ -350,33 +508,61 @@ class ModelRouter:
             logger.debug("model_router.tools_cache_reset")
         return self._tools_support_cache.get(model_key, True)
 
-    # ========== 手动覆盖 ==========
+    # ══════════════════════════════════════════════════════════
+    # Manual override (for testing / debugging)
+    # ══════════════════════════════════════════════════════════
 
     async def route_with_override(
         self, task_type, messages, model_override=None, **kwargs
-    ):
-        """允许手动指定模型，用于对比测试"""
-        if model_override in ("ds_pro", "ds"):
-            return await self._call_ds_pro(messages, **kwargs)
-        elif model_override == "ds_flash":
-            return await self._call_ds_flash(messages, **kwargs)
-        elif model_override == "qwen" and self.qwen:
-            return await self._call_qwen(messages, **kwargs)
-        return await self.route(task_type, messages, **kwargs)
+    ) -> ProviderResponse | object:
+        """手动指定模型覆盖，用于对比测试。
 
-    async def _call_qwen(self, messages: list, timeout: int = 60, **kwargs):
-        """保留，当前路由表不引用"""
-        if not self.qwen:
-            raise RuntimeError("Qwen API 未配置")
-        response = await asyncio.wait_for(
-            self.qwen.chat.completions.create(
-                model=self.qwen_model,
-                messages=messages,
-                temperature=kwargs.get("temperature", 0.7),
-                stream=kwargs.get("stream", False),
-            ),
-            timeout=timeout,
+        Args:
+            model_override: "ds_pro" | "ds" | "ds_flash" | "{provider}:{model}"
+        """
+        if model_override is None:
+            return await self.route(task_type, messages, **kwargs)
+
+        # Legacy names
+        if model_override in ("ds_pro", "ds"):
+            model_override = "deepseek:deepseek-v4-pro"
+        elif model_override == "ds_flash":
+            model_override = "deepseek:deepseek-v4-flash"
+        elif model_override == "qwen":
+            model_override = "qwen:qwen3.6-plus"
+
+        if ":" in model_override:
+            provider, model = model_override.split(":", 1)
+        else:
+            provider, model = "deepseek", model_override
+
+        adapter = self._adapters.get(provider)
+        if not adapter:
+            adapter = self._create_adapter(provider)
+            if adapter:
+                self._adapters[provider] = adapter
+            else:
+                raise RuntimeError(f"无法创建供应商 '{provider}' 的适配器")
+
+        return await adapter.chat(
+            model=model,
+            messages=messages,
+            temperature=kwargs.get("temperature", 0.7),
+            max_tokens=kwargs.get("max_tokens", 800),
+            stream=kwargs.get("stream", False),
+            tools=kwargs.get("tools"),
+            tool_choice=kwargs.get("tool_choice"),
         )
-        if kwargs.get("stream"):
-            return response
-        return response.choices[0].message.content
+
+
+# ═══════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════
+
+def _is_tool_error(e: Exception) -> bool:
+    """Check if an exception is caused by tool call incompatibility."""
+    if isinstance(e, ToolRelatedError):
+        return True
+    msg = str(e).lower()
+    tool_keywords = ["tool", "function", "tools not supported", "invalid tool"]
+    return any(kw in msg for kw in tool_keywords)

@@ -1,7 +1,322 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { resetSession, fetchBackground, uploadBackground } from '../../services/api';
+import { resetSession, fetchBackground, uploadBackground, validateApiKey } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 import { useAutonomyStore } from '../../stores/autonomyStore';
+import { useModelStore } from '../../stores/modelStore';
+
+// ── Model Settings Sub-component ──────────────────────────
+
+const TIER_LABELS: Record<string, string> = {
+  powerful: '主力模型',
+  fast: '后台模型',
+  embed: '嵌入模型',
+};
+
+const OVERRIDE_TASK_LABELS: Record<string, string> = {
+  personality_check: '人格一致性检查',
+  proactive_greeting: '主动问候生成',
+  memory_encoding: '记忆叙事化',
+};
+
+const ModelSettingsSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ sectionStyle }) => {
+  const {
+    providers, providersLoading, tiers, overrides, loading, adapters,
+    embedConfig,
+    loadProviders, loadConfig, updateConfig, addProviderKey,
+  } = useModelStore();
+
+  // 只显示已配置的供应商
+  const configuredProviders = providers.filter(p => adapters.includes(p.id));
+
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAddProvider, setShowAddProvider] = useState(false);
+  const [newProvider, setNewProvider] = useState('openai');
+  const [newApiKey, setNewApiKey] = useState('');
+  const [newBaseUrl, setNewBaseUrl] = useState('');
+  const [addingKey, setAddingKey] = useState(false);
+  const [keyError, setKeyError] = useState('');
+
+  useEffect(() => {
+    loadProviders();
+    loadConfig();
+  }, []);
+
+  if (providersLoading || loading) {
+    return (
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 10 }}>
+          模型设置
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>加载中...</p>
+      </div>
+    );
+  }
+
+  // ── F1: Cost estimate ──
+  const tierEntries = Object.entries(tiers).filter(([t]) => t !== 'embed');
+  let costEstimate = '';
+  if (tierEntries.length > 0) {
+    let totalCost = 0;
+    for (const [, cfg] of tierEntries) {
+      const p = configuredProviders.find(pr => pr.id === cfg.provider);
+      const m = p?.models.find(mm => mm.id === cfg.model);
+      if (m) {
+        // Typical usage: 2000 prompt + 500 completion tokens per round
+        totalCost += (m.cost_per_1k_in * 2) + (m.cost_per_1k_out * 0.5);
+      }
+    }
+    // Background tasks run ~15 rounds per day, but we show per-conversation
+    const perRound = totalCost;
+    const perDay = (perRound * 20) + (perRound * 0.3 * 15); // 20 chat rounds + ~15 background
+    if (perDay > 0) {
+      // Convert to approximate CNY (1 USD ≈ 7.2 CNY)
+      const perRoundCNY = perRound * 7.2;
+      const perDayCNY = perDay * 7.2;
+      costEstimate = `单轮 ≈ ¥${perRoundCNY.toFixed(2)} · 日均 ~20轮 ≈ ¥${perDayCNY.toFixed(2)}`;
+    }
+  }
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 10 }}>
+        模型设置
+      </div>
+
+      {tierEntries.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+          启动后可用 · 目前使用默认配置
+        </p>
+      ) : (
+        <>
+          {tierEntries.map(([tier, cfg]) => (
+            <div key={tier} style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, color: 'var(--color-text-dim)', display: 'block', marginBottom: 4 }}>
+                {TIER_LABELS[tier] || tier}
+              </label>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 8,
+                    border: '1px solid rgba(216, 180, 226, 0.3)',
+                    background: 'rgba(255, 255, 255, 0.6)',
+                    fontSize: 12, fontFamily: 'inherit', color: '#5E4B66',
+                    outline: 'none', cursor: 'pointer',
+                  }}
+                  value={cfg ? `${cfg.provider}:${cfg.model}` : ''}
+                  onChange={async (e) => {
+                    const [provider, model] = e.target.value.split(':');
+                    if (provider && model) {
+                      await updateConfig(tier, provider, model);
+                    }
+                  }}
+                >
+                  <option value="">{cfg ? `${cfg.provider} / ${cfg.model}` : '未配置'}</option>
+                  {configuredProviders.map(p => (
+                    <optgroup key={p.id} label={p.name}>
+                      {p.models.map(m => (
+                        <option key={`${p.id}:${m.id}`} value={`${p.id}:${m.id}`}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ))}
+
+          {/* F1: Cost estimate */}
+          {costEstimate && (
+            <div style={{
+              fontSize: 11, color: 'var(--color-text-muted)',
+              padding: '8px 10px', borderRadius: 6,
+              background: 'rgba(216, 180, 226, 0.08)',
+              marginBottom: 8,
+            }}>
+              💰 {costEstimate}
+            </div>
+          )}
+
+        </>
+      )}
+
+      {/* F3: Add provider API key */}
+      <button
+        onClick={() => setShowAddProvider(!showAddProvider)}
+        style={{
+          width: '100%', padding: '6px 12px', borderRadius: 8,
+          border: '1px dashed rgba(216, 180, 226, 0.3)',
+          background: 'transparent',
+          color: 'var(--color-text-dim)', cursor: 'pointer',
+          fontSize: 12, fontFamily: 'inherit',
+          marginBottom: 8,
+        }}
+      >
+        {showAddProvider ? '收起' : '+ 添加供应商'}
+      </button>
+
+      {showAddProvider && (
+        <div style={{ marginBottom: 12 }}>
+          <select
+            style={{
+              width: '100%', padding: '6px 10px', borderRadius: 8,
+              border: '1px solid rgba(216, 180, 226, 0.3)',
+              background: 'rgba(255, 255, 255, 0.6)',
+              fontSize: 12, fontFamily: 'inherit', color: '#5E4B66',
+              outline: 'none', cursor: 'pointer', marginBottom: 6,
+            }}
+            value={newProvider}
+            onChange={(e) => { setNewProvider(e.target.value); setNewApiKey(''); }}
+          >
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="google">Google</option>
+          </select>
+          <input
+            type="password"
+            style={{
+              width: '100%', padding: '6px 10px', borderRadius: 8,
+              border: '1px solid rgba(216, 180, 226, 0.3)',
+              background: 'rgba(255, 255, 255, 0.6)',
+              fontSize: 12, fontFamily: 'inherit', color: '#5E4B66',
+              outline: 'none', boxSizing: 'border-box' as const,
+              marginBottom: 6,
+            }}
+            placeholder={newProvider === 'anthropic' ? 'sk-ant-...' : newProvider === 'google' ? 'AIza...' : 'sk-...'}
+            value={newApiKey}
+            onChange={(e) => setNewApiKey(e.target.value)}
+            disabled={addingKey}
+          />
+          <input
+            type="text"
+            style={{
+              width: '100%', padding: '6px 10px', borderRadius: 8,
+              border: '1px solid rgba(216, 180, 226, 0.3)',
+              background: 'rgba(255, 255, 255, 0.6)',
+              fontSize: 12, fontFamily: 'inherit', color: '#5E4B66',
+              outline: 'none', boxSizing: 'border-box' as const,
+              marginBottom: 6,
+            }}
+            placeholder="自定义 API 地址（可选，如代理或兼容端点）"
+            value={newBaseUrl}
+            onChange={(e) => setNewBaseUrl(e.target.value)}
+            disabled={addingKey}
+          />
+          {keyError && (
+            <p style={{ fontSize: 11, color: '#FF9EBB', margin: '0 0 6px 0' }}>{keyError}</p>
+          )}
+          <button
+            onClick={async () => {
+              if (!newApiKey.trim()) { setKeyError('请输入 API Key'); return; }
+              setAddingKey(true); setKeyError('');
+              try {
+                // Validate first
+                const vr = await validateApiKey(newProvider, newApiKey.trim());
+                if (!vr.valid) {
+                  setKeyError(vr.error || 'Key 验证失败');
+                  setAddingKey(false);
+                  return;
+                }
+                const ok = await addProviderKey(newProvider, newApiKey.trim(), newBaseUrl.trim() || undefined);
+                if (ok) {
+                  setNewApiKey('');
+                  setNewBaseUrl('');
+                  setKeyError('');
+                  setShowAddProvider(false);
+                } else {
+                  setKeyError('保存失败，请重试');
+                }
+              } catch {
+                setKeyError('网络错误，请重试');
+              }
+              setAddingKey(false);
+            }}
+            disabled={addingKey}
+            style={{
+              width: '100%', padding: '6px 12px', borderRadius: 8,
+              border: 'none',
+              background: addingKey
+                ? 'rgba(200, 180, 200, 0.3)'
+                : 'linear-gradient(135deg, var(--color-pink), var(--color-purple))',
+              color: '#fff', cursor: addingKey ? 'default' : 'pointer',
+              fontSize: 12, fontFamily: 'inherit',
+            }}
+          >
+            {addingKey ? '验证中...' : '验证并添加'}
+          </button>
+        </div>
+      )}
+
+      {/* F2: Advanced task overrides */}
+      <button
+        onClick={() => setShowAdvanced(!showAdvanced)}
+        style={{
+          width: '100%', padding: '6px 12px', borderRadius: 8,
+          border: 'none', background: 'transparent',
+          color: 'var(--color-text-muted)', cursor: 'pointer',
+          fontSize: 11, fontFamily: 'inherit',
+          transition: 'color 0.3s',
+        }}
+      >
+        {showAdvanced ? '▾ 高级设置' : '▸ 高级设置'}
+      </button>
+
+      {showAdvanced && (
+        <div style={{ marginTop: 8 }}>
+          <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 8 }}>
+            为特定任务指定不同于 Tier 默认的模型。保持人格一致性时推荐人格检查单独指定。
+          </p>
+          {Object.entries(OVERRIDE_TASK_LABELS).map(([taskType, label]) => {
+            const savedOverride = overrides[taskType];
+            const overrideValue = savedOverride
+              ? `${savedOverride.provider}:${savedOverride.model}`
+              : '';
+            return (
+            <div key={taskType} style={{ marginBottom: 8 }}>
+              <label style={{ fontSize: 11, color: 'var(--color-text-dim)', display: 'block', marginBottom: 3 }}>
+                {label} <code style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{taskType}</code>
+              </label>
+              <select
+                style={{
+                  width: '100%', padding: '5px 8px', borderRadius: 6,
+                  border: '1px solid rgba(216, 180, 226, 0.2)',
+                  background: 'rgba(255, 255, 255, 0.5)',
+                  fontSize: 11, fontFamily: 'inherit', color: '#5E4B66',
+                  outline: 'none', cursor: 'pointer',
+                }}
+                value={overrideValue}
+                onChange={async (e) => {
+                  const val = e.target.value;
+                  if (!val) return;
+                  const [provider, model] = val.split(':');
+                  if (provider && model) {
+                    await updateConfig(`override:${taskType}`, provider, model);
+                  }
+                }}
+              >
+                <option value="">跟随 Tier 默认</option>
+                {configuredProviders.map(p => (
+                  <optgroup key={p.id} label={p.name}>
+                    {p.models.map(m => (
+                      <option key={`${p.id}:${m.id}`} value={`${p.id}:${m.id}`}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          );
+            })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
 
 export const SettingsPanel: React.FC = () => {
   const clearMessages = useChatStore((s) => s.clearMessages);
@@ -235,6 +550,9 @@ export const SettingsPanel: React.FC = () => {
           {isPaused ? '恢复自主问候' : '暂停自主问候'}
         </button>
       </div>
+
+      {/* ── 模型设置（V3.4: 多供应商）── */}
+      <ModelSettingsSection sectionStyle={sectionStyle} />
 
       {/* ── 会话重置 ── */}
       <div>

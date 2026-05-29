@@ -70,6 +70,34 @@ def _sanitize_surrogates(text: str) -> str:
         return text.encode("ascii", errors="replace").decode("ascii")
 
 
+# ── Tool call serialization helpers ─────────────────────────
+# Handle both OpenAI object format (tc.id, tc.function.name)
+# and ProviderResponse dict format (tc["id"], tc["function"]["name"])
+
+
+def _tc_id(tc) -> str:
+    """Extract tool call ID from dict or object."""
+    if isinstance(tc, dict):
+        return tc.get("id", "")
+    return getattr(tc, "id", "")
+
+
+def _tc_function_name(tc) -> str:
+    """Extract function name from dict or object."""
+    if isinstance(tc, dict):
+        return tc.get("function", {}).get("name", "")
+    fn = getattr(tc, "function", None)
+    return getattr(fn, "name", "") if fn else ""
+
+
+def _tc_function_arguments(tc) -> str:
+    """Extract function arguments JSON string from dict or object."""
+    if isinstance(tc, dict):
+        return tc.get("function", {}).get("arguments", "{}")
+    fn = getattr(tc, "function", None)
+    return getattr(fn, "arguments", "{}") if fn else "{}"
+
+
 class AgentCore:
     """昔涟的核心引擎，接收 InternalEvent，返回文本回复"""
 
@@ -241,6 +269,15 @@ class AgentCore:
         self.result_wrapper = ResultWrapper(model_router=self.router)
         logger.info("tool_system.ready", tools=self.tool_registry.tool_names,
                     executor=True, wrapper=True)
+
+        # Phase B: 初始化 ModelRouter DB 配置（热加载 + 自动播种）
+        try:
+            if hasattr(self.router, '_db'):
+                self.router._db = self._db
+            await self.router.initialize()
+        except (TypeError, AttributeError):
+            # Mock router 或 DB 未就绪时跳过
+            logger.debug("model_router.init_skipped")
 
         # 检查破冰是否已被用户拒绝
         try:
@@ -455,7 +492,7 @@ class AgentCore:
                 trace_log.info("agent.process.stream_started")
             elif isinstance(result, str):
                 reply = self._clean_reply(result)
-            else:
+            elif result.tool_calls:
                 # LLM 返回了 tool_calls → 执行 + 包装 + 回传
                 reply, tool_results = await self._handle_tool_calls(
                     result, event, messages, trace_log
@@ -463,6 +500,8 @@ class AgentCore:
                 tools_called = bool(tool_results)
                 if tool_results:
                     self._process_tool_side_effects(tool_results, event.payload)
+            else:
+                reply = self._clean_reply(result.content or "")
         except Exception as e:
             trace_log.error("agent.process.model_error", error=str(e))
             reply = DEGRADED_REPLY
@@ -842,9 +881,9 @@ class AgentCore:
         all_tool_results: list = []  # 跨迭代收集所有工具结果
 
         for iteration in range(MAX_ITER):
-            tool_calls = getattr(current_message, 'tool_calls', None)
+            tool_calls = current_message.tool_calls
             if not tool_calls:
-                content = getattr(current_message, 'content', '') or ''
+                content = current_message.content or ''
                 if content:
                     return self._clean_reply(content), all_tool_results
                 return DEGRADED_REPLY, all_tool_results
@@ -855,9 +894,9 @@ class AgentCore:
             # 执行所有工具调用 + 包装结果
             tool_msgs = []
             for tc in tool_calls:
-                tool_name = tc.function.name
+                tool_name = _tc_function_name(tc)
                 try:
-                    arguments = json.loads(tc.function.arguments)
+                    arguments = json.loads(_tc_function_arguments(tc))
                 except (json.JSONDecodeError, TypeError):
                     arguments = {}
 
@@ -900,24 +939,24 @@ class AgentCore:
             # 构建回传消息：assistant(tool_calls) + tool results
             # 必须保留原消息的 reasoning_content（DeepSeek thinking mode 要求）
             follow_up = list(messages)
-            assistant_content = getattr(current_message, 'content', None)
+            assistant_content = current_message.content
             assistant_msg = {
                 "role": "assistant",
                 "content": assistant_content,
                 "tool_calls": [
                     {
-                        "id": tc.id,
+                        "id": _tc_id(tc),
                         "type": "function",
                         "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
+                            "name": _tc_function_name(tc),
+                            "arguments": _tc_function_arguments(tc),
                         },
                     }
                     for tc in tool_calls
                 ],
             }
             # 保留 thinking mode 字段（DeepSeek V4-Pro 要求回传）
-            reasoning = getattr(current_message, 'reasoning_content', None)
+            reasoning = current_message.reasoning_content
             if reasoning:
                 assistant_msg["reasoning_content"] = reasoning
             follow_up.append(assistant_msg)
@@ -939,9 +978,11 @@ class AgentCore:
 
             if isinstance(result, str):
                 return self._clean_reply(result), all_tool_results
-            else:
+            elif result.tool_calls:
                 current_message = result
                 continue
+            else:
+                return self._clean_reply(result.content or ""), all_tool_results
 
         # 超过最大迭代
         trace_log.warning("tool.max_iterations", limit=MAX_ITER)
@@ -1567,7 +1608,7 @@ class AgentCore:
                 temperature=0.3,
                 max_tokens=40,
             )
-            result = result.strip()
+            result = result.content.strip() if hasattr(result, 'content') else result.strip()
 
             # 解析 "分数|理由"
             if "|" in result:

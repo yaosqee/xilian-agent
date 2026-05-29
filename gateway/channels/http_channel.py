@@ -13,6 +13,7 @@ HTTPChannel — FastAPI HTTP 通道
   · GET  /api/status          系统状态摘要（阶段 3 新增）
 """
 import asyncio
+import os
 import time
 from typing import Optional
 
@@ -54,6 +55,7 @@ class HTTPChannel(Channel):
         self._register_background_routes()
         self._register_notebook_routes()
         self._register_stage8_routes()
+        self._register_model_routes()
 
     # ── 中间件 ──
 
@@ -742,6 +744,204 @@ class HTTPChannel(Channel):
         )
 
         await self._server.serve()
+
+    # ── 模型配置 API（Phase B: 多供应商路由）──
+
+    def _register_model_routes(self):
+        """注册模型配置管理端点。"""
+
+        # ── 可用供应商和模型列表（静态）──
+        @self.app.get("/api/models/providers")
+        async def model_providers():
+            """动态从各 adapter 的 get_available_models() 生成供应商列表。"""
+            from packages.shared.providers.deepseek import DEEPSEEK_MODELS
+            from packages.shared.providers.openai_adapter import OPENAI_MODELS
+            from packages.shared.providers.anthropic import ANTHROPIC_MODELS
+            from packages.shared.providers.google_adapter import GEMINI_MODELS
+
+            def _serialize(models):
+                return [{
+                    "id": m.id, "name": m.name,
+                    "cost_per_1k_in": m.cost_per_1k_in,
+                    "cost_per_1k_out": m.cost_per_1k_out,
+                    "supports_tools": m.supports_tools,
+                    "supports_thinking": m.supports_thinking,
+                } for m in models]
+
+            providers = [
+                {"id": "deepseek", "name": "DeepSeek", "models": _serialize(DEEPSEEK_MODELS)},
+                {"id": "openai", "name": "OpenAI", "models": _serialize(OPENAI_MODELS)},
+                {"id": "anthropic", "name": "Anthropic", "models": _serialize(ANTHROPIC_MODELS)},
+                {"id": "google", "name": "Google", "models": _serialize(GEMINI_MODELS)},
+            ]
+            return {"providers": providers}
+
+        # ── 当前模型配置 ──
+        @self.app.get("/api/models/config")
+        async def get_model_config():
+            agent = self._agent
+            if not agent or not agent._db:
+                return {"error": "agent not ready"}
+
+            try:
+                db_configs = await agent._db.get_model_configs()
+                tiers = {}
+                overrides = {}
+                for c in db_configs:
+                    key = c["config_key"]
+                    entry = {
+                        "provider": c["provider"],
+                        "model": c["model_name"],
+                        "temperature": c.get("temperature", 0.7),
+                        "max_tokens": c.get("max_tokens", 800),
+                    }
+                    if key.startswith("tier:"):
+                        tiers[key.split(":", 1)[1]] = entry
+                    elif key.startswith("override:"):
+                        overrides[key.split(":", 1)[1]] = entry
+
+                # 若无 DB 配置，返回内存中的默认配置
+                if not tiers:
+                    for tier, cfg in agent.router._tier_configs.items():
+                        tiers[tier] = {
+                            "provider": cfg.provider,
+                            "model": cfg.model_name,
+                            "temperature": cfg.temperature,
+                            "max_tokens": cfg.max_tokens,
+                        }
+
+                embed_cfg = await agent._db.get_embed_config()
+                embed_info = None
+                if embed_cfg:
+                    embed_info = {
+                        "provider": embed_cfg["provider"],
+                        "model": embed_cfg["model_name"],
+                        "base_url": embed_cfg.get("base_url", ""),
+                    }
+                elif agent.router._embed_config:
+                    rc = agent.router._embed_config
+                    embed_info = {
+                        "provider": rc.get("provider", ""),
+                        "model": rc.get("model_name", ""),
+                        "base_url": rc.get("base_url", ""),
+                    }
+
+                return {
+                    "tiers": tiers,
+                    "overrides": overrides,
+                    "embed": embed_info,
+                    "adapters": list(agent.router._adapters.keys()),
+                }
+            except Exception as e:
+                logger.warning("api.models.config_error", error=str(e))
+                return {"error": str(e)}
+
+        # ── 更新模型配置 ──
+        @self.app.put("/api/models/config")
+        async def update_model_config(request: Request):
+            agent = self._agent
+            if not agent or not agent._db:
+                return {"error": "agent not ready"}
+
+            body = await request.json()
+            tier_updates = body.get("tiers", {})
+            api_keys = body.get("api_keys", {})
+            base_urls = body.get("base_urls", {})
+
+            import time
+            now = time.time()
+            errors = []
+
+            for tier, info in tier_updates.items():
+                provider = info.get("provider", "deepseek")
+                model = info.get("model", "")
+                if not model:
+                    continue
+
+                # Embed tier → write to embed_config table instead
+                if tier == "embed":
+                    try:
+                        await agent._db.insert_embed_config(
+                            provider=provider,
+                            model_name=model,
+                            api_key=api_keys.get(provider, ""),
+                            base_url=base_urls.get(provider, ""),
+                            created_at=now, updated_at=now,
+                        )
+                        if provider in api_keys:
+                            os.environ[f"{provider.upper()}_API_KEY"] = api_keys[provider]
+                        if provider in base_urls:
+                            os.environ[f"{provider.upper()}_BASE_URL"] = base_urls[provider]
+                    except Exception as e:
+                        errors.append(f"embed:{tier}: {e}")
+                    continue
+
+                # Detect override: vs tier: prefix
+                config_key = tier if tier.startswith("override:") else f"tier:{tier}"
+                try:
+                    await agent._db.insert_model_config(
+                        config_key=config_key,
+                        provider=provider,
+                        model_name=model,
+                        api_key=api_keys.get(provider, ""),
+                        temperature=info.get("temperature", 0.7),
+                        max_tokens=info.get("max_tokens", 800),
+                        created_at=now, updated_at=now,
+                    )
+                    # 更新 os.environ 以便创建新的 adapter
+                    if provider in api_keys:
+                        os.environ[f"{provider.upper()}_API_KEY"] = api_keys[provider]
+                    if provider in base_urls:
+                        os.environ[f"{provider.upper()}_BASE_URL"] = base_urls[provider]
+                except Exception as e:
+                    errors.append(f"tier:{tier}: {e}")
+
+            # 处理仅在 api_keys 中但不在 tiers 中的供应商（纯添加 Key）
+            for provider, key in api_keys.items():
+                os.environ[f"{provider.upper()}_API_KEY"] = key
+                if provider in base_urls:
+                    os.environ[f"{provider.upper()}_BASE_URL"] = base_urls[provider]
+
+            # 热重载
+            try:
+                await agent.router.reload_config()
+            except Exception as e:
+                errors.append(f"reload: {e}")
+
+            if errors:
+                return {"status": "partial", "errors": errors}
+            return {"status": "ok"}
+
+        # ── 验证 API Key ──
+        @self.app.post("/api/models/validate")
+        async def validate_api_key(request: Request):
+            body = await request.json()
+            provider = body.get("provider", "")
+            api_key = body.get("api_key", "")
+
+            if not provider or not api_key:
+                return {"valid": False, "error": "provider and api_key required"}
+
+            try:
+                from openai import AsyncOpenAI
+                base_urls = {
+                    "deepseek": "https://api.deepseek.com",
+                    "openai": "https://api.openai.com/v1",
+                    "anthropic": "https://api.anthropic.com",
+                    "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                }
+                base_url = base_urls.get(provider)
+                if not base_url:
+                    # Unknown provider — skip validation, assume valid
+                    return {"valid": True, "note": "无法验证此供应商，请直接使用"}
+                client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+                await asyncio.wait_for(
+                    client.models.list(),
+                    timeout=10,
+                )
+                return {"valid": True}
+            except Exception as e:
+                return {"valid": False, "error": str(e)[:200]}
 
     async def send(self, text: str) -> None:
         """HTTP 通道不通过 send() 输出"""
