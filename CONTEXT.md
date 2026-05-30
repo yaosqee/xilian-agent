@@ -1,7 +1,7 @@
 # 昔涟 V3.3 · 代码导航
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
-> 📅 最后更新：2026-05-22
+> 📅 最后更新：2026-05-30
 
 ## 📚 文档导航
 
@@ -75,7 +75,7 @@ xilian-v3/
 │   ├── tool_executor.py             # ToolExecutor：校验→权限→频率→确认→执行→审计（打磨期）
 │   ├── tool_result.py               # ToolResult + ToolContext dataclass（打磨期）
 │   ├── result_wrapper.py            # ResultWrapper：工具结果→昔涟语言（规则模板 + LLM包装双轨，打磨期）
-│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime/Portrait/Emotion/Memory/Notebook/Affection/NotebookTask 7模块 + 阈值门控）
+│   ├── context_builder.py           # ContextBuilder：模块化上下文（Datetime精密/Portrait/Emotion/Memory/Notebook/Affection/NotebookTask 7模块 + 会话边界感知）
 │   ├── notebook_manager.py          # NotebookManager：笔记/关注/任务 + 自动记笔记（阶段7b，日记已并入自传体）
 │   ├── portrait_manager.py          # PortraitManager：用户印象文档定期重写 + mark_dirty（阶段8+）
 │   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载（阶段7d）

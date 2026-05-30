@@ -107,7 +107,7 @@ class AutonomyConfig:
 
     # 主动问候
     greeting_enabled: bool = True
-    greeting_threshold: float = 3.0       # 想念值阈值（0-10）
+    greeting_threshold: float = 1.2       # 想念值阈值（0-10），约 3 小时触发
     greeting_max_per_hour: int = 3
     greeting_active_start: int = 8        # 活跃时段开始（小时）
     greeting_active_end: int = 22         # 活跃时段结束（小时）

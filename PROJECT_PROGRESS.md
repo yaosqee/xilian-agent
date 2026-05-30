@@ -1,8 +1,8 @@
 # 昔涟 V3.3 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-05-29
-> 🔖 当前阶段：打磨期 → 多供应商模型路由系统（V3.4）
+> 📅 最后更新：2026-05-30
+> 🔖 当前阶段：打磨期 → 多供应商模型路由系统（V3.4）+ 代码审查修复 + 对话质量提升
 
 ---
 
@@ -46,7 +46,33 @@
 
 **支持供应商：** DeepSeek (V4 Pro / Flash / Reasoner) · OpenAI (GPT-5.4 / 5.4 Mini / 5.4 Nano / o4 Mini / GPT-4.1) · Anthropic (Claude Sonnet 4.6 / Haiku 4.6 / Opus 4.6) · Google (Gemini 2.5 Pro / Flash / Flash Lite)
 
-**Tier 分工：** `powerful`（对话/人格检查）→ 强力模型 · `fast`（记忆编码/情感分析等 9 个后台任务）→ 廉价模型 · `reasoning`（复杂推理）→ reasoning 模型 · `embed`（向量嵌入）→ 固定硅基流动 bge-m3
+**Tier 分工：** `powerful`（对话/人格检查）→ 强力模型 · `fast`（记忆编码/情感分析等 9 个后台任务）→ 廉价模型 · `reasoning`（复杂推理）→ reasoning 模型 · `embed`（向量嵌入）→ 固定硅基流动 bge-m3（首次引导设置后锁定，不可切换）
+
+### 代码审查修复（2026-05-30）
+
+| 轮次 | 内容 |
+|------|------|
+| 第一轮 | P0: reasoning tier 对齐 DEFAULT_TIER_MODELS + auto_seed embed 条件修复 |
+| | P1: extract_tool_calls/extract_usage 共享 helpers + supports_embedding 显式属性 |
+| | P2: 清理 isinstance(result, str) 死分支 + 删除 _get_model_key 死代码 |
+| 第二轮 | Bug 1: Anthropic API Key 验证改用专用 SDK ·
+| | Bug 2: Anthropic _convert_assistant_with_tools 保留 reasoning_content ·
+| | Bug 4: update_model_config/update_embed_config 加列名白名单 ·
+| | Bug 6: Google adapter 提取 reasoning_content ·
+| | Bug 7: _is_tool_error 收紧关键词 · Bug 9: Alembic 004 补全 tier:reasoning |
+| 第三轮 | Bug A: reload_config() dict() 值拷贝修复回退失效 ·
+| | Bug D: 删除 _pro_key_cycle 死代码 · Bug E: 白名单 endpoint_url → base_url |
+| | P3-1: PROVIDER_REGISTRY 注册表替代 _create_adapter 硬编码 if/elif |
+| | Bug fix: _handle_tool_calls 中 tc.id → _tc_id(tc) 修复 dict 格式兼容 |
+
+### 对话质量提升（2026-05-30）
+
+| # | 改动 | 说明 |
+|---|------|------|
+| 一 | DatetimeModule 精度提升 | 4 时段 → 1-2h 口语化约数（"下午三点出头"），零缓存代价 |
+| 二 | 历史时间标签 | 恢复历史标注「（约X小时前）」，帮助模型感知时间距离 |
+| 三 | ctx_notes 会话边界 | 长时间未对话注入自然时间锚点（"今天第一次和伙伴聊天呢"） |
+| 四 | 主动问候阈值降低 | 3.0 → 1.2，约 3 小时未对话触发主动问候 |
 
 ---
 

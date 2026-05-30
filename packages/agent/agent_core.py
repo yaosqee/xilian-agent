@@ -351,12 +351,25 @@ class AgentCore:
                     recovered_tokens += extra
                     last_msg_time = max(last_msg_time, row.get("timestamp", 0) or 0)
 
-                # 按时间排序后注入 context
+                # 按时间排序后注入 context（附时间标签）
                 recovered.sort(key=lambda r: r.get("id", 0))
                 for row in recovered:
                     user_msg = row.get("user_message") or ""
                     if not user_msg:
                         user_msg = "（昔涟轻轻推了推伙伴——她主动发来了一句问候。）"
+                    # 相对时间标签：帮助模型感知对话时间距离
+                    ts = row.get("timestamp", 0) or 0
+                    if ts > 0:
+                        age_sec = now - ts
+                        if age_sec > 3600:
+                            age_h = round(age_sec / 3600)
+                            if age_h < 24:
+                                time_label = f"（约{age_h}小时前）"
+                            elif age_h < 48:
+                                time_label = "（昨天）"
+                            else:
+                                time_label = f"（{age_h // 24}天前）"
+                            user_msg = f"{time_label} {user_msg}"
                     self.context.history.append({"role": "user", "content": user_msg})
                     self.context.history.append({"role": "assistant", "content": row.get("assistant_reply") or ""})
 
@@ -843,6 +856,20 @@ class AgentCore:
         # ctx_notes 作为独立 system 消息放在 history 之后、user 之前
         # VOLATILE SCRATCH 语义：每轮重建，不影响 history 前缀缓存
         ctx_notes = await self._context_builder.build()
+
+        # 会话边界感知：长时间未对话后，注入自然时间锚点
+        last_time = self.context._last_message_time
+        if last_time and last_time > 0:
+            gap_min = (time.time() - last_time) / 60
+            if gap_min > 120:  # > 2 小时
+                gap_note = "（今天第一次和伙伴聊天呢。）"
+            elif gap_min > 30:
+                gap_note = "（有一阵没见到伙伴了。）"
+            else:
+                gap_note = ""
+            if gap_note:
+                ctx_notes = f"{gap_note}\n\n{ctx_notes}" if ctx_notes else gap_note
+
         if ctx_notes:
             messages.append({"role": "system", "content": ctx_notes})
 

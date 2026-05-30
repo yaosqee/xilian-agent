@@ -1,6 +1,6 @@
-# 昔涟 V3.3
+# 昔涟 V3.4
 
-> 个人情感陪伴型 AI Agent。核心角色：三千万世轮回的记录者，自称「人家」称用户「伙伴」。9/10 阶段完成，打磨期。
+> 个人情感陪伴型 AI Agent。核心角色：三千万世轮回的记录者，自称「人家」称用户「伙伴」。9/10 阶段完成，打磨期。多供应商模型路由 + 对话质量持续优化。
 
 ## 启动
 
@@ -20,12 +20,13 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/agent/tool_executor.py` — 工具执行器（校验→权限→频率→确认→审计）
 - `packages/agent/result_wrapper.py` — 结果包装器（规则模板 + LLM双轨）
 - `packages/agent/tools/` — 4 个工具：search_memory / query_weather / search_web / coding_delegate
+- `packages/shared/providers/` — 多供应商适配器（DeepSeek/OpenAI/Anthropic/Google）+ ProviderAdapter Protocol + PROVIDER_REGISTRY
 - `packages/shared/events.py` — InternalEvent 统一消息结构
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点
 - `packages/shared/database.py` — SQLite 13 表 CRUD + 游标分页查询
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器
 - `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值 + TokenBucket + GreetingBanner）
-- `packages/agent/context_builder.py` — 模块化上下文注入（7模块: Datetime/Portrait/Emotion/Memory/Notebook/Affection/NotebookTask，P1 阈值门控缓存）
+- `packages/agent/context_builder.py` — 模块化上下文注入（7模块: Datetime精密1-2h/Portrait/Emotion阈值门控/Memory/Notebook/Affection/NotebookTask + 会话边界感知 + 历史时间标签）
 - `packages/agent/notebook_manager.py` — 笔记本管理器（笔记/关注/任务，日记已并入自传体）
 - `data/character_memories.json` — 昔涟角色情景记忆（25条，session_id='character'）
 - `scripts/seed_character_memories.py` — 角色记忆导入脚本（幂等，bge-m3向量化）
