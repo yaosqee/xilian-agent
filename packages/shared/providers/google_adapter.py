@@ -143,7 +143,7 @@ class GoogleAdapter:
         return ProviderResponse(
             content=msg.content,
             tool_calls=extract_tool_calls(msg),
-            reasoning_content=None,
+            reasoning_content=getattr(msg, 'reasoning_content', None),
             model=model,
             usage=extract_usage(response),
         )

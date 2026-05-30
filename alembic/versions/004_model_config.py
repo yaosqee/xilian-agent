@@ -71,6 +71,7 @@ def _auto_seed_from_env():
     tiers = [
         ("tier:powerful", "deepseek", "deepseek-v4-pro", ds_key, 0.65, 800),
         ("tier:fast", "deepseek", "deepseek-v4-flash", ds_key, 0.3, 800),
+        ("tier:reasoning", "deepseek", "deepseek-reasoner", ds_key, 0.3, 2000),
     ]
     for key, provider, model, api_key, temp, max_tok in tiers:
         conn.execute(

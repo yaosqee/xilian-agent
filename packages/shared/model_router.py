@@ -545,9 +545,21 @@ class ModelRouter:
 # ═══════════════════════════════════════════════════════════════
 
 def _is_tool_error(e: Exception) -> bool:
-    """Check if an exception is caused by tool call incompatibility."""
+    """Check if an exception is caused by tool call incompatibility.
+
+    Keywords are intentionally narrow to avoid false positives.
+    "tools not supported" / "invalid tool" / "does not support tools"
+    are specific error messages from providers when tools are unsupported.
+    Generic words like "tool" or "function" alone are too broad.
+    """
     if isinstance(e, ToolRelatedError):
         return True
     msg = str(e).lower()
-    tool_keywords = ["tool", "function", "tools not supported", "invalid tool"]
+    tool_keywords = [
+        "tools not supported",
+        "invalid tool",
+        "does not support tool",
+        "tools are not supported",
+        "tool_choice is not supported",
+    ]
     return any(kw in msg for kw in tool_keywords)

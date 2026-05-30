@@ -203,7 +203,8 @@ class AnthropicAdapter:
 
             if role == "assistant" and tool_calls:
                 # assistant with tool_calls → content blocks with tool_use
-                blocks = self._convert_assistant_with_tools(content, tool_calls)
+                reasoning = m.get("reasoning_content")
+                blocks = self._convert_assistant_with_tools(content, tool_calls, reasoning)
                 anthropic_messages.append({"role": "assistant", "content": blocks})
             elif role == "tool":
                 # tool result → user message with tool_result block
@@ -248,12 +249,20 @@ class AnthropicAdapter:
 
     def _convert_assistant_with_tools(
         self, content: str | None, tool_calls: list,
+        reasoning_content: str | None = None,
     ) -> list[dict]:
         """Build Anthropic content blocks for assistant message with tool calls.
 
-        Includes text content (if any) + tool_use blocks.
+        Includes:
+        - thinking preamble (if reasoning_content present in message dict)
+        - text content (if any)
+        - tool_use blocks
         """
         blocks = []
+        # Include reasoning/thinking as a text preamble
+        # (Anthropic expects thinking blocks; text block preserves context minimally)
+        if reasoning_content:
+            blocks.append({"type": "text", "text": f"[thinking] {reasoning_content}"})
         # Include text if present
         if content:
             blocks.append({"type": "text", "text": str(content)})

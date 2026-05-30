@@ -924,15 +924,38 @@ class HTTPChannel(Channel):
 
             try:
                 from openai import AsyncOpenAI
+
                 base_urls = {
                     "deepseek": "https://api.deepseek.com",
                     "openai": "https://api.openai.com/v1",
-                    "anthropic": "https://api.anthropic.com",
                     "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
                 }
+
+                # Anthropic 不是 OpenAI 兼容端点，使用专用 SDK 验证
+                if provider == "anthropic":
+                    try:
+                        from anthropic import AsyncAnthropic
+                        ac = AsyncAnthropic(
+                            api_key=api_key,
+                            base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+                        )
+                        # 发送极短请求验证 Key（Anthropic 不提供 list models 端点）
+                        await asyncio.wait_for(
+                            ac.messages.create(
+                                model="claude-haiku-4-6",
+                                max_tokens=1,
+                                messages=[{"role": "user", "content": "hi"}],
+                            ),
+                            timeout=15,
+                        )
+                        return {"valid": True}
+                    except ImportError:
+                        return {"valid": True, "note": "Anthropic SDK 未安装，跳过验证"}
+                    except Exception as e:
+                        return {"valid": False, "error": str(e)[:200]}
+
                 base_url = base_urls.get(provider)
                 if not base_url:
-                    # Unknown provider — skip validation, assume valid
                     return {"valid": True, "note": "无法验证此供应商，请直接使用"}
                 client = AsyncOpenAI(api_key=api_key, base_url=base_url)
                 await asyncio.wait_for(

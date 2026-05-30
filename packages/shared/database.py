@@ -1565,6 +1565,16 @@ class DatabaseManager:
         """更新模型配置的部分字段。"""
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
+
+        # 列名白名单（防止 SQL 注入）
+        ALLOWED_COLS = {
+            "provider", "model_name", "api_key", "temperature",
+            "max_tokens", "is_active", "updated_at", "endpoint_url",
+        }
+        for k in kwargs:
+            if k not in ALLOWED_COLS:
+                raise ValueError(f"不允许的列名: {k}")
+
         kwargs["updated_at"] = time.time()
         sets = ", ".join(f"{k} = ?" for k in kwargs)
         values = list(kwargs.values()) + [config_key]
@@ -1622,6 +1632,15 @@ class DatabaseManager:
         """更新嵌入配置。"""
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
+
+        ALLOWED_COLS = {
+            "provider", "model_name", "api_key", "base_url",
+            "dimensions", "is_active", "updated_at",
+        }
+        for k in kwargs:
+            if k not in ALLOWED_COLS:
+                raise ValueError(f"不允许的列名: {k}")
+
         kwargs["updated_at"] = time.time()
         sets = ", ".join(f"{k} = ?" for k in kwargs)
         values = list(kwargs.values())
