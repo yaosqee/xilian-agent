@@ -261,6 +261,9 @@ class AnthropicAdapter:
         blocks = []
         # Include reasoning/thinking as a text preamble
         # (Anthropic expects thinking blocks; text block preserves context minimally)
+        # TODO: when enabling Anthropic extended thinking (thinking param in chat()),
+        #       use {"type": "thinking", "thinking": "..."} blocks instead of text,
+        #       and ensure _parse_response extracts thinking blocks correctly for relay.
         if reasoning_content:
             blocks.append({"type": "text", "text": f"[thinking] {reasoning_content}"})
         # Include text if present

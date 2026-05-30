@@ -7,6 +7,7 @@ Supports dual-key round-robin for Pro, and optional Flash client.
 from __future__ import annotations
 
 import asyncio
+import os
 import time as _time_module
 from typing import Literal
 
@@ -299,9 +300,6 @@ class DeepSeekAdapter:
 # ═══════════════════════════════════════════════════════════════
 # Helpers (DeepSeek-specific)
 # ═══════════════════════════════════════════════════════════════
-
-import os  # noqa: E402
-
 
 def _log_cache_usage(response, model_label: str) -> None:
     """Log DeepSeek prefix cache hit rate."""

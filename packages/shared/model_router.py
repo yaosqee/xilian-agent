@@ -28,7 +28,6 @@ from .providers import (
     PROVIDER_REGISTRY,
 )
 from .providers.base import ProviderAdapter
-from .providers.deepseek import DeepSeekAdapter
 
 # Re-export for backward compat
 __all__ = [
@@ -98,8 +97,9 @@ class ModelRouter:
         """
         ds_key = os.getenv("DEEPSEEK_API_KEY")
         if ds_key:
-            adapter = DeepSeekAdapter()
-            self._adapters["deepseek"] = adapter
+            adapter = self._create_adapter("deepseek")
+            if adapter:
+                self._adapters["deepseek"] = adapter
 
             # Default tier configs (all tiers use DeepSeek)
             self._tier_configs["powerful"] = TierConfig(
@@ -302,6 +302,8 @@ class ModelRouter:
         # 保存旧配置供回退（dict() 值拷贝，避免 initialize() 的 .clear() 清空引用）
         old_adapters = dict(self._adapters)
         old_tiers = dict(self._tier_configs)
+        old_overrides = dict(self._task_overrides)
+        old_embed = dict(self._embed_config) if self._embed_config else None
 
         try:
             await self.initialize()
@@ -310,6 +312,8 @@ class ModelRouter:
             # 回退
             self._adapters = old_adapters
             self._tier_configs = old_tiers
+            self._task_overrides = old_overrides
+            self._embed_config = old_embed
             logger.error("model_router.reload_failed", error=str(e))
             raise
 
