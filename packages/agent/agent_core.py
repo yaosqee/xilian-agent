@@ -501,7 +501,7 @@ class AgentCore:
             else:
                 reply = self._clean_reply(result.content or "")
         except Exception as e:
-            trace_log.error("agent.process.model_error", error=str(e))
+            trace_log.error(f"agent.process.model_error: {type(e).__name__}: {e}"[:300])
             reply = DEGRADED_REPLY
 
         # ── 6b. 阶段 7c: 标记后处理 ──
@@ -928,7 +928,7 @@ class AgentCore:
                 )
                 tool_msgs.append({
                     "role": "tool",
-                    "tool_call_id": tc.id,
+                    "tool_call_id": _tc_id(tc),
                     "content": wrapped,
                 })
                 trace_log.info("tool.result", tool=tool_name,
