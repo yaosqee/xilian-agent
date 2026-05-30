@@ -7,7 +7,6 @@ Supports dual-key round-robin for Pro, and optional Flash client.
 from __future__ import annotations
 
 import asyncio
-import itertools
 import time as _time_module
 from typing import Literal
 
@@ -89,7 +88,6 @@ class DeepSeekAdapter:
                         timeout=_api_timeout, max_retries=1)
             for k in self._pro_keys
         ] if self._pro_keys else []
-        self._pro_key_cycle = itertools.cycle(range(len(self._pro_clients)))
 
         # === Flash client ===
         flash_key = os.getenv("DEEPSEEK_API_KEY_2") or os.getenv("DEEPSEEK_API_KEY")

@@ -208,6 +208,21 @@ def detect_configured_providers() -> list[str]:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Provider registry — single source of truth for adapter creation
+# ═══════════════════════════════════════════════════════════════
+
+# Format: provider_name → (module_path, class_name, lazy_import)
+# lazy_import=True means use importlib.import_module for deferred loading
+# lazy_import=False means the adapter is always importable (no extra deps)
+PROVIDER_REGISTRY: dict[str, tuple[str, str, bool]] = {
+    "deepseek":  ("packages.shared.providers.deepseek",       "DeepSeekAdapter",   False),
+    "openai":    ("packages.shared.providers.openai_adapter",  "OpenAIAdapter",     True),
+    "anthropic": ("packages.shared.providers.anthropic",       "AnthropicAdapter",  True),
+    "google":    ("packages.shared.providers.google_adapter",   "GoogleAdapter",     False),
+}
+
+
+# ═══════════════════════════════════════════════════════════════
 # Shared helpers — OpenAI-format message parsing
 # ═══════════════════════════════════════════════════════════════
 

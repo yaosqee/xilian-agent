@@ -1568,8 +1568,8 @@ class DatabaseManager:
 
         # 列名白名单（防止 SQL 注入）
         ALLOWED_COLS = {
-            "provider", "model_name", "api_key", "temperature",
-            "max_tokens", "is_active", "updated_at", "endpoint_url",
+            "provider", "model_name", "api_key", "base_url", "temperature",
+            "max_tokens", "is_active", "updated_at",
         }
         for k in kwargs:
             if k not in ALLOWED_COLS:

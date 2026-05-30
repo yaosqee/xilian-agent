@@ -9,6 +9,7 @@ import { useModelStore } from '../../stores/modelStore';
 const TIER_LABELS: Record<string, string> = {
   powerful: '主力模型',
   fast: '后台模型',
+  reasoning: '推理模型',
   embed: '嵌入模型',
 };
 
@@ -138,6 +139,22 @@ const ModelSettingsSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({
           )}
 
         </>
+      )}
+
+      {/* Embed model — read-only, configured during onboarding */}
+      {embedConfig && (
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontSize: 12, color: 'var(--color-text-dim)', display: 'block', marginBottom: 4 }}>
+            {TIER_LABELS['embed']}（首次引导设置）
+          </label>
+          <div style={{
+            fontSize: 12, color: 'var(--color-text-muted)',
+            padding: '6px 10px', borderRadius: 8,
+            background: 'rgba(216, 180, 226, 0.06)',
+          }}>
+            {embedConfig.provider} / {embedConfig.model}
+          </div>
+        </div>
       )}
 
       {/* F3: Add provider API key */}

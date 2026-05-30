@@ -19,10 +19,13 @@ from typing import Literal
 import httpx
 from loguru import logger
 
+import importlib
+
 from .providers import (
     TaskType, TierName,
     TASK_TIER_MAP, TierConfig, ProviderResponse, TaskOverride,
     DEFAULT_TIER_MODELS, DEFAULT_EMBED_MODELS, detect_configured_providers,
+    PROVIDER_REGISTRY,
 )
 from .providers.base import ProviderAdapter
 from .providers.deepseek import DeepSeekAdapter
@@ -264,29 +267,22 @@ class ModelRouter:
                     self._adapters[provider] = adapter
 
     def _create_adapter(self, provider: str) -> ProviderAdapter | None:
-        """创建指定供应商的 adapter。"""
-        if provider == "deepseek":
-            return DeepSeekAdapter()
-        elif provider == "openai":
-            # Lazy import to avoid requiring openai SDK at startup
-            try:
-                from .providers.openai_adapter import OpenAIAdapter
-                return OpenAIAdapter()
-            except ImportError as e:
-                logger.warning("openai_adapter.import_failed", error=str(e))
-                return None
-        elif provider == "anthropic":
-            try:
-                from .providers.anthropic import AnthropicAdapter
-                return AnthropicAdapter()
-            except ImportError as e:
-                logger.warning("anthropic_adapter.import_failed", error=str(e))
-                return None
-        elif provider == "google":
-            from .providers.google_adapter import GoogleAdapter
-            return GoogleAdapter()
-        else:
+        """创建指定供应商的 adapter。从 PROVIDER_REGISTRY 懒导入。"""
+        entry = PROVIDER_REGISTRY.get(provider)
+        if not entry:
             logger.warning("model_router.unknown_provider", provider=provider)
+            return None
+
+        module_path, class_name, lazy_import = entry
+        try:
+            mod = importlib.import_module(module_path)
+            cls = getattr(mod, class_name)
+            return cls()
+        except ImportError as e:
+            if lazy_import:
+                logger.warning(f"{provider}_adapter.import_failed", error=str(e))
+            else:
+                logger.error(f"{provider}_adapter.import_failed", error=str(e))
             return None
 
     # ══════════════════════════════════════════════════════════
@@ -303,9 +299,9 @@ class ModelRouter:
             logger.warning("model_router.reload_no_db")
             return
 
-        # 保存旧配置供回退
-        old_adapters = self._adapters
-        old_tiers = self._tier_configs
+        # 保存旧配置供回退（dict() 值拷贝，避免 initialize() 的 .clear() 清空引用）
+        old_adapters = dict(self._adapters)
+        old_tiers = dict(self._tier_configs)
 
         try:
             await self.initialize()
