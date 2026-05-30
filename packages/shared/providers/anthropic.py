@@ -304,6 +304,10 @@ class AnthropicAdapter:
 
         Anthropic requires user/assistant alternation. Merge consecutive same-role messages.
         Also ensures tool_result (role=user) can follow assistant.
+
+        Note: consecutive assistant(tool_use) should never occur in normal flow;
+        if it does, merging them would corrupt tool_use/tool_result correspondence.
+        We log a warning and insert a placeholder to preserve alternation instead.
         """
         if not messages:
             return messages
@@ -312,6 +316,23 @@ class AnthropicAdapter:
         for m in messages[1:]:
             prev = fixed[-1]
             if m["role"] == prev["role"] and m["role"] in ("user", "assistant"):
+                # Guard: if either message contains tool_use/tool_result blocks, don't merge
+                prev_has_tools = _content_has_tool_blocks(prev.get("content"))
+                m_has_tools = _content_has_tool_blocks(m.get("content"))
+                if prev_has_tools or m_has_tools:
+                    from loguru import logger as _log
+                    _log.warning(
+                        "anthropic.role_alternation_tool_guard",
+                        prev_role=prev["role"],
+                        new_role=m["role"],
+                        hint="consecutive tool messages indicate upstream message construction error",
+                    )
+                    placeholder = {"role": "user" if m["role"] == "assistant" else "assistant",
+                                   "content": "(continued)"}
+                    fixed.append(placeholder)
+                    fixed.append(m)
+                    continue
+
                 # Merge: append content
                 prev_content = prev.get("content", "")
                 new_content = m.get("content", "")
@@ -399,3 +420,15 @@ class AnthropicAdapter:
     @staticmethod
     def get_available_models() -> list[ModelInfo]:
         return ANTHROPIC_MODELS
+
+
+def _content_has_tool_blocks(content) -> bool:
+    """Check if content contains tool_use or tool_result blocks.
+    Used by _fix_role_alternation to avoid merging tool messages.
+    """
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result")
+        for b in content
+    )
