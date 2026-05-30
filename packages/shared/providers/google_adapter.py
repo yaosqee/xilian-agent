@@ -15,7 +15,7 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from .base import ModelInfo, ProviderAdapter
-from . import ProviderResponse
+from . import ProviderResponse, extract_tool_calls, extract_usage
 
 # ── Available models ─────────────────────────────────────────
 
@@ -62,6 +62,7 @@ class GoogleAdapter:
     supports_tools = True
     supports_thinking = True
     supports_prefix_cache = False
+    supports_embedding = True
 
     def __init__(self):
         api_key = os.getenv("GOOGLE_API_KEY", "")
@@ -141,10 +142,10 @@ class GoogleAdapter:
         msg = choice.message
         return ProviderResponse(
             content=msg.content,
-            tool_calls=_extract_tool_calls(msg),
+            tool_calls=extract_tool_calls(msg),
             reasoning_content=None,
             model=model,
-            usage=_extract_usage(response),
+            usage=extract_usage(response),
         )
 
     # ── Embed ────────────────────────────────────────────────
@@ -176,30 +177,4 @@ class GoogleAdapter:
 
 
 # ═══════════════════════════════════════════════════════════════
-
-def _extract_tool_calls(msg) -> list[dict] | None:
-    raw = getattr(msg, 'tool_calls', None)
-    if not raw:
-        return None
-    result = []
-    for tc in raw:
-        result.append({
-            "id": tc.id,
-            "type": "function",
-            "function": {
-                "name": tc.function.name,
-                "arguments": tc.function.arguments,
-            },
-        })
-    return result
-
-
-def _extract_usage(response) -> dict | None:
-    usage = getattr(response, 'usage', None)
-    if not usage:
-        return None
-    return {
-        "prompt_tokens": getattr(usage, 'prompt_tokens', 0) or 0,
-        "completion_tokens": getattr(usage, 'completion_tokens', 0) or 0,
-        "total_tokens": getattr(usage, 'total_tokens', 0) or 0,
-    }
+# Helpers (shared extract_tool_calls / extract_usage imported above)

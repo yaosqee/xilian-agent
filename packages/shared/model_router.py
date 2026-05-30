@@ -109,7 +109,7 @@ class ModelRouter:
             )
             self._tier_configs["reasoning"] = TierConfig(
                 tier="reasoning", provider="deepseek",
-                model_name="deepseek-v4-pro", temperature=0.3, max_tokens=2000,
+                model_name="deepseek-reasoner", temperature=0.3, max_tokens=2000,
             )
 
             # Embed config (from env, may use SiliconFlow)
@@ -234,8 +234,8 @@ class ModelRouter:
                 temperature=temp, max_tokens=mt,
             )
 
-        # 写入 embed 配置
-        if "siliconflow" in providers or os.getenv("EMBED_API_KEY"):
+        # 写入 embed 配置（仅当 EMBED_API_KEY 实际配置时）
+        if os.getenv("EMBED_API_KEY"):
             embed_defaults = DEFAULT_EMBED_MODELS.get("siliconflow")
             try:
                 await self._db.insert_embed_config(
@@ -445,14 +445,14 @@ class ModelRouter:
         if config:
             provider = config.get("provider", "deepseek")
             adapter = self._adapters.get(provider)
-            if adapter and hasattr(adapter, 'embed'):
+            if adapter and adapter.supports_embedding:
                 result = await adapter.embed(config.get("model_name"), [text])
                 if result:
                     return result[0]
 
         # Fallback: use any adapter that supports embedding
         for adapter in self._adapters.values():
-            if hasattr(adapter, 'embed'):
+            if adapter.supports_embedding:
                 result = await adapter.embed(self._embed_model, [text])
                 if result:
                     return result[0]
@@ -466,12 +466,12 @@ class ModelRouter:
         if config:
             provider = config.get("provider", "deepseek")
             adapter = self._adapters.get(provider)
-            if adapter and hasattr(adapter, 'embed'):
+            if adapter and adapter.supports_embedding:
                 return await adapter.embed(config.get("model_name"), texts)
 
         # Fallback
         for adapter in self._adapters.values():
-            if hasattr(adapter, 'embed'):
+            if adapter.supports_embedding:
                 return await adapter.embed(self._embed_model, texts)
 
         logger.debug("embed_batch.unavailable")
@@ -480,21 +480,6 @@ class ModelRouter:
     # ══════════════════════════════════════════════════════════
     # Tool compatibility
     # ══════════════════════════════════════════════════════════
-
-    def _get_model_key(self, task_type: str) -> str:
-        """返回路由标识（用于工具兼容性缓存）。
-
-        Backward compat: 保持 "ds-pro" / "ds-flash" key 格式，
-        同时也支持新的 "{provider}:{model}" 格式。
-        """
-        tier = TASK_TIER_MAP.get(task_type, "powerful")
-        tier_cfg = self._tier_configs.get(tier)
-        if tier_cfg:
-            return f"{tier_cfg.provider}:{tier_cfg.model_name}"
-        # Legacy format for backward compat
-        if task_type in TASK_TIER_MAP:
-            return f"tier:{TASK_TIER_MAP[task_type]}"
-        return "unknown"
 
     def _supports_tools(self, model_key: str) -> bool:
         """检查模型是否支持工具调用。

@@ -50,6 +50,7 @@ class ProviderAdapter(Protocol):
     supports_tools: bool
     supports_thinking: bool
     supports_prefix_cache: bool
+    supports_embedding: bool
 
     async def chat(
         self,

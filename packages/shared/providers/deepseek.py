@@ -16,7 +16,7 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from .base import ModelInfo, ProviderAdapter
-from . import ProviderResponse
+from . import ProviderResponse, extract_tool_calls, extract_usage
 
 # ── Available models ─────────────────────────────────────────
 
@@ -72,6 +72,7 @@ class DeepSeekAdapter:
     supports_tools = True
     supports_thinking = True
     supports_prefix_cache = True
+    supports_embedding = True
 
     def __init__(self):
         _api_timeout = httpx.Timeout(connect=15.0, read=120.0, write=120.0, pool=30.0)
@@ -190,10 +191,10 @@ class DeepSeekAdapter:
                 msg = choice.message
                 return ProviderResponse(
                     content=msg.content,
-                    tool_calls=_extract_tool_calls(msg),
+                    tool_calls=extract_tool_calls(msg),
                     reasoning_content=getattr(msg, 'reasoning_content', None),
                     model="deepseek-v4-pro",
-                    usage=_extract_usage(response),
+                    usage=extract_usage(response),
                 )
             except Exception as e:
                 elapsed = (_time_module.time() - t0) * 1000
@@ -262,10 +263,10 @@ class DeepSeekAdapter:
         msg = choice.message
         return ProviderResponse(
             content=msg.content,
-            tool_calls=_extract_tool_calls(msg),
+            tool_calls=extract_tool_calls(msg),
             reasoning_content=getattr(msg, 'reasoning_content', None),
             model="deepseek-v4-flash",
-            usage=_extract_usage(response),
+            usage=extract_usage(response),
         )
 
     # ── Embed ────────────────────────────────────────────────
@@ -298,40 +299,10 @@ class DeepSeekAdapter:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Helpers
+# Helpers (DeepSeek-specific)
 # ═══════════════════════════════════════════════════════════════
 
 import os  # noqa: E402
-
-
-def _extract_tool_calls(msg) -> list[dict] | None:
-    """Extract tool_calls from an OpenAI message object, standardize to dict list."""
-    raw = getattr(msg, 'tool_calls', None)
-    if not raw:
-        return None
-    result = []
-    for tc in raw:
-        result.append({
-            "id": tc.id,
-            "type": "function",
-            "function": {
-                "name": tc.function.name,
-                "arguments": tc.function.arguments,
-            },
-        })
-    return result
-
-
-def _extract_usage(response) -> dict | None:
-    """Extract token usage from a response object."""
-    usage = getattr(response, 'usage', None)
-    if not usage:
-        return None
-    return {
-        "prompt_tokens": getattr(usage, 'prompt_tokens', 0) or 0,
-        "completion_tokens": getattr(usage, 'completion_tokens', 0) or 0,
-        "total_tokens": getattr(usage, 'total_tokens', 0) or 0,
-    }
 
 
 def _log_cache_usage(response, model_label: str) -> None:

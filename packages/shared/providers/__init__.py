@@ -205,3 +205,37 @@ def detect_configured_providers() -> list[str]:
     if os.getenv("EMBED_API_KEY") or os.getenv("DEEPSEEK_API_KEY"):
         providers.append("siliconflow")
     return providers
+
+
+# ═══════════════════════════════════════════════════════════════
+# Shared helpers — OpenAI-format message parsing
+# ═══════════════════════════════════════════════════════════════
+
+def extract_tool_calls(msg) -> list[dict] | None:
+    """Extract tool_calls from an OpenAI message object, standardize to dict list."""
+    raw = getattr(msg, 'tool_calls', None)
+    if not raw:
+        return None
+    result = []
+    for tc in raw:
+        result.append({
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,
+            },
+        })
+    return result
+
+
+def extract_usage(response) -> dict | None:
+    """Extract token usage from a response object."""
+    usage = getattr(response, 'usage', None)
+    if not usage:
+        return None
+    return {
+        "prompt_tokens": getattr(usage, 'prompt_tokens', 0) or 0,
+        "completion_tokens": getattr(usage, 'completion_tokens', 0) or 0,
+        "total_tokens": getattr(usage, 'total_tokens', 0) or 0,
+    }

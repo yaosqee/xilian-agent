@@ -70,6 +70,7 @@ class AnthropicAdapter:
     supports_tools = True
     supports_thinking = True
     supports_prefix_cache = True
+    supports_embedding = False  # Anthropic doesn't have a dedicated embedding API
 
     def __init__(self):
         self._api_key = os.getenv("ANTHROPIC_API_KEY", "")

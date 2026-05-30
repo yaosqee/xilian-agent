@@ -490,8 +490,6 @@ class AgentCore:
             if stream:
                 reply = "[stream]"
                 trace_log.info("agent.process.stream_started")
-            elif isinstance(result, str):
-                reply = self._clean_reply(result)
             elif result.tool_calls:
                 # LLM 返回了 tool_calls → 执行 + 包装 + 回传
                 reply, tool_results = await self._handle_tool_calls(
@@ -976,9 +974,7 @@ class AgentCore:
                 fallback = tool_msgs[0]["content"] if tool_msgs else DEGRADED_REPLY
                 return fallback, all_tool_results
 
-            if isinstance(result, str):
-                return self._clean_reply(result), all_tool_results
-            elif result.tool_calls:
+            if result.tool_calls:
                 current_message = result
                 continue
             else:
