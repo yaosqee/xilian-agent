@@ -120,9 +120,16 @@ class TestAutonomyConfig:
 class TestNudgeEngine:
     @pytest.fixture
     def mock_db(self):
-        """Mock DatabaseManager — 只提供 db_path 给 sync sqlite3 读取"""
+        """Mock DatabaseManager — 提供异步方法供 NudgeEngine 调用"""
         db = Mock()
-        db.db_path = ":memory:"  # 不会真的读
+        db.db_path = ":memory:"
+        db.get_last_activity_timestamp = AsyncMock(return_value=0.0)
+        db.get_emotion_snapshots = AsyncMock(return_value=[])
+        db.count_high_importance_memories = AsyncMock(return_value=0)
+        db.get_episodic_summaries_since = AsyncMock(return_value=[])
+        db.get_latest_portrait = AsyncMock(return_value=None)
+        db.get_latest_conversation_user_message = AsyncMock(return_value="hello")
+        db.insert_nudge_greeting = AsyncMock(return_value=1)
         return db
 
     @pytest.fixture
@@ -150,8 +157,9 @@ class TestNudgeEngine:
         assert cfg.greeting_threshold == 8.5
         assert cfg.do_not_disturb is True
 
-    def test_status_dict(self, engine):
-        s = engine.status
+    @pytest.mark.asyncio
+    async def test_status_dict(self, engine):
+        s = await engine.status()
         assert "missing_value" in s
         assert "threshold" in s
         assert "bucket_tokens" in s
@@ -165,22 +173,24 @@ class TestNudgeEngine:
         (24, 8, 10),    # 一整天
         (48, 9, 10),    # 两天（clamped）
     ])
-    def test_missing_value_by_time(self, engine, hours, expected_min, expected_max):
+    @pytest.mark.asyncio
+    async def test_missing_value_by_time(self, engine, hours, expected_min, expected_max):
         # Mock _get_hours_since_last
         with patch.object(engine, '_get_hours_since_last', return_value=hours):
             with patch.object(engine, '_get_urgency_mod', return_value=1.0):
                 with patch.object(engine, '_get_significance_mod', return_value=1.0):
                     with patch.object(engine, '_get_time_mod', return_value=1.0):
-                        val = engine.calculate_missing_value()
+                        val = await engine.calculate_missing_value()
                         assert expected_min <= val <= expected_max, f"hours={hours}, val={val}"
 
-    def test_missing_value_urgency_high(self, engine):
+    @pytest.mark.asyncio
+    async def test_missing_value_urgency_high(self, engine):
         """负面情绪 → 想念值放大"""
         with patch.object(engine, '_get_hours_since_last', return_value=6.0):
             with patch.object(engine, '_get_urgency_mod', return_value=1.5):
                 with patch.object(engine, '_get_significance_mod', return_value=1.0):
                     with patch.object(engine, '_get_time_mod', return_value=1.0):
-                        val = engine.calculate_missing_value()
+                        val = await engine.calculate_missing_value()
                         # base = (6/24)*10 = 2.5; ×1.5 = 3.75
                         assert val >= 3.5
 
@@ -197,25 +207,29 @@ class TestNudgeEngine:
 
     # ── 去重 ──
 
-    def test_dedup_same_content(self, engine):
+    @pytest.mark.asyncio
+    async def test_dedup_same_content(self, engine):
         text = "伙伴，人家想你了~♪"
-        engine._store_greeting(text)
+        await engine._store_greeting(text)
         assert engine._is_duplicate(text) is True
 
-    def test_dedup_different_content(self, engine):
-        engine._store_greeting("伙伴，人家想你了~♪")
+    @pytest.mark.asyncio
+    async def test_dedup_different_content(self, engine):
+        await engine._store_greeting("伙伴，人家想你了~♪")
         assert engine._is_duplicate("今天看到一朵小花，想起了你") is False
 
-    def test_dedup_rotates_old(self, engine):
+    @pytest.mark.asyncio
+    async def test_dedup_rotates_old(self, engine):
         for i in range(10):
-            engine._store_greeting(f"问候 #{i}")
+            await engine._store_greeting(f"问候 #{i}")
         # 只保留最近 5 条
         assert len(engine._recent_greetings) == 5
 
     # ── 问候投递 ──
 
-    def test_pending_greeting_lifecycle(self, engine):
-        engine._store_greeting("伙伴~")
+    @pytest.mark.asyncio
+    async def test_pending_greeting_lifecycle(self, engine):
+        await engine._store_greeting("伙伴~")
         result = engine.get_pending_greeting()
         assert result["has_greeting"] is True
         assert result["greeting"] == "伙伴~"
@@ -224,9 +238,10 @@ class TestNudgeEngine:
         assert engine.ack_greeting(gid) is True
         assert engine.get_pending_greeting()["has_greeting"] is False
 
-    def test_get_consumes_greeting(self, engine):
+    @pytest.mark.asyncio
+    async def test_get_consumes_greeting(self, engine):
         """get_pending_greeting 读即消费——一次返回后清空，不可能重复投递"""
-        engine._store_greeting("伙伴~")
+        await engine._store_greeting("伙伴~")
         result = engine.get_pending_greeting()
         assert result["has_greeting"] is True
         assert result["greeting"] == "伙伴~"
@@ -276,7 +291,7 @@ class TestNudgeEngine:
     async def test_tick_dedup_returns_token(self, engine, mock_router):
         # 先生成一次
         with patch.object(engine, 'calculate_missing_value', return_value=8.0):
-            engine._store_greeting("伙伴，想你了~♪")
+            await engine._store_greeting("伙伴，想你了~♪")
             tokens_before = engine._bucket.tokens
 
             with patch.object(engine, 'generate_greeting', return_value="伙伴，想你了~♪"):

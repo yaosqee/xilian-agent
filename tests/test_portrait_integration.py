@@ -46,7 +46,14 @@ def _event_json(events):
 
 
 def _events_fact(i):
-    return [{"content": f"事实事件内容{i}", "category": "fact", "confidence": 0.9}]
+    # 使用多样化的内容避免二元组去重误判
+    items = [
+        "盒子喜欢安静编码", "最近在学吉他课程", "下周三有技术面试",
+        "每周上两次吉他课", "喜欢深夜写代码", "不太喜欢被人打扰",
+        "吉他课学了新和弦", "面试准备进展顺利", "偏好独处的环境",
+        "对技术细节很执着", "喜欢听轻音乐编程", "周末习惯晚起一些",
+    ]
+    return [{"content": items[i % len(items)], "category": "fact", "confidence": 0.9}]
 
 
 # 所有 mock 文本需 >= 对应门控（L2 >= 20, L1/L0/legacy >= 50）

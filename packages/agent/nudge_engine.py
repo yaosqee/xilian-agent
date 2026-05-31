@@ -266,7 +266,7 @@ class NudgeEngine:
             return ProactiveDecision(action="paused", reason="主动问候已关闭")
 
         # 2. 计算想念值
-        missing = self.calculate_missing_value()
+        missing = await self.calculate_missing_value()
         self._current_missing_value = missing
 
         logger.debug(
@@ -291,7 +291,7 @@ class NudgeEngine:
             )
 
         # 4.5. 检查是否有未回复的问候（避免骚扰）
-        if self._has_unanswered_greeting():
+        if await self._has_unanswered_greeting():
             self._bucket.tokens += 1.0  # 退还令牌
             return ProactiveDecision(
                 action="silent",
@@ -314,7 +314,7 @@ class NudgeEngine:
             return ProactiveDecision(action="silent", reason="内容重复")
 
         # 7. 记录并返回
-        greeting_id = self._store_greeting(greeting)
+        greeting_id = await self._store_greeting(greeting)
         return ProactiveDecision(
             action="greet",
             greeting=greeting,
@@ -326,25 +326,22 @@ class NudgeEngine:
     # 想念值计算
     # ============================================================
 
-    def calculate_missing_value(self) -> float:
+    async def calculate_missing_value(self) -> float:
         """
-        计算想念值（0-10）。
+        计算想念值（0-10）。Phase 3: 异步 DB 查询。
 
         公式：
           missing = base_missing × urgency_mod × significance_mod × time_mod
-
-        Returns:
-            float 0-10
         """
         # ── 基础想念（时间） ──
-        hours_since = self._get_hours_since_last()
+        hours_since = await self._get_hours_since_last()
         base = min(1.0, hours_since / 24.0) * 10.0
 
         # ── 情绪紧急度 ──
-        urgency = self._get_urgency_mod()
+        urgency = await self._get_urgency_mod()
 
         # ── 记忆重要性 ──
-        significance = self._get_significance_mod()
+        significance = await self._get_significance_mod()
 
         # ── 时段调制 ──
         time_mod = self._get_time_mod()
@@ -352,100 +349,40 @@ class NudgeEngine:
         missing = base * urgency * significance * time_mod
         return round(min(10.0, missing), 2)
 
-    def _get_hours_since_last(self) -> float:
-        """
-        距上次对话的小时数。
-
-        回退链（按优先级）：
-          1. conversation_logs  — 最直接，但会被 reset_session 清空
-          2. episodic_memories  — 不会被重置清空，每次对话都写入
-          3. emotion_snapshots  — 同上，持久可靠
-          4. notebook_entries   — 不一定每次对话都有，作为备选
-          5. _fallback_timestamp — 程序启动 / 最后一次 poke() 时间
-        """
-        import sqlite3
+    async def _get_hours_since_last(self) -> float:
+        """距上次对话的小时数（异步 DB）。"""
         now = time.time()
-        db_path = self._db.db_path
-
-        # 按优先级尝试多个时间源
-        queries = [
-            ("conversation_logs", "SELECT timestamp FROM conversation_logs ORDER BY timestamp DESC LIMIT 1"),
-            ("episodic_memories", "SELECT timestamp FROM episodic_memories ORDER BY timestamp DESC LIMIT 1"),
-            ("emotion_snapshots", "SELECT timestamp FROM emotion_snapshots ORDER BY timestamp DESC LIMIT 1"),
-            ("notebook_entries", "SELECT created_at FROM notebook_entries ORDER BY created_at DESC LIMIT 1"),
-        ]
-
         try:
-            conn = sqlite3.connect(str(db_path))
-            try:
-                for source_name, query in queries:
-                    try:
-                        cursor = conn.execute(query)
-                        row = cursor.fetchone()
-                        if row and row[0]:
-                            hours = (now - row[0]) / 3600.0
-                            if source_name != "conversation_logs":
-                                logger.debug(
-                                    "nudge.timestamp_fallback",
-                                    source=source_name,
-                                    hours=round(hours, 1),
-                                )
-                            return hours
-                    except Exception:
-                        continue
-            finally:
-                conn.close()
+            ts = await self._db.get_last_activity_timestamp()
+            if ts > 0:
+                return (now - ts) / 3600.0
         except Exception as e:
             logger.warning("nudge.get_hours_since_last_failed", error=str(e))
-
-        # 所有 DB 源都为空 → 用回退时间戳
         fallback_hours = (now - self._fallback_timestamp) / 3600.0
         logger.debug("nudge.timestamp_fallback", source="memory", hours=round(fallback_hours, 1))
         return fallback_hours
 
-    def _get_urgency_mod(self) -> float:
-        """情绪紧急度调制因子（基于最新 PAD 状态）"""
+    async def _get_urgency_mod(self) -> float:
+        """情绪紧急度调制因子（异步 DB）。"""
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(self._db.db_path))
-            try:
-                cursor = conn.execute(
-                    """SELECT pad_p, primary_emotion FROM emotion_snapshots
-                       ORDER BY timestamp DESC LIMIT 1"""
-                )
-                row = cursor.fetchone()
-            finally:
-                conn.close()
-
-            if row is None:
+            snaps = await self._db.get_emotion_snapshots(limit=1)
+            if not snaps:
                 return 1.0
-
-            pad_p = row[0] or 0.0
+            pad_p = snaps[0].get("pad_p", 0) or 0.0
             if pad_p < -0.3:
-                return 1.5   # 伙伴情绪低落 → 更需要昔涟
+                return 1.5
             elif pad_p > 0.5:
-                return 1.2   # 伙伴高兴 → 也想分享
+                return 1.2
             return 1.0
         except Exception:
             return 1.0
 
-    def _get_significance_mod(self) -> float:
-        """记忆重要性调制因子（24h 内是否有高重要性记忆）"""
+    async def _get_significance_mod(self) -> float:
+        """记忆重要性调制因子（异步 DB）。"""
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(self._db.db_path))
-            try:
-                cutoff = time.time() - 86400  # 24h
-                cursor = conn.execute(
-                    """SELECT COUNT(*) FROM episodic_memories
-                       WHERE timestamp > ? AND importance > 0.8""",
-                    (cutoff,),
-                )
-                row = cursor.fetchone()
-            finally:
-                conn.close()
-
-            if row and row[0] > 0:
+            cutoff = time.time() - 86400
+            count = await self._db.count_high_importance_memories(cutoff, min_importance=0.8)
+            if count > 0:
                 return 1.3
             return 1.0
         except Exception:
@@ -477,19 +414,19 @@ class NudgeEngine:
         """
         调用 DS V4-Pro 生成昔涟风格的主动问候。
         """
-        hours_ago = self._get_hours_since_last()
+        hours_ago = await self._get_hours_since_last()
 
         # 组装时段描述
         time_of_day = self._describe_time_of_day()
 
         # 组装情感上下文
-        emotion_context = self._build_emotion_context()
+        emotion_context = await self._build_emotion_context()
 
         # 组装记忆上下文
-        memory_context = self._build_memory_context()
+        memory_context = await self._build_memory_context()
 
         # 组装印象上下文
-        portrait_context = self._build_portrait_context()
+        portrait_context = await self._build_portrait_context()
 
         prompt = GREETING_SYSTEM_PROMPT.format(
             time_of_day=time_of_day,
@@ -531,30 +468,19 @@ class NudgeEngine:
         else:
             return "深夜"
 
-    def _build_emotion_context(self) -> str:
-        """构建情感背景文本"""
+    async def _build_emotion_context(self) -> str:
+        """构建情感背景文本（异步 DB）。"""
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(self._db.db_path))
-            try:
-                cursor = conn.execute(
-                    """SELECT primary_emotion, pad_p, pad_a, pad_d
-                       FROM emotion_snapshots
-                       ORDER BY timestamp DESC LIMIT 3"""
-                )
-                rows = cursor.fetchall()
-            finally:
-                conn.close()
-
+            rows = await self._db.get_emotion_snapshots(limit=3)
             if not rows:
                 return ""
 
-            emotions = [r[0] for r in rows if r[0]]
+            emotions = [r.get("primary_emotion") for r in rows if r.get("primary_emotion")]
             if not emotions:
                 return ""
 
             latest = emotions[0]
-            pad_p = rows[0][1] or 0.0
+            pad_p = rows[0].get("pad_p", 0) or 0.0
 
             if pad_p < -0.3:
                 tone = "伙伴上次聊的时候心情比较低落。问候要更温柔一些，像陪在身边不说话的那种安静。"
@@ -563,36 +489,18 @@ class NudgeEngine:
             else:
                 tone = f"上次对话时，伙伴的心情偏向{latest}。"
 
-            # 如果有多条快照，检查情绪趋势
             if len(emotions) >= 3 and len(set(emotions)) >= 2:
-                trend = "情绪有些波动"
-                tone += f"（最近{trend}，问候要稳一点，不要追问。）"
+                tone += "（最近情绪有些波动，问候要稳一点，不要追问。）"
 
             return tone
         except Exception:
             return ""
 
-    def _build_memory_context(self) -> str:
-        """构建最近记忆背景文本"""
+    async def _build_memory_context(self) -> str:
+        """构建最近记忆背景文本（异步 DB）。"""
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(self._db.db_path))
-            try:
-                cutoff = time.time() - 86400
-                cursor = conn.execute(
-                    """SELECT summary FROM episodic_memories
-                       WHERE timestamp > ? AND importance > 0.4
-                       ORDER BY timestamp DESC LIMIT 3""",
-                    (cutoff,),
-                )
-                rows = cursor.fetchall()
-            finally:
-                conn.close()
-
-            if not rows:
-                return ""
-
-            summaries = [r[0] for r in rows if r[0]]
+            cutoff = time.time() - 86400
+            summaries = await self._db.get_episodic_summaries_since(cutoff, limit=3)
             if not summaries:
                 return ""
 
@@ -603,30 +511,13 @@ class NudgeEngine:
         except Exception:
             return ""
 
-    def _build_portrait_context(self) -> str:
-        """
-        构建用户印象背景文本（用于个性化问候）。
-
-        Phase 2: 优先读取 core_profile > phase_profile > user_portrait。
-        """
+    async def _build_portrait_context(self) -> str:
+        """构建用户印象背景文本（异步 DB，Phase 2 分层兼容）。"""
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(self._db.db_path))
-            try:
-                # Phase 2: 优先新表，回退旧表
-                for table in ("core_profile", "phase_profile", "user_portrait"):
-                    cursor = conn.execute(
-                        f"SELECT content FROM {table} "
-                        "ORDER BY id DESC LIMIT 1"
-                    )
-                    row = cursor.fetchone()
-                    if row and row[0] and len(row[0]) >= 30:
-                        portrait = row[0]
-                        short = portrait[:200]
-                        return f"印象中，伙伴{short}"
-            finally:
-                conn.close()
-
+            portrait = await self._db.get_latest_portrait()
+            if portrait and portrait.get("content") and len(portrait["content"]) >= 30:
+                short = portrait["content"][:200]
+                return f"印象中，伙伴{short}"
             return ""
         except Exception:
             return ""
@@ -641,29 +532,19 @@ class NudgeEngine:
         recent_hashes = {h for _, h in self._recent_greetings}
         return h in recent_hashes
 
-    def _has_unanswered_greeting(self) -> bool:
-        """检查最近一条对话记录是否是未回复的问候。"""
+    async def _has_unanswered_greeting(self) -> bool:
+        """检查最近一条对话记录是否是未回复的问候（异步 DB）。"""
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(self._db.db_path))
-            try:
-                cursor = conn.execute(
-                    """SELECT user_message FROM conversation_logs
-                       ORDER BY timestamp DESC LIMIT 1"""
-                )
-                row = cursor.fetchone()
-            finally:
-                conn.close()
-            if row and not row[0]:
-                return True  # user_message 为空 → 是自动问候，伙伴还没回复
+            msg = await self._db.get_latest_conversation_user_message()
+            if msg is not None and msg == "":
+                return True  # user_message 为空 → 自动问候，伙伴还没回复
             return False
         except Exception:
             return False
 
-    def _store_greeting(self, text: str) -> str:
-        """存储问候供前端轮询，同时持久化到 conversation_logs。返回 greeting_id"""
+    async def _store_greeting(self, text: str) -> str:
+        """存储问候供前端轮询，同时持久化到 conversation_logs（异步 DB）。"""
         import uuid
-        import sqlite3
         greeting_id = uuid.uuid4().hex[:12]
 
         # 记录去重哈希
@@ -672,31 +553,12 @@ class NudgeEngine:
         if len(self._recent_greetings) > self._max_recent:
             self._recent_greetings = self._recent_greetings[-self._max_recent:]
 
-        # 持久化到 conversation_logs（作为昔涟主动发起的对话消息）
+        # 持久化到 conversation_logs
         try:
-            conn = sqlite3.connect(str(self._db.db_path))
-            try:
-                conn.execute(
-                    """INSERT INTO conversation_logs
-                       (timestamp, session_id, event_id, user_message, assistant_reply,
-                        emotion_label, emotion_primary, emotion_intensity, user_id, source)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        time.time(),
-                        "nudge",
-                        f"nudge-{greeting_id}",
-                        "",           # user_message 为空 → 标记为主动问候
-                        text,
-                        None,
-                        None,
-                        None,
-                        "hezi",
-                        "nudge",
-                    ),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            await self._db.insert_nudge_greeting(
+                greeting_text=text,
+                greeting_id=greeting_id,
+            )
         except Exception as e:
             logger.warning("nudge.log_write_failed", error=str(e))
 
@@ -761,12 +623,11 @@ class NudgeEngine:
         logger.info("nudge.config_updated", patch=patch)
         return self._config
 
-    @property
-    def status(self) -> dict:
+    async def status(self) -> dict:
         """当前状态快照（供 API 返回）— 每次调用时实时计算想念值"""
         # 实时计算而非依赖 tick() 的缓存值，确保前端看到最新数据
         try:
-            self._current_missing_value = self.calculate_missing_value()
+            self._current_missing_value = await self.calculate_missing_value()
         except Exception:
             pass  # 计算失败时保留旧值
         return {

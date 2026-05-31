@@ -578,8 +578,11 @@ class PortraitModule(ContextModule):
             if not s_bigrams:
                 continue
             overlap = len(query_bigrams & s_bigrams)
-            if overlap >= 2:
-                scored.append((overlap, s))
+            union = len(query_bigrams | s_bigrams)
+            jaccard = overlap / union if union > 0 else 0.0
+            # 二元组重叠 ≥3 或 Jaccard > 0.1 → 相关（减少假阳性）
+            if overlap >= 3 or jaccard > 0.1:
+                scored.append((overlap + jaccard, s))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         if not scored:

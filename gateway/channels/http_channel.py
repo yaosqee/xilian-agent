@@ -469,7 +469,7 @@ class HTTPChannel(Channel):
             """获取自主行为状态"""
             if nudge._nudge_engine is None:
                 return {"error": "nudge engine not initialized"}
-            return nudge._nudge_engine.status
+            return await nudge._nudge_engine.status()
 
         @self.app.post("/api/autonomy/pause")
         async def autonomy_pause():

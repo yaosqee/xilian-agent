@@ -22,7 +22,7 @@ from loguru import logger
 # L2: micro_events → session_summaries
 L2_TRIGGER_COUNT: int = 10
 L2_TRIGGER_DAYS: float = 3.0
-L2_MIN_EVENTS: int = 5
+L2_MIN_EVENTS: int = 3           # 时间触发的最低事件数（低频用户友好）
 L2_TRIGGER_COUNT_FAST: int = 5   # 工具副作用低阈值
 
 # L1: session_summaries → phase_profile
@@ -277,22 +277,16 @@ class CoarseGrainEngine:
         event_ids = [e["id"] for e in events]
         source_ids = ",".join(str(eid) for eid in event_ids)
 
+        # 原子操作：insert + consume 在同一事务中
         try:
-            l2_id = await self._db.insert_session_summary(
+            l2_id = await self._db.insert_session_summary_atomic(
                 content=summary_text,
                 source_event_ids=source_ids,
-            )
-        except Exception as e:
-            logger.error("coarse.l2_db_write_failed", error=str(e))
-            return None
-
-        try:
-            await self._db.consume_micro_events(
                 event_ids=event_ids,
-                absorbed_to=f"l2:{l2_id}",
             )
         except Exception as e:
-            logger.warning("coarse.l2_consume_failed", error=str(e))
+            logger.error("coarse.l2_atomic_write_failed", error=str(e))
+            return None
 
         logger.info(
             "coarse.l2_generated",

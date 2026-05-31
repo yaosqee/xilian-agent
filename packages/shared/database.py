@@ -1477,21 +1477,90 @@ class DatabaseManager:
         logger.debug("database.insert_portrait", version=version, length=len(content))
         return cursor.lastrowid
 
-    async def get_latest_portrait(self) -> dict | None:
-        """获取最新版用户印象文档。"""
+    # get_latest_portrait 已移至 Phase 2 兼容读取版本（第 1716 行），
+    # 优先 core_profile > phase_profile > user_portrait 回退。
+
+    async def get_last_activity_timestamp(self) -> float:
+        """获取最后一次用户活动时间戳（跨表查询，用于 NudgeEngine）。"""
+        if not self._conn:
+            return 0.0
+
+        queries = [
+            "SELECT timestamp FROM conversation_logs ORDER BY timestamp DESC LIMIT 1",
+            "SELECT timestamp FROM episodic_memories ORDER BY timestamp DESC LIMIT 1",
+            "SELECT timestamp FROM emotion_snapshots ORDER BY timestamp DESC LIMIT 1",
+            "SELECT created_at FROM notebook_entries ORDER BY created_at DESC LIMIT 1",
+        ]
+        for q in queries:
+            try:
+                cursor = await self._conn.execute(q)
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    return row[0]
+            except Exception:
+                continue
+        return 0.0
+
+    async def count_high_importance_memories(
+        self, cutoff: float, min_importance: float = 0.4
+    ) -> int:
+        """统计截止时间之后的高重要性记忆数。"""
+        if not self._conn:
+            return 0
+
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM episodic_memories "
+            "WHERE timestamp > ? AND importance > ?",
+            (cutoff, min_importance),
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    async def get_episodic_summaries_since(
+        self, cutoff: float, min_importance: float = 0.4, limit: int = 3
+    ) -> list[str]:
+        """获取截止时间之后的高重要性记忆摘要列表。"""
+        if not self._conn:
+            return []
+
+        cursor = await self._conn.execute(
+            "SELECT summary FROM episodic_memories "
+            "WHERE timestamp > ? AND importance > ? "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (cutoff, min_importance, limit),
+        )
+        rows = await cursor.fetchall()
+        return [r["summary"] for r in rows if r["summary"]]
+
+    async def insert_nudge_greeting(
+        self, greeting_text: str, greeting_id: str,
+    ) -> int:
+        """写入主动问候到 conversation_logs（NudgeEngine 异步）。"""
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
 
         cursor = await self._conn.execute(
-            "SELECT * FROM user_portrait ORDER BY id DESC LIMIT 1"
+            """INSERT INTO conversation_logs
+               (timestamp, session_id, event_id, user_message, assistant_reply,
+                emotion_label, emotion_primary, emotion_intensity, user_id, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (time.time(), "nudge", f"nudge-{greeting_id}",
+             "", greeting_text, None, None, None, "hezi", "nudge"),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_latest_conversation_user_message(self) -> str | None:
+        """获取最近一条对话记录的用户消息。"""
+        if not self._conn:
+            return None
+
+        cursor = await self._conn.execute(
+            "SELECT user_message FROM conversation_logs "
+            "ORDER BY timestamp DESC LIMIT 1"
         )
         row = await cursor.fetchone()
-        if row:
-            result = dict(row)
-            logger.debug("database.get_latest_portrait", id=result.get("id"), version=result.get("version"), content_len=len(result.get("content", "")))
-            return result
-        logger.debug("database.get_latest_portrait.empty")
-        return None
+        return row["user_message"] if row else None
 
     async def get_portrait_history(self, limit: int = 10) -> list[dict]:
         """获取印象文档版本历史（轻量，不含正文）。"""
@@ -1597,6 +1666,47 @@ class DatabaseManager:
         )
         await self._conn.commit()
         return cursor.lastrowid
+
+    async def insert_session_summary_atomic(
+        self,
+        content: str,
+        source_event_ids: str = "",
+        event_ids: list[int] | None = None,
+    ) -> int:
+        """
+        原子操作：写入 L2 摘要 + 消费微事件（同一事务）。
+        如果 consume 失败，摘要也不会被提交，避免重复生成。
+        """
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        l2_id = None
+        try:
+            await self._conn.execute("BEGIN")
+            cursor = await self._conn.execute(
+                """INSERT INTO session_summaries
+                   (content, source_event_ids, created_at, session_id)
+                   VALUES (?, ?, ?, ?)""",
+                (content, source_event_ids, time.time(), self._session_id),
+            )
+            l2_id = cursor.lastrowid
+
+            if event_ids:
+                placeholders = ",".join("?" for _ in event_ids)
+                await self._conn.execute(
+                    f"UPDATE micro_events SET is_active = 0, absorbed_to = ? "
+                    f"WHERE id IN ({placeholders})",
+                    [f"l2:{l2_id}"] + event_ids,
+                )
+
+            await self._conn.commit()
+            return l2_id
+        except Exception:
+            try:
+                await self._conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
 
     async def get_recent_session_summaries(self, limit: int = 10) -> list[dict]:
         """获取最近的 L2 会话摘要（按时间倒序）。"""

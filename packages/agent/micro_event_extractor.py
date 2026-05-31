@@ -190,9 +190,11 @@ class MicroEventExtractor:
                 "confidence": confidence,
             })
 
-        # 6. 写入 DB（ADD-Only）
-        now = time.time()
-        for e in valid_events:
+        # 6. 程序级去重 — 与已有活跃事件做二元组 Jaccard 相似度检查
+        deduped_events = await self._dedup_against_active(valid_events)
+
+        # 7. 写入 DB（ADD-Only）
+        for e in deduped_events:
             try:
                 await self._db.insert_micro_event(
                     content=e["content"],
@@ -206,7 +208,56 @@ class MicroEventExtractor:
             "micro_event.extracted",
             total=len(events),
             valid=len(valid_events),
-            filtered=len(events) - len(valid_events),
+            deduped=len(deduped_events),
+            quality_filtered=len(events) - len(valid_events),
+            dup_filtered=len(valid_events) - len(deduped_events),
         )
 
-        return valid_events
+        return deduped_events
+
+    # ── 程序级去重 ─────────────────────────────────────
+
+    DEDUP_JACCARD_THRESHOLD = 0.85  # 二元组 Jaccard > 此值视为重复
+
+    async def _dedup_against_active(self, events: list[dict]) -> list[dict]:
+        """与已有活跃事件做二元组 Jaccard 去重。"""
+        try:
+            active = await self._db.get_active_micro_events(limit=30)
+            if not active:
+                return events
+        except Exception:
+            return events  # DB 不可用时跳过去重
+
+        result = []
+        for e in events:
+            content = e.get("content", "")
+            is_dup = False
+            for a in active:
+                existing_content = a.get("content", "")
+                sim = self._bigram_jaccard(content, existing_content)
+                if sim >= self.DEDUP_JACCARD_THRESHOLD:
+                    logger.debug(
+                        "micro_event.duplicate_skipped",
+                        content=content[:30],
+                        existing=existing_content[:30],
+                        similarity=round(sim, 3),
+                    )
+                    is_dup = True
+                    break
+            if not is_dup:
+                result.append(e)
+        return result
+
+    @staticmethod
+    def _bigram_jaccard(a: str, b: str) -> float:
+        """计算两段文本的二元组 Jaccard 相似度（0.0-1.0）。"""
+        def _bigrams(text: str) -> set:
+            return {text[i:i+2] for i in range(len(text) - 1)} if len(text) >= 2 else set()
+
+        bg_a = _bigrams(a)
+        bg_b = _bigrams(b)
+        if not bg_a or not bg_b:
+            return 0.0
+        intersection = len(bg_a & bg_b)
+        union = len(bg_a | bg_b)
+        return intersection / union if union > 0 else 0.0

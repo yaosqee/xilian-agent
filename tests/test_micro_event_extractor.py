@@ -199,6 +199,54 @@ class TestMicroEventExtractor:
         contents = [e["content"] for e in active]
         assert "盒子喜欢雨天" in contents
 
+    # ═══════════════════════════════════════════════════════
+    # 程序级去重测试
+    # ═══════════════════════════════════════════════════════
+
+    def test_bigram_jaccard_identical(self, extractor):
+        """相同文本 → 相似度 1.0"""
+        sim = extractor._bigram_jaccard("盒子喜欢安静编码", "盒子喜欢安静编码")
+        assert abs(sim - 1.0) < 0.01
+
+    def test_bigram_jaccard_different(self, extractor):
+        """完全不同 → 相似度 0.0"""
+        sim = extractor._bigram_jaccard("盒子喜欢安静", "编程很有意思")
+        assert sim < 0.3
+
+    def test_bigram_jaccard_partial(self, extractor):
+        """部分重叠 → 中间值"""
+        sim = extractor._bigram_jaccard("盒子喜欢安静编码", "盒子喜欢安静环境")
+        assert 0.3 < sim < 0.9
+
+    @pytest.mark.asyncio
+    async def test_dedup_filters_duplicates(self, extractor, mock_router, db):
+        """重复事件被去重过滤"""
+        # 先写入一条已有事件
+        await db.insert_micro_event("盒子喜欢安静编码", "preference", 0.9)
+
+        # 尝试提取相同内容
+        mock_response = MagicMock()
+        mock_response.content = '{"events": [{"content": "盒子喜欢安静编码", "category": "preference", "confidence": 0.9}]}'
+        mock_router.route.return_value = mock_response
+
+        events = await extractor.extract("我喜欢安静", "嗯呢~")
+        # 应与已有事件重复 → 被去重过滤
+        assert events == []
+
+    @pytest.mark.asyncio
+    async def test_dedup_keeps_unique(self, extractor, mock_router, db):
+        """不重复的事件被保留"""
+        await db.insert_micro_event("盒子喜欢安静编码", "preference", 0.9)
+
+        mock_response = MagicMock()
+        mock_response.content = '{"events": [{"content": "最近开始学吉他", "category": "fact", "confidence": 0.9}]}'
+        mock_router.route.return_value = mock_response
+
+        events = await extractor.extract("我开始学吉他了", "加油呀~")
+        # 与已有事件不重复 → 保留
+        assert len(events) == 1
+        assert "吉他" in events[0]["content"]
+
     @pytest.mark.asyncio
     async def test_known_facts_context(self, extractor, mock_router, db):
         """已知事实正确传递给 LLM 作为去重上下文"""

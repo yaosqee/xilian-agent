@@ -394,8 +394,18 @@ class PortraitManager:
         if existing:
             return None  # 已存在，不重复生成
 
-        # Phase 1: 先尝试 force 粗粒化
-        result = await self._coarse_engine.force_coarse_all()
+        # Phase 1: 先尝试 force 粗粒化（冷启动加速：降低 L2_MIN_EVENTS 阈值）
+        import sys
+        cge = sys.modules.get("packages.agent.coarse_grain_engine")
+        original_min = cge.L2_MIN_EVENTS if cge else 5
+        try:
+            if cge:
+                cge.L2_MIN_EVENTS = 3  # 冷启动：允许更少事件触发粗粒化
+            result = await self._coarse_engine.force_coarse_all()
+        finally:
+            if cge:
+                cge.L2_MIN_EVENTS = original_min
+
         if result:
             # 同时写入旧 user_portrait 表（兼容过渡期）
             try:
