@@ -786,14 +786,24 @@ class DatabaseManager:
         )
         await self._conn.commit()
 
-    async def get_episodic_count(self) -> int:
-        """获取记忆总数（容量管理用）"""
+    async def get_episodic_count(self, exclude_character: bool = True) -> int:
+        """获取记忆总数（容量管理/冷启动用）。
+
+        exclude_character=True 时排除角色记忆（默认），
+        因为角色记忆不应计入用户记忆数量判断。
+        """
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
 
-        cursor = await self._conn.execute(
-            "SELECT COUNT(*) as cnt FROM episodic_memories"
-        )
+        if exclude_character:
+            cursor = await self._conn.execute(
+                "SELECT COUNT(*) as cnt FROM episodic_memories "
+                "WHERE session_id != 'character'"
+            )
+        else:
+            cursor = await self._conn.execute(
+                "SELECT COUNT(*) as cnt FROM episodic_memories"
+            )
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
 

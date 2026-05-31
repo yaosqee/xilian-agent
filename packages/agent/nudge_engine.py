@@ -428,12 +428,14 @@ class NudgeEngine:
         # 组装印象上下文
         portrait_context = await self._build_portrait_context()
 
-        prompt = GREETING_SYSTEM_PROMPT.format(
-            time_of_day=time_of_day,
-            hours_ago=f"{hours_ago:.1f}",
-            emotion_context=emotion_context,
-            memory_context=memory_context,
-            portrait_context=portrait_context,
+        # 使用 .replace() 避免用户文本中的花括号被 .format() 误解析
+        prompt = (
+            GREETING_SYSTEM_PROMPT
+            .replace("{time_of_day}", time_of_day)
+            .replace("{hours_ago}", f"{hours_ago:.1f}")
+            .replace("{emotion_context}", emotion_context)
+            .replace("{memory_context}", memory_context)
+            .replace("{portrait_context}", portrait_context)
         )
 
         messages = [

@@ -1686,7 +1686,7 @@ class AgentCore:
                 return
 
             replies_text = "\n---\n".join(r[:200] for r in recent)
-            prompt = self.PERSONALITY_SCORING_PROMPT.format(replies=replies_text)
+            prompt = self.PERSONALITY_SCORING_PROMPT.replace("{replies}", replies_text)
 
             result = await self.router.route(
                 "personality_check",

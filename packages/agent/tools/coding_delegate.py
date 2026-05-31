@@ -85,7 +85,7 @@ async def coding_delegate(
             "人家想帮你请 Claude Code 来写代码……但他好像还没装好呢 (´•ω•̥`)"
         )
 
-    prompt = CLAUDE_PROMPT_TEMPLATE.format(task_description=task_description)
+    prompt = CLAUDE_PROMPT_TEMPLATE.replace("{task_description}", task_description)
 
     try:
         proc = await asyncio.create_subprocess_exec(
