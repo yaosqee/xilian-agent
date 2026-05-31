@@ -188,6 +188,74 @@ CREATE TABLE IF NOT EXISTS user_portrait (
 );
 """
 
+# ── Phase 1: 微事件池 + 会话摘要 ──
+
+_CREATE_MICRO_EVENTS = """
+CREATE TABLE IF NOT EXISTS micro_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    content     TEXT    NOT NULL,
+    category    TEXT    NOT NULL DEFAULT 'fact',
+    confidence  REAL    DEFAULT 0.5,
+    source_ids  TEXT,
+    is_active   INTEGER DEFAULT 1,
+    absorbed_to TEXT,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
+_CREATE_SESSION_SUMMARIES = """
+CREATE TABLE IF NOT EXISTS session_summaries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    content     TEXT    NOT NULL,
+    source_event_ids TEXT,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
+# ── Phase 2: 分层画像 ──
+
+_CREATE_CORE_PROFILE = """
+CREATE TABLE IF NOT EXISTS core_profile (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    content     TEXT    NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    source_l1_ids TEXT,
+    stable_traits TEXT,
+    change_log  TEXT,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
+_CREATE_PHASE_PROFILE = """
+CREATE TABLE IF NOT EXISTS phase_profile (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    content     TEXT    NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    source_event_ids TEXT,
+    active_topics TEXT,
+    faded_topics TEXT,
+    change_log  TEXT,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
+# ── Phase 4: 工具调用审计日志 ──
+
+_CREATE_TOOL_USAGE_LOG = """
+CREATE TABLE IF NOT EXISTS tool_usage_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_name   TEXT    NOT NULL,
+    arguments   TEXT,
+    success     INTEGER DEFAULT 1,
+    created_at  REAL    NOT NULL,
+    session_id  TEXT    NOT NULL
+);
+"""
+
 _CREATE_CRON_RUNS = """
 CREATE TABLE IF NOT EXISTS cron_runs (
     task_name TEXT PRIMARY KEY,
@@ -306,6 +374,11 @@ class DatabaseManager:
             # Alembic 路径：确保新增表也创建（Alembic 迁移未覆盖时兜底）
             await self._conn.execute(_CREATE_USER_PORTRAIT)
             await self._conn.execute(_CREATE_CRON_RUNS)
+            await self._conn.execute(_CREATE_MICRO_EVENTS)
+            await self._conn.execute(_CREATE_SESSION_SUMMARIES)
+            await self._conn.execute(_CREATE_CORE_PROFILE)
+            await self._conn.execute(_CREATE_PHASE_PROFILE)
+            await self._conn.execute(_CREATE_TOOL_USAGE_LOG)
             for idx_sql in _CREATE_INDEXES_SQL:
                 if "user_portrait" in idx_sql or "portrait_version" in idx_sql:
                     await self._conn.execute(idx_sql)
@@ -362,6 +435,11 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_AUDIT_LOGS)
         await self._conn.execute(_CREATE_AFFECTION)
         await self._conn.execute(_CREATE_USER_PORTRAIT)
+        await self._conn.execute(_CREATE_MICRO_EVENTS)
+        await self._conn.execute(_CREATE_SESSION_SUMMARIES)
+        await self._conn.execute(_CREATE_CORE_PROFILE)
+        await self._conn.execute(_CREATE_PHASE_PROFILE)
+        await self._conn.execute(_CREATE_TOOL_USAGE_LOG)
         await self._conn.execute(_CREATE_CRON_RUNS)
         await self._conn.execute(_CREATE_MODEL_CONFIGS)
         await self._conn.execute(_CREATE_EMBED_CONFIG)
@@ -765,6 +843,23 @@ class DatabaseManager:
         cursor = await self._conn.execute(
             "SELECT * FROM emotion_snapshots ORDER BY timestamp DESC LIMIT ? OFFSET ?",
             (limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_emotion_snapshots_recent(
+        self, days: int = 7, limit: int = 200
+    ) -> list[dict]:
+        """查询最近 N 天的情感快照（SQL 时间过滤，避免 Python 侧丢弃）"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cutoff = time.time() - days * 86400
+        cursor = await self._conn.execute(
+            "SELECT * FROM emotion_snapshots "
+            "WHERE timestamp >= ? "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (cutoff, limit),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -1423,6 +1518,354 @@ class DatabaseManager:
         return row["cnt"] if row else 0
 
     # ============================================================
+    # Phase 1: micro_events + session_summaries CRUD
+    # ============================================================
+
+    async def insert_micro_event(
+        self,
+        content: str,
+        category: str = "fact",
+        confidence: float = 0.5,
+    ) -> int:
+        """写入一条微事件（ADD-Only）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT INTO micro_events
+               (content, category, confidence, is_active, created_at, session_id)
+               VALUES (?, ?, ?, 1, ?, ?)""",
+            (content, category, confidence, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_active_micro_events(self, limit: int = 30) -> list[dict]:
+        """获取未消费的活跃微事件（按时间倒序）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM micro_events WHERE is_active = 1 "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_micro_event_count(self, active_only: bool = True) -> int:
+        """获取微事件总数。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        where = "WHERE is_active = 1" if active_only else ""
+        cursor = await self._conn.execute(
+            f"SELECT COUNT(*) as cnt FROM micro_events {where}"
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    async def consume_micro_events(
+        self, event_ids: list[int], absorbed_to: str
+    ) -> None:
+        """标记微事件已被粗粒化吸收。"""
+        if not self._conn or not event_ids:
+            return
+
+        placeholders = ",".join("?" for _ in event_ids)
+        await self._conn.execute(
+            f"UPDATE micro_events SET is_active = 0, absorbed_to = ? "
+            f"WHERE id IN ({placeholders})",
+            [absorbed_to] + event_ids,
+        )
+        await self._conn.commit()
+
+    async def insert_session_summary(
+        self,
+        content: str,
+        source_event_ids: str = "",
+    ) -> int:
+        """写入 L2 会话摘要。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT INTO session_summaries
+               (content, source_event_ids, created_at, session_id)
+               VALUES (?, ?, ?, ?)""",
+            (content, source_event_ids, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_recent_session_summaries(self, limit: int = 10) -> list[dict]:
+        """获取最近的 L2 会话摘要（按时间倒序）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM session_summaries ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ============================================================
+    # ============================================================
+    # Phase 2: core_profile + phase_profile CRUD
+    # ============================================================
+
+    async def insert_core_profile(
+        self,
+        content: str,
+        version: int = 1,
+        source_l1_ids: str = "",
+        stable_traits: str = "",
+        change_log: str = "",
+    ) -> int:
+        """写入新版 L0 核心画像。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT INTO core_profile
+               (content, version, source_l1_ids, stable_traits,
+                change_log, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (content, version, source_l1_ids, stable_traits,
+             change_log, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_latest_core_profile(self) -> dict | None:
+        """获取最新 L0 核心画像。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM core_profile ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_core_profile_history(self, limit: int = 5) -> list[dict]:
+        """获取 L0 核心画像版本历史（轻量，不含正文）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT id, version, stable_traits, change_log, created_at "
+            "FROM core_profile ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def insert_phase_profile(
+        self,
+        content: str,
+        version: int = 1,
+        source_event_ids: str = "",
+        active_topics: str = "[]",
+        faded_topics: str = "[]",
+        change_log: str = "",
+    ) -> int:
+        """写入新版 L1 阶段画像。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT INTO phase_profile
+               (content, version, source_event_ids,
+                active_topics, faded_topics,
+                change_log, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (content, version, source_event_ids,
+             active_topics, faded_topics,
+             change_log, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_latest_phase_profile(self) -> dict | None:
+        """获取最新 L1 阶段画像。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM phase_profile ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_phase_profile_history(self, limit: int = 10) -> list[dict]:
+        """获取 L1 阶段画像版本历史（含正文，供 L0 粗粒化消费）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM phase_profile ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ── 兼容读取：优先新表，回退旧表 ──
+
+    async def get_latest_portrait(self) -> dict | None:
+        """
+        兼容读取：优先读 core_profile，不存在时回退到 user_portrait。
+
+        Phase 2 起所有消费方应通过 get_effective_portrait() 或直接读
+        core_profile / phase_profile。此方法仅保留用于旧接口兼容。
+        """
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        # 先查 L0 核心画像（含 created_at / change_log 供 API 返回）
+        cursor = await self._conn.execute(
+            "SELECT content, version, created_at, change_log, stable_traits "
+            "FROM core_profile ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "content": row["content"],
+                "version": row["version"],
+                "created_at": row["created_at"],
+                "change_log": row["change_log"] or "",
+                "stable_traits": row["stable_traits"] or "",
+            }
+
+        # 回退到旧表（含 created_at / change_log 供 API 返回）
+        cursor = await self._conn.execute(
+            "SELECT content, version, created_at, change_log "
+            "FROM user_portrait ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "content": row["content"],
+                "version": row["version"],
+                "created_at": row["created_at"],
+                "change_log": row["change_log"] or "",
+            }
+        return None
+
+    # ── 数据迁移 ──
+
+    async def migrate_portrait_to_layered(self) -> bool:
+        """
+        将旧 user_portrait 最新版本迁移到 core_profile。
+        一次性操作，迁移后不删除旧表（保留作为备份）。
+
+        Returns: True 如果执行了迁移，False 如果已迁移或无数据。
+        """
+        # 检查是否已迁移
+        existing = await self.get_latest_core_profile()
+        if existing:
+            return False
+
+        # 读取旧画像
+        cursor = await self._conn.execute(
+            "SELECT content, version, change_log FROM user_portrait "
+            "ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        if not row or not row["content"]:
+            return False
+
+        # 写入 core_profile 作为初始 L0
+        await self.insert_core_profile(
+            content=row["content"],
+            version=1,
+            source_l1_ids="",
+            stable_traits="",
+            change_log=f"从旧版画像迁移 (v{row['version']})",
+        )
+        logger.info(
+            "db.migrate_portrait_to_layered_done",
+            old_version=row["version"],
+            content_len=len(row["content"]),
+        )
+        return True
+
+    # ============================================================
+    # ============================================================
+    # Phase 4: tool_usage_log + signal query helpers
+    # ============================================================
+
+    async def insert_tool_usage(
+        self, tool_name: str, arguments: str = "", success: bool = True,
+    ) -> int:
+        """写入工具调用日志。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+
+        cursor = await self._conn.execute(
+            """INSERT INTO tool_usage_log
+               (tool_name, arguments, success, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (tool_name, arguments, 1 if success else 0, time.time(), self._session_id),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def query_recent_tool_usage(self, cutoff: float) -> list[dict]:
+        """查询最近 N 天的工具使用记录。"""
+        if not self._conn:
+            return []
+
+        cursor = await self._conn.execute(
+            "SELECT tool_name, COUNT(*) as cnt FROM tool_usage_log "
+            "WHERE created_at >= ? "
+            "GROUP BY tool_name ORDER BY cnt DESC",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        return [{"tool_name": r["tool_name"], "count": r["cnt"]} for r in rows]
+
+    async def query_conversation_times(self, cutoff: float) -> list[dict]:
+        """查询最近 N 天的对话时间戳。"""
+        if not self._conn:
+            return []
+
+        cursor = await self._conn.execute(
+            "SELECT timestamp FROM conversation_logs WHERE timestamp >= ?",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        return [{"timestamp": r["timestamp"]} for r in rows]
+
+    async def query_cross_session_topics(self, cutoff: float) -> list[dict]:
+        """
+        查询跨会话持久话题。
+        从 micro_events 查找同一 content 前缀出现在 2+ 个 session 的事件。
+        """
+        if not self._conn:
+            return []
+
+        cursor = await self._conn.execute(
+            "SELECT "
+            "  SUBSTR(content, 1, 15) as topic_key,"
+            "  category,"
+            "  COUNT(DISTINCT session_id) as session_count,"
+            "  GROUP_CONCAT(content, ' | ') as variants "
+            "FROM micro_events "
+            "WHERE created_at >= ? "
+            "  AND is_active = 1 "
+            "  AND category IN ('preference', 'plan', 'habit') "
+            "GROUP BY topic_key "
+            "HAVING session_count >= 2 "
+            "ORDER BY session_count DESC "
+            "LIMIT 3",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ============================================================
     # 阶段 8: 被遗忘权 — 级联删除
     # ============================================================
 
@@ -1455,6 +1898,8 @@ class DatabaseManager:
             "conversation_logs", "episodic_memories", "message_queue",
             "emotion_snapshots", "affection_state", "notebook_entries",
             "scheduled_tasks", "user_portrait",
+            "micro_events", "session_summaries",
+            "core_profile", "phase_profile", "tool_usage_log",
         ]
         for table in tables:
             cursor = await self._conn.execute(

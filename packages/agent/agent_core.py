@@ -41,6 +41,7 @@ from .context_builder import (
     NotebookModule,
     NotebookTaskModule,
     PortraitModule,
+    PortraitGuidanceModule,
     AffectionModule,
 )
 
@@ -153,6 +154,7 @@ class AgentCore:
         # 模块按优先级注册：datetime(1) < portrait(3) < emotion(4) < memory(5) < notebook(6) < affection(7) < tasks(8)
         self._context_builder = ContextBuilder(total_budget=800)
         self._context_builder.register(DatetimeModule())
+        self._context_builder.register(PortraitGuidanceModule(self.context))
         self._context_builder.register(PortraitModule(self.context))
         self._context_builder.register(EmotionModule(self.context))
         self._context_builder.register(MemoryModule(self.context))
@@ -229,12 +231,15 @@ class AgentCore:
         if task_module:
             task_module.set_notebook(self.notebook_manager)
 
-        # 阶段 8+: 初始化用户印象管理器 + 加载当前印象
+        # 阶段 8+: 初始化用户印象管理器 + 加载分层画像
         if not self.portrait_manager:
             self.portrait_manager = PortraitManager(
                 db=self._db,
                 model_router=self.router,
             )
+
+        # Phase 5: 注入 ModelRouter 引用供 PortraitGuidanceModule 使用
+        self.context._router = self.router
 
         # 阶段 7d: 初始化技能加载器
         if not self._skills_loader:
@@ -242,21 +247,14 @@ class AgentCore:
             base = str(Path(__file__).resolve().parent.parent.parent)
             self._skills_loader = SkillsLoader()
             self._skills_loader.load_all(base_path=base)
-        if not self.context.user_portrait:
-            try:
-                latest = await self._db.get_latest_portrait()
-                if latest:
-                    content = latest.get("content")
-                    if content and len(content) >= 50:
-                        self.context.user_portrait = content
-                        self.context._current_portrait_version = latest.get("version", 1)
-                        logger.info("portrait.loaded", version=latest.get("version"), len=len(content))
-                    else:
-                        logger.warning("portrait.loaded_but_content_invalid", has_content=bool(content), length=len(content or ""))
-                else:
-                    logger.info("portrait.not_found_in_db")
-            except Exception as e:
-                logger.warning("portrait.load_failed", error=str(e))
+
+        # Phase 2: 数据迁移 + 加载分层画像
+        try:
+            await self._db.migrate_portrait_to_layered()
+        except Exception as e:
+            logger.debug("portrait.migrate_skipped", error=str(e))
+
+        await self._reload_layered_portraits()
 
         # 打磨期: 初始化 ToolExecutor + ResultWrapper（依赖 memory_manager / db 已就绪）
         self.tool_executor = ToolExecutor(
@@ -290,8 +288,13 @@ class AgentCore:
         except Exception:
             pass
 
-        # 无印象文档 → 准备破冰主动问候
-        if not self.context.user_portrait:
+        # 无印象文档（L0 或旧画像均不存在）→ 准备破冰主动问候
+        has_portrait = (
+            self.context.core_profile
+            or self.context.phase_profile
+            or self.context.user_portrait
+        )
+        if not has_portrait:
             self._icebreaker_pending = True
             logger.info("icebreaker.pending_greeting")
 
@@ -529,18 +532,37 @@ class AgentCore:
         # ── 8. 后台记忆编码 (NEW) ──
         self._schedule_memory_encoding()
 
-        # ── 8b. 阶段 7b: 自动记笔记 ──
+        # ── 8b. Phase 1: 微事件提取 + 粗粒化检查（链式调用，消除竞态）──
+        if self.portrait_manager:
+            asyncio.create_task(
+                self.portrait_manager.extract_then_check_coarse(
+                    event.payload, reply
+                )
+            )
+
+        # ── 8c. 阶段 7b: 自动记笔记 ──
         if self.notebook_manager:
+            # portrait_context: Phase 1-4 为空字符串，Phase 5 起从 L0+L1 构建
+            portrait_ctx = ""
+            # Phase 5+ 路径（Phase 1-4 时 hasattr 返回 False，安全跳过）
+            if hasattr(self.context, 'phase_profile') and (
+                self.context.core_profile or self.context.phase_profile
+            ):
+                parts = []
+                if self.context.core_profile:
+                    parts.append(f"伙伴的性格底色：{self.context.core_profile[:100]}")
+                if self.context.phase_profile:
+                    parts.append(f"伙伴的近况：{self.context.phase_profile[:150]}")
+                if parts:
+                    portrait_ctx = "。".join(parts)
+
             asyncio.create_task(
                 self.notebook_manager.auto_note_after_message(
-                    event.payload, reply
+                    event.payload, reply, portrait_context=portrait_ctx
                 )
             )
         else:
             logger.warning("notebook.manager_missing")
-
-        # ── 8c. 阶段 8+: 冷启动印象文档 ──
-        self._schedule_portrait_cold_start()
 
         # ── 8d. 阶段 8+: 破冰进度追踪 ──
         self._tick_icebreaker(reply)
@@ -635,7 +657,26 @@ class AgentCore:
             if not self.memory_manager:
                 return None
 
-            results = await self.memory_manager.retrieve_memories(user_message, k=5)
+            # Phase 3: 获取画像加权配置（L1 版本号门控缓存，避免冗余 embedding 调用）
+            persona_boost = None
+            if self.portrait_manager:
+                cached = getattr(self.context, '_persona_boost_config', None)
+                cached_version = cached.get("_l1_version") if cached else None
+                current_l1 = self.context._current_l1_version
+                # L1 版本未变 → 复用缓存
+                if cached and cached_version == current_l1:
+                    persona_boost = cached
+                else:
+                    try:
+                        persona_boost = await self.portrait_manager.build_retrieval_config()
+                        self.context._persona_boost_config = persona_boost
+                    except Exception:
+                        persona_boost = {}
+                        self.context._persona_boost_config = {}
+
+            results = await self.memory_manager.retrieve_memories(
+                user_message, k=5, persona_boost=persona_boost,
+            )
             if not results:
                 return None
 
@@ -667,31 +708,41 @@ class AgentCore:
             logger.warning("memory.retrieval_failed", error=str(e))
             return None
 
-    def _schedule_portrait_cold_start(self):
-        """
-        冷启动检查：有足够记忆但尚无印象文档 → 立即生成第一版。
-        fire-and-forget，不阻塞主回复。
-        """
-        if not self.portrait_manager:
-            return
-        # 对话轮数达到 4 条时触发兜底生成
-        if len(self.context.history) < 4:
-            return
-        asyncio.create_task(self._portrait_cold_start_task())
+    # _schedule_portrait_cold_start / _portrait_cold_start_task 已废弃（Phase 1）。
+    # 冷启动逻辑合并到 extract_then_check_coarse() + ensure_exists() 中。
+    # process() 中不再调用此方法。
 
-    async def _portrait_cold_start_task(self):
-        """冷启动任务：如果尚无印象文档且有足够材料 → 生成第一版。"""
+    async def _reload_layered_portraits(self) -> None:
+        """
+        Phase 2: 从 DB 重新加载 L0/L1 分层画像到 AgentContext。
+
+        在 startup 和 _icebreaker_consolidate 后调用，
+        确保 context 中的画像与 DB 同步。
+        """
         try:
-            result = await self.portrait_manager.ensure_exists()
-            if result:
-                self.context.user_portrait = result
-                # 从 DB 读取版本号
-                latest = await self._db.get_latest_portrait()
-                if latest:
-                    self.context._current_portrait_version = latest.get("version", 1)
-                logger.info("portrait.cold_start_done", length=len(result))
+            # 加载 L0 核心画像
+            l0 = await self._db.get_latest_core_profile()
+            if l0 and l0.get("content"):
+                self.context.core_profile = l0["content"]
+                self.context._current_l0_version = l0.get("version", 1)
+                logger.info("portrait.l0_loaded", version=l0.get("version"))
+
+            # 加载 L1 阶段画像
+            l1 = await self._db.get_latest_phase_profile()
+            if l1 and l1.get("content"):
+                self.context.phase_profile = l1["content"]
+                self.context._current_l1_version = l1.get("version", 1)
+                logger.info("portrait.l1_loaded", version=l1.get("version"))
+
+            # 兼容：同时加载旧 user_portrait（供回退消费方使用）
+            if not self.context.user_portrait:
+                old = await self._db.get_latest_portrait()
+                if old and old.get("content") and len(old.get("content", "")) >= 50:
+                    self.context.user_portrait = old["content"]
+                    self.context._current_portrait_version = old.get("version", 1)
+                    logger.debug("portrait.legacy_loaded", version=old.get("version"))
         except Exception as e:
-            logger.warning("portrait.cold_start_failed", error=str(e))
+            logger.warning("portrait.reload_layered_failed", error=str(e))
 
     def _tick_icebreaker(self, reply: str) -> None:
         """
@@ -742,8 +793,11 @@ class AgentCore:
     async def _icebreaker_consolidate(self) -> None:
         """
         破冰后生成首版印象文档。
-        关键：先强制编码当前对话为情景记忆（绕过三层调度的 30s 空闲等待），
-        确保 consolidate() 能读到材料。
+
+        Phase 1 改造：
+        1. 强制编码当前对话为情景记忆（绕过三层调度）
+        2. force=True → 级联粗粒化 L2→L1→L0（回退旧式全量重写）
+        3. 同步加载分层画像
         """
         try:
             # 1. 强制编码当前对话 → 确保 episodic_memories 有数据
@@ -756,14 +810,13 @@ class AgentCore:
                 await self.memory_manager.encode_memory(ctx)
                 logger.debug("icebreaker.forced_encoding_done")
 
-            # 2. 生成印象文档
-            result = await self.portrait_manager.consolidate()
+            # 2. force=True → 级联粗粒化（回退旧式全量重写）
+            result = await self.portrait_manager.consolidate(force=True)
             if result:
                 self.context.user_portrait = result
                 self.context.icebreaker_active = False
-                latest = await self._db.get_latest_portrait()
-                if latest:
-                    self.context._current_portrait_version = latest.get("version", 1)
+                # Phase 2: 重新加载分层画像
+                await self._reload_layered_portraits()
                 logger.info("icebreaker.first_portrait_done", length=len(result))
             else:
                 # 材料仍不足 → 停止破冰，标记已尝试，等被动冷启动兜底
@@ -794,12 +847,19 @@ class AgentCore:
         if not self.memory_manager:
             return
 
-        # 有新对话 → 印象文档可能需要更新
-        if self.portrait_manager:
-            self.portrait_manager.mark_dirty()
+        # Phase 3: 从缓存中提取 persona_topics 传入编码管道
+        persona_topics = None
+        cached = getattr(self.context, '_persona_boost_config', None)
+        if cached:
+            persona_topics = cached.get("persona_topics")
+
+        # Phase 1: 微事件提取 + 粗粒化已在 process() 中独立调度
+        # 此处仅负责记忆编码，不再调用 mark_dirty()
 
         asyncio.create_task(
-            self.memory_manager.schedule_encoding(conversation_context)
+            self.memory_manager.schedule_encoding(
+                conversation_context, persona_topics=persona_topics,
+            )
         )
 
     async def _write_conversation_log(self, event: InternalEvent, reply: str):
@@ -852,6 +912,9 @@ class AgentCore:
         # 历史消息 — APPEND-ONLY LOG：只追加不改写，保持跨轮字节稳定
         history = self.context.get_messages(limit=20)
         messages.extend(history)
+
+        # Phase 5: 设置当前消息供 PortraitModule 选择性注入
+        self.context._last_user_message = user_msg
 
         # ctx_notes 作为独立 system 消息放在 history 之后、user 之前
         # VOLATILE SCRATCH 语义：每轮重建，不影响 history 前缀缓存

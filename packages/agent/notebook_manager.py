@@ -32,6 +32,9 @@ AUTO_NOTE_PROMPT = """你是昔涟。刚刚和伙伴进行了一轮对话。
 人家回应了：
 "{assistant_reply}"
 
+关于伙伴的画像：
+{portrait_context}
+
 人家已经记下的笔记：
 {existing_notes}
 
@@ -79,6 +82,9 @@ class NotebookManager:
     _router: object      # ModelRouter
 
     def __post_init__(self):
+        # Phase 5: embedding 缓存（LRU，避免重复 API 调用）
+        self._embedding_cache: dict[int, list[float]] = {}
+        self._cache_max_size = 50
         logger.info("notebook.ready")
 
     # ═══════════════════════════════════════════════════════
@@ -191,9 +197,13 @@ class NotebookManager:
 
     async def auto_note_after_message(
         self, user_msg: str, reply: str,
+        portrait_context: str = "",
     ) -> None:
         """
         fire-and-forget: 对话后用 Flash 判断是否值得记录。
+
+        Phase 1: portrait_context 为可选参数，Phase 1-4 传空字符串，
+        Phase 5 起传入 L0+L1 画像摘要供更精准的笔记决策。
 
         流程：
           1. 获取已有笔记（最近 10 条）作为上下文
@@ -214,10 +224,13 @@ class NotebookManager:
             else:
                 existing_str = "（还没有笔记）"
 
-            prompt = AUTO_NOTE_PROMPT.format(
-                user_message=user_msg[:300],
-                assistant_reply=reply[:300],
-                existing_notes=existing_str,
+            # 使用 .replace() 避免用户文本中的花括号被 .format() 误解析
+            prompt = (
+                AUTO_NOTE_PROMPT
+                .replace("{user_message}", user_msg[:300])
+                .replace("{assistant_reply}", reply[:300])
+                .replace("{portrait_context}", portrait_context or "（还没有画像）")
+                .replace("{existing_notes}", existing_str)
             )
             result = await self._router.route(
                 "memory_encoding",
@@ -259,8 +272,55 @@ class NotebookManager:
     # 查询
     # ═══════════════════════════════════════════════════════
 
-    async def _find_similar(self, content: str, threshold: float = 0.5) -> int | None:
-        """查找相似笔记。返回匹配的笔记 ID，无匹配返回 None。"""
+    async def _find_similar(self, content: str, threshold: float = 0.85) -> int | None:
+        """
+        查找相似笔记。使用 embedding 余弦相似度 + LRU 缓存。
+
+        缓存策略：已有笔记的 embedding 计算后缓存，下次直接复用。
+        每日 20-50 次 auto_note 调用只需 1 次 embedding（新内容），
+        而非 1+N 次（无缓存时为每条已有笔记重复嵌入）。
+        """
+        if not self._router:
+            return self._find_similar_jaccard(content)
+
+        try:
+            recent = await self.get_recent_notes(limit=10)
+            if not recent:
+                return None
+
+            # 嵌入新笔记（仅 1 次 API 调用）
+            new_vec = await self._router.embed(content)
+            if not new_vec:
+                return self._find_similar_jaccard(content)
+
+            for note in recent:
+                note_id = note["id"]
+                note_text = note.get("content", "")
+                if len(note_text) < 3:
+                    continue
+
+                # 缓存命中 → 零 API 调用
+                note_vec = self._embedding_cache.get(note_id)
+                if note_vec is None:
+                    try:
+                        note_vec = await self._router.embed(note_text)
+                    except Exception:
+                        continue
+                    if note_vec:
+                        self._set_cache(note_id, note_vec)
+                    else:
+                        continue
+
+                sim = self._cosine_similarity(new_vec, note_vec)
+                if sim >= threshold:
+                    return note_id
+        except Exception:
+            pass
+
+        return None
+
+    async def _find_similar_jaccard(self, content: str, threshold: float = 0.5) -> int | None:
+        """Jaccard 字符集回退（embedding 不可用时）。"""
         existing = await self.get_recent_notes(limit=20)
         if not existing:
             return None
@@ -273,6 +333,24 @@ class NotebookManager:
             if overlap >= threshold:
                 return note["id"]
         return None
+
+    def _set_cache(self, note_id: int, embedding: list[float]) -> None:
+        """LRU: 缓存满时删除最早条目。"""
+        if len(self._embedding_cache) >= self._cache_max_size:
+            oldest = next(iter(self._embedding_cache))
+            del self._embedding_cache[oldest]
+        self._embedding_cache[note_id] = embedding
+
+    @staticmethod
+    def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        """计算两个向量的余弦相似度。"""
+        import math
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
 
     def _parse_task_time(self, time_str: str) -> float:
         """解析时间字符串为 Unix 时间戳。「19:00」→ 今天 19:00，「明晚8:30」→ 明天 20:30，「下周五」→ 下周对应日期。"""

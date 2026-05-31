@@ -34,10 +34,19 @@ class AgentContext:
     # 阶段 9：角色情景记忆检索结果（昔涟自己的过去）
     character_memory_retrieval: Optional[list] = None
 
-    # 阶段 8+: 用户印象文档 + 已注入版本号
+    # 阶段 8+: 用户印象文档（保留兼容）
     user_portrait: Optional[str] = None
     _current_portrait_version: Optional[int] = None
     _portrait_version_injected: Optional[int] = None
+
+    # Phase 2: 分层画像
+    core_profile: Optional[str] = None        # L0 核心画像
+    _current_l0_version: Optional[int] = None
+    _l0_version_injected: Optional[int] = None
+
+    phase_profile: Optional[str] = None       # L1 阶段画像
+    _current_l1_version: Optional[int] = None
+    _l1_version_injected: Optional[int] = None
 
     # 阶段 8+: 破冰冷启动（仅内存状态，不持久化）
     icebreaker_active: bool = False
@@ -52,6 +61,12 @@ class AgentContext:
     # ── 阶段 C: 跨会话感知 ──
     _last_message_time: float = 0.0     # 上次对话时间戳
     _cross_session_hint_used: bool = False  # 本轮启动后是否已发过提示
+
+    # Phase 5: 当前用户消息（供 PortraitModule 选择性注入）
+    _last_user_message: str = ""
+
+    # Phase 5: ModelRouter 引用（供 PortraitGuidanceModule Flash LLM 提取）
+    _router: Optional[object] = None
 
     # ============================================================
     # 对话历史
@@ -187,6 +202,13 @@ class AgentContext:
         self.character_memory_retrieval = None
         self._current_portrait_version = None
         self._portrait_version_injected = None
+        self.core_profile = None
+        self._current_l0_version = None
+        self._l0_version_injected = None
+        self.phase_profile = None
+        self._current_l1_version = None
+        self._l1_version_injected = None
+        self._persona_boost_config = None  # Phase 3 缓存
         self.icebreaker_active = False
         self.icebreaker_exchanges = 0
 

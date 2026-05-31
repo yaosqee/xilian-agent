@@ -604,26 +604,30 @@ class NudgeEngine:
             return ""
 
     def _build_portrait_context(self) -> str:
-        """构建用户印象背景文本（用于个性化问候）"""
+        """
+        构建用户印象背景文本（用于个性化问候）。
+
+        Phase 2: 优先读取 core_profile > phase_profile > user_portrait。
+        """
         try:
             import sqlite3
             conn = sqlite3.connect(str(self._db.db_path))
             try:
-                cursor = conn.execute(
-                    """SELECT content FROM user_portrait
-                       ORDER BY version DESC LIMIT 1"""
-                )
-                row = cursor.fetchone()
+                # Phase 2: 优先新表，回退旧表
+                for table in ("core_profile", "phase_profile", "user_portrait"):
+                    cursor = conn.execute(
+                        f"SELECT content FROM {table} "
+                        "ORDER BY id DESC LIMIT 1"
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0] and len(row[0]) >= 30:
+                        portrait = row[0]
+                        short = portrait[:200]
+                        return f"印象中，伙伴{short}"
             finally:
                 conn.close()
 
-            if not row or not row[0]:
-                return ""
-
-            portrait = row[0]
-            # 截取前 200 字作为上下文提示
-            short = portrait[:200]
-            return f"印象中，伙伴{short}"
+            return ""
         except Exception:
             return ""
 

@@ -269,20 +269,65 @@ async def main():
     asyncio.create_task(check_due_tasks())
     logger.info("Notebook 调度已启动 (每15分钟任务检查)")
 
-    # ── 阶段 8+: 用户印象文档定期重写（每日凌晨 5:00，自传体之后）──
+    # ── Phase 1: 用户画像粗粒化兜底（每日凌晨 5:00，周日 force 全量安全网）──
     async def consolidate_user_portrait():
         if agent.portrait_manager:
-            result = await agent.portrait_manager.consolidate()
+            # 周日执行 force 全量（安全网），其余日子只做阈值检查
+            import datetime
+            is_sunday = datetime.datetime.now().weekday() == 6
+            result = await agent.portrait_manager.consolidate(force=is_sunday)
             if result:
                 agent.context.user_portrait = result
                 # 更新版本号（触发下次对话重新注入）
                 latest = await agent._db.get_latest_portrait()
                 if latest:
                     agent.context._current_portrait_version = latest.get("version", 1)
-                logger.info("portrait.cron_consolidated", length=len(result))
+                logger.info(
+                    "portrait.cron_consolidated",
+                    length=len(result),
+                    force=is_sunday,
+                )
 
     asyncio.create_task(_cron_loop(5, 0, consolidate_user_portrait, "portrait_consolidate"))
-    logger.info("用户印象重写调度已启动 (每日 5:00)")
+    logger.info("用户画像粗粒化调度已启动 (每日 5:00, 周日 force 全量安全网)")
+
+    # ── 月度全量重建安全网（每月 1 日 5:30，在 portrait cron 之后）──
+    async def monthly_rebuild_job():
+        if agent.portrait_manager:
+            result = await agent.portrait_manager.monthly_full_rebuild()
+            if result:
+                logger.info(
+                    "portrait.monthly_rebuild_done",
+                    diff_ratio=result["diff_ratio"],
+                    migrated=result["migrated"],
+                )
+                # 重建后重新加载分层画像
+                agent.context.user_portrait = result["l0_content"]
+                await agent._reload_layered_portraits()
+
+    async def _cron_monthly_loop(day: int, hour: int, minute: int, job_func, job_name: str):
+        """每月指定日期指定时间执行（1 日为每月第一天）。"""
+        while True:
+            import datetime as _dt
+            now = _dt.datetime.now()
+            target = now.replace(day=day, hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                # 本月已过，推到下月
+                if now.month == 12:
+                    target = target.replace(year=now.year + 1, month=1)
+                else:
+                    target = target.replace(month=now.month + 1)
+            wait = (target - now).total_seconds()
+            logger.debug("cron.sleep", job=job_name, wait_hours=round(wait / 3600, 1))
+            await asyncio.sleep(wait)
+            try:
+                await job_func()
+                await agent._db.set_cron_last_run(job_name)
+            except Exception as e:
+                logger.error(f"cron.{job_name}_error", error=str(e))
+
+    asyncio.create_task(_cron_monthly_loop(1, 5, 30, monthly_rebuild_job, "monthly_portrait_rebuild"))
+    logger.info("月度画像全量重建安全网已启动 (每月 1 日 5:30)")
 
     # ── 启动补执行：检查是否有因关机错过的定时任务 ──
     async def _catch_up_cron():

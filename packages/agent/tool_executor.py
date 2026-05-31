@@ -78,7 +78,19 @@ class ToolExecutor:
         )
         result = await self._execute_with_timeout(tool, arguments, ctx)
 
-        # 6. audit_log
+        # 6. Phase 4: 记录工具调用日志（fire-and-forget，不阻塞）──
+        try:
+            import json as _json
+            args_str = _json.dumps(arguments, ensure_ascii=False)[:500] if arguments else ""
+            await self.db.insert_tool_usage(
+                tool_name=tool_name,
+                arguments=args_str,
+                success=result.success,
+            )
+        except Exception:
+            pass  # 日志失败不影响工具执行
+
+        # 7. audit_log
         await self._write_audit_log(tool_name, arguments, result, user_id)
 
         return result

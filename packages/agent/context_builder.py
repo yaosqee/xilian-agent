@@ -339,12 +339,117 @@ class MemoryModule(ContextModule):
         return result
 
 
+class PortraitGuidanceModule(ContextModule):
+    """
+    画像→回复策略提示 — 让昔涟在生成回复时显式考虑她对伙伴的理解。
+
+    Phase 5: 使用 Flash LLM 从 L0 核心画像提取 1-2 条行为指引。
+    每会话仅调用一次（L0 版本号门控 + 缓存）。
+    优先级 2，在 PortraitModule 之前。
+    """
+
+    EXTRACT_GUIDANCE_PROMPT = """你是昔涟。你在心里轻轻翻开关于伙伴最重要的事。
+
+这是你对伙伴的核心印象：
+{l0_content}
+
+请从中提取 1-2 条简洁的「回复时应注意的事项」。每条 10-20 字。
+只提取你在印象中有依据的事。
+如果印象中没有特别的行为指引，返回空列表。
+
+返回 JSON：
+{{"guidances": ["点到为止，留白给他", "聊到技术时可以多问一句"]}}"""
+
+    def __init__(self, agent_context=None):
+        super().__init__(name="portrait_guidance", priority=2, max_tokens=100)
+        self._ctx = agent_context
+        self._cached_version: int | None = None
+        self._cached_guidance: str = ""
+
+    def render(self) -> str:
+        """同步渲染返回缓存值（实际生成在 render_async 中）。"""
+        if not self._ctx:
+            return ""
+
+        l0 = getattr(self._ctx, 'core_profile', None)
+        if not l0 or len(l0) < 50:
+            return ""
+
+        current_version = getattr(self._ctx, '_current_l0_version', None)
+        # 版本未变 → 复用缓存
+        if current_version is not None and current_version == self._cached_version:
+            return self._cached_guidance
+
+        # 异步生成尚未完成时返回空（避免阻塞）
+        return ""
+
+    async def render_async(self) -> str:
+        """
+        异步版本：Flash LLM 从 L0 提取行为指引。
+        每会话仅调用一次（L0 版本号门控 + 缓存保证）。
+        """
+        if not self._ctx:
+            return ""
+
+        l0 = getattr(self._ctx, 'core_profile', None)
+        if not l0 or len(l0) < 50:
+            return ""
+
+        current_version = getattr(self._ctx, '_current_l0_version', None)
+
+        # 缓存命中
+        if current_version is not None and current_version == self._cached_version:
+            return self._cached_guidance
+
+        # Flash LLM 提取
+        router = getattr(self._ctx, '_router', None)
+        if not router:
+            return ""
+
+        try:
+            import json
+            prompt = self.EXTRACT_GUIDANCE_PROMPT.replace("{l0_content}", l0)
+            raw = await router.route(
+                "memory_encoding",
+                [{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=150,
+            )
+            raw_text = raw.content if hasattr(raw, 'content') else raw
+            if not raw_text:
+                return ""
+
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError:
+                start = raw_text.index("{")
+                end = raw_text.rindex("}") + 1
+                data = json.loads(raw_text[start:end])
+
+            guidances = data.get("guidances", [])
+            if guidances:
+                self._cached_version = current_version
+                self._cached_guidance = (
+                    "（昔涟心里知道——" + "；".join(guidances)
+                    + "。带着这份理解去回应他吧。）"
+                )
+                return self._cached_guidance
+        except Exception:
+            pass  # 降级：不注入引导
+
+        self._cached_version = current_version
+        self._cached_guidance = ""
+        return ""
+
+
 class PortraitModule(ContextModule):
     """
     用户印象文档 — 昔涟对伙伴的叙事性理解。
 
-    每段对话首条消息注入一次完整文档（版本号门控），后续消息返回空。
-    无印象文档时自动发起破冰冷启动。
+    Phase 2 分层注入：
+    - 每会话首次：注入 L1 阶段画像全文 + L0 前 150 字（按句子截断）
+    - 无 L0/L1 时回退到旧 user_portrait（兼容）
+    - 完全无画像时走破冰路径
     优先级 3，介于时间模块和情绪模块之间。
     """
 
@@ -356,44 +461,131 @@ class PortraitModule(ContextModule):
     )
 
     def __init__(self, agent_context=None):
-        super().__init__(name="portrait", priority=3, max_tokens=3000)
+        super().__init__(name="portrait", priority=3, max_tokens=1500)
         self._ctx = agent_context
 
     def render(self) -> str:
         if not self._ctx:
             return ""
 
-        portrait = self._ctx.user_portrait
+        l1 = getattr(self._ctx, 'phase_profile', None)
+        l0 = getattr(self._ctx, 'core_profile', None)
+        old_portrait = self._ctx.user_portrait
 
-        # ── 正常路径：已有印象文档 → 版本号门控注入 ──
-        if portrait and len(portrait) >= 50:
+        parts = []
+
+        # ── L1 阶段画像注入（每会话首次，版本号门控）──
+        if l1 and len(l1) >= 30:
+            current_l1 = getattr(self._ctx, '_current_l1_version', None)
+            injected_l1 = getattr(self._ctx, '_l1_version_injected', None)
+            if injected_l1 is None or injected_l1 != current_l1:
+                self._ctx._l1_version_injected = current_l1
+                parts.append(
+                    "（昔涟在对话前，轻轻翻开心里关于伙伴最近的那一页——）\n\n"
+                    + l1
+                )
+
+        # ── L0 片段注入（每会话首次，按句子截断）──
+        if l0 and len(l0) >= 50:
+            current_l0 = getattr(self._ctx, '_current_l0_version', None)
+            injected_l0 = getattr(self._ctx, '_l0_version_injected', None)
+            if injected_l0 is None or injected_l0 != current_l0:
+                self._ctx._l0_version_injected = current_l0
+                short_l0 = self._truncate_by_sentences(l0, max_chars=150)
+                parts.append(
+                    "（昔涟心里关于伙伴最深的那几笔记——）\n\n"
+                    + short_l0
+                )
+
+        # ── 回退：旧 user_portrait 兼容 ──
+        if not parts and old_portrait and len(old_portrait) >= 50:
             injected_version = self._ctx._portrait_version_injected
             current_version = getattr(self._ctx, '_current_portrait_version', None)
-            if injected_version is not None and current_version is not None:
-                if injected_version == current_version:
-                    return ""
+            if injected_version is None or injected_version != current_version:
+                if current_version is not None:
+                    self._ctx._portrait_version_injected = current_version
+                parts.append(
+                    "（昔涟在对话前，轻轻翻开心里关于伙伴的那一页——）\n\n"
+                    + old_portrait
+                )
 
-            if current_version is not None:
-                self._ctx._portrait_version_injected = current_version
+        if parts:
+            return "\n\n".join(parts) + "\n\n（带着这些理解去感受他此刻说的话吧。）"
 
-            return (
-                "（昔涟在对话前，轻轻翻开心里关于伙伴的那一页——）\n\n"
-                + portrait
-                + "\n\n（带着这些理解去感受他此刻说的话吧。）"
-            )
+        # ── Phase 5: 后续消息 → 选择性 L0 注入（二元组匹配）──
+        if l0 and len(l0) >= 50:
+            user_msg = getattr(self._ctx, '_last_user_message', '')
+            if len(user_msg) >= 5:
+                relevant = self._extract_relevant_sentences(l0, user_msg)
+                if relevant:
+                    return (
+                        "（昔涟心里关于伙伴的这一页似乎与此刻有关——）\n\n"
+                        + relevant
+                    )
 
-        # ── 破冰路径：无印象文档 ──
-        # 用户已拒绝破冰 → 跳过
+        # ── 破冰路径 ──
+        return self._render_icebreaker()
+
+    def _render_icebreaker(self) -> str:
+        """破冰路径 — 与原始行为一致。"""
+        if not self._ctx:
+            return ""
         if self._ctx.icebreaker_deferred:
             return ""
-
-        # 破冰进行中 → 本轮不重复注入引导
         if self._ctx.icebreaker_active:
             return ""
-
-        # 首次触发破冰 → 注入引导，标记 active
         self._ctx.icebreaker_active = True
         return self.ICEBREAKER_GUIDANCE
+
+    @staticmethod
+    def _truncate_by_sentences(text: str, max_chars: int = 150) -> str:
+        """按句子边界截断，避免硬切破坏语义。"""
+        import re
+        sentences = re.split(r'(?<=[。！？\n])', text)
+        result = ""
+        for s in sentences:
+            if len(result) + len(s) > max_chars:
+                break
+            result += s
+        if len(result) < len(text) and not result.endswith("。"):
+            result = result.rstrip() + "…"
+        return result if result else text[:max_chars] + "…"
+
+    @staticmethod
+    def _extract_relevant_sentences(portrait: str, query: str, max_chars: int = 120) -> str:
+        """
+        从画像中提取与查询相关的句子，使用二元组重叠匹配。
+
+        二元组方法（与 _dedup_against_summary 一致）避免中文字符级
+        重叠的假阳性问题。例如「我今天有点累」vs「我积累了很多经验」——
+        字符级共享「我」「累」，二元组级无重叠。
+        """
+        import re
+
+        def _bigrams(text: str) -> set:
+            return {text[i:i+2] for i in range(len(text) - 1)} if len(text) >= 2 else set()
+
+        query_bigrams = _bigrams(query)
+        if not query_bigrams:
+            return ""
+
+        sentences = re.split(r'(?<=[。！？\n])', portrait)
+        scored = []
+        for s in sentences:
+            if len(s) < 6:
+                continue
+            s_bigrams = _bigrams(s)
+            if not s_bigrams:
+                continue
+            overlap = len(query_bigrams & s_bigrams)
+            if overlap >= 2:
+                scored.append((overlap, s))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if not scored:
+            return ""
+        result = "。".join(s[:max_chars] for _, s in scored[:2])
+        return result + "。" if result else ""
 
 
 class NotebookModule(ContextModule):
@@ -578,7 +770,7 @@ class ContextBuilder:
                 continue
 
             # NotebookModule / NotebookTaskModule 需要异步渲染
-            if module.name in ("notebook", "notebook_tasks"):
+            if module.name in ("notebook", "notebook_tasks", "portrait_guidance"):
                 text, used = await module.render_with_budget_async(remaining)
             else:
                 text, used = module.render_with_budget(remaining)

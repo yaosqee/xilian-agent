@@ -20,12 +20,30 @@ from loguru import logger
 
 # ── 重要性评分配置 ─────────────────────────────────────
 
-IMPORTANCE_WEIGHTS = {
+# ── 旧权重（画像不可用时回退，确保旧编码不被系统性低估）──
+IMPORTANCE_WEIGHTS_FALLBACK = {
     "emotion_intensity": 0.3,
     "exchange_count": 0.2,
     "topic_significance": 0.2,
     "emotion_diversity": 0.3,
 }
+
+# ── 新权重（画像可用时，persona_relevance 参与评分）──
+IMPORTANCE_WEIGHTS_WITH_PERSONA = {
+    "emotion_intensity": 0.25,
+    "exchange_count": 0.15,
+    "topic_significance": 0.15,
+    "emotion_diversity": 0.15,
+    "persona_relevance": 0.30,
+}
+
+# 保留别名兼容旧引用
+IMPORTANCE_WEIGHTS = IMPORTANCE_WEIGHTS_FALLBACK
+
+# ── 画像加权可配置参数 ──
+PERSONA_BOOST_FACTOR = 0.85     # boost 匹配时 adjusted_score 乘数（<1 = 提升排名）
+PERSONA_PENALTY_FACTOR = 1.4    # penalty 匹配时 adjusted_score 乘数（>1 = 降低排名）
+TOPIC_EMBED_SIMILARITY_THRESHOLD = 0.7  # embedding 余弦相似度阈值
 
 TOPIC_KEYWORDS = {"重要", "记住", "秘密", "永远", "承诺", "约定", "梦想", "害怕"}
 
@@ -142,12 +160,17 @@ class MemoryManager:
     # 核心：记忆编码管线
     # ============================================================
 
-    async def encode_memory(self, conversation_context: dict) -> int:
+    async def encode_memory(
+        self,
+        conversation_context: dict,
+        persona_topics: list[str] | None = None,  # ★ Phase 3 P2 fix
+    ) -> int:
         """
         完整编码管线：重要性评分 → 叙事化 → 向量化 → SQLite + sqlite-vec
 
         Args:
             conversation_context: {"exchanges": [...], "emotion": {...}}
+            persona_topics: 当前画像活跃话题（Phase 3），用于重要性评分
 
         Returns:
             episodic_id (SQLite 主键，与 vec0 rowid 对应)
@@ -158,8 +181,8 @@ class MemoryManager:
 
         emotion = conversation_context.get("emotion") or {}
 
-        # Step 1: 计算重要性
-        importance = self._calculate_importance(exchanges, emotion)
+        # Step 1: 计算重要性（画像感知）
+        importance = self._calculate_importance(exchanges, emotion, persona_topics)
         logger.debug("memory.importance_computed", importance=round(importance, 3))
 
         # Step 2: 叙事化总结（DeepSeek V4-Flash）
@@ -213,8 +236,13 @@ class MemoryManager:
         self,
         exchanges: list[dict],
         emotion: dict,
+        persona_topics: list[str] | None = None,  # ★ Phase 3
     ) -> float:
-        """计算对话重要性评分（0.0-1.0），clamp [0.1, 1.0]"""
+        """计算对话重要性评分（0.0-1.0），clamp [0.1, 1.0]。
+
+        Phase 3: 画像可用时使用 persona_relevance 维度。
+        画像不可用时回退到旧权重表，确保旧编码不被系统性低估。
+        """
         scores = {}
 
         # 情绪强度
@@ -225,7 +253,7 @@ class MemoryManager:
         exchange_count = len(exchanges)
         scores["exchange_count"] = min(exchange_count / 10.0, 1.0)
 
-        # 话题显著性 — 排除否定形式（不X / 没X / 没有X）
+        # 话题显著性 — 排除否定形式
         all_text = " ".join(
             e.get("content", "") for e in exchanges
         )
@@ -233,7 +261,6 @@ class MemoryManager:
         keyword_hits = 0
         for kw in TOPIC_KEYWORDS:
             for m in _re.finditer(_re.escape(kw), all_text):
-                # 检查前 1-2 字符是否含否定词
                 prefix = all_text[max(0, m.start() - 2):m.start()]
                 if not _re.search(r'(?:不|没|没有|不是|不太|别)', prefix):
                     keyword_hits += 1
@@ -253,9 +280,17 @@ class MemoryManager:
         else:
             scores["emotion_diversity"] = 0.2
 
+        # Phase 3: 画像相关性
+        if persona_topics:
+            hits = sum(1 for t in persona_topics if t in all_text)
+            scores["persona_relevance"] = min(hits / 3.0, 1.0)
+            weights = IMPORTANCE_WEIGHTS_WITH_PERSONA
+        else:
+            weights = IMPORTANCE_WEIGHTS_FALLBACK
+
         importance = sum(
-            scores[k] * IMPORTANCE_WEIGHTS[k]
-            for k in IMPORTANCE_WEIGHTS
+            scores[k] * weights[k]
+            for k in weights if k in scores
         )
         return max(0.1, min(1.0, importance))
 
@@ -349,6 +384,16 @@ class MemoryManager:
             logger.warning("memory.compress_failed", error=str(e))
             return None
 
+    @staticmethod
+    def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        """计算两个向量的余弦相似度（0.0-1.0）。"""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
     async def _embed_text(self, text: str) -> list[float] | None:
         """云端嵌入（ModelRouter.embed → 硅基流动 bge-m3）。无 Key 时返回 None。"""
         if not self._router:
@@ -397,6 +442,7 @@ class MemoryManager:
         user_message: str,
         k: int = 3,
         max_distance: float = 1.2,
+        persona_boost: dict | None = None,  # ★ Phase 3: 画像加权配置
     ) -> list[dict]:
         """
         检索与当前消息相似的历史记忆。
@@ -404,7 +450,12 @@ class MemoryManager:
         Args:
             user_message: 用户消息文本
             k: 返回 top-k 结果
-            max_distance: L2 距离阈值，超过此值的记忆视为不相关（bge-m3 1024维经验值）
+            max_distance: L2 距离阈值
+            persona_boost: 来自画像的检索加权配置（Phase 3）:
+              {
+                "boost_topic_embeddings": [[0.1, ...], ...],   # 预计算的 boost 话题 embedding
+                "penalty_topic_embeddings": [[0.1, ...], ...], # 预计算的 penalty 话题 embedding
+              }
 
         Returns:
             [{summary, distance, importance, episodic_id, ...}]
@@ -472,7 +523,47 @@ class MemoryManager:
                     # 更新访问计数
                     await self._db.increment_access_count(row_id)
 
-            # 按调整后分数排序（融合向量距离 × 艾宾浩斯衰减惩罚）
+            # Step 4 (Phase 3): 画像加权 — embedding 相似度匹配
+            if persona_boost and memories:
+                boost_embeddings = persona_boost.get("boost_topic_embeddings", [])
+                penalty_embeddings = persona_boost.get("penalty_topic_embeddings", [])
+
+                if boost_embeddings or penalty_embeddings:
+                    # 并行嵌入所有记忆摘要 → 单次往返延迟（~200ms vs N×200ms）
+                    valid_indices = []
+                    embed_tasks = []
+                    for i, mem in enumerate(memories):
+                        summary = mem.get("summary", "")
+                        if summary:
+                            valid_indices.append(i)
+                            embed_tasks.append(self._embed_text(summary))
+
+                    if embed_tasks:
+                        results = await asyncio.gather(
+                            *embed_tasks, return_exceptions=True,
+                        )
+
+                        # 同步应用 boost/penalty（纯数学运算，零延迟）
+                        for j, idx in enumerate(valid_indices):
+                            result = results[j]
+                            if isinstance(result, BaseException) or result is None:
+                                continue
+
+                            for topic_emb in boost_embeddings:
+                                sim = self._cosine_similarity(result, topic_emb)
+                                if sim >= TOPIC_EMBED_SIMILARITY_THRESHOLD:
+                                    memories[idx]["adjusted_score"] *= PERSONA_BOOST_FACTOR
+                                    memories[idx]["persona_boosted"] = True
+                                    break
+
+                            for topic_emb in penalty_embeddings:
+                                sim = self._cosine_similarity(result, topic_emb)
+                                if sim >= TOPIC_EMBED_SIMILARITY_THRESHOLD:
+                                    memories[idx]["adjusted_score"] *= PERSONA_PENALTY_FACTOR
+                                    memories[idx]["persona_penalized"] = True
+                                    break
+
+            # 按调整后分数排序（融合向量距离 × 艾宾浩斯衰减惩罚 × 画像加权）
             memories.sort(key=lambda r: r["adjusted_score"])
             # 截断到 k 条
             memories = memories[:k]
@@ -501,13 +592,18 @@ class MemoryManager:
         """暂停正在进行的编码"""
         logger.debug("memory.encoding_paused")
 
-    async def schedule_encoding(self, context: dict) -> None:
-        """Agent 每轮对话后调用，触发分层调度"""
+    async def schedule_encoding(
+        self, context: dict, persona_topics: list[str] | None = None,
+    ) -> None:
+        """Agent 每轮对话后调用，触发分层调度。Phase 3: persona_topics 传入重要性评分。"""
         self._exchanges_since_last_encoding += 1
 
         self._pending_context = self._merge_context(
             self._pending_context, context
         )
+        # Phase 3 P2 fix: 保留 persona_topics 在 pending context 中
+        if persona_topics:
+            self._pending_context["persona_topics"] = persona_topics
 
         if self._exchanges_since_last_encoding >= self._force_threshold:
             logger.info(
@@ -542,7 +638,9 @@ class MemoryManager:
             self._encoding_in_progress = True
             self._encoding_state = "encoding"
             try:
-                await self.encode_memory(context)
+                # Phase 3 P2 fix: 传递 persona_topics
+                pts = context.get("persona_topics")
+                await self.encode_memory(context, persona_topics=pts)
                 self._pending_context = None
                 self._exchanges_since_last_encoding = 0
             except Exception as e:
