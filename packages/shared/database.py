@@ -757,7 +757,8 @@ class DatabaseManager:
             raise RuntimeError("DatabaseManager.init() 未调用")
 
         cursor = await self._conn.execute(
-            "SELECT id, timestamp, importance FROM episodic_memories"
+            "SELECT id, timestamp, importance FROM episodic_memories "
+            "WHERE session_id != 'character'"
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -1501,7 +1502,7 @@ class DatabaseManager:
 
         queries = [
             "SELECT timestamp FROM conversation_logs ORDER BY timestamp DESC LIMIT 1",
-            "SELECT timestamp FROM episodic_memories ORDER BY timestamp DESC LIMIT 1",
+            "SELECT timestamp FROM episodic_memories WHERE session_id != 'character' ORDER BY timestamp DESC LIMIT 1",
             "SELECT timestamp FROM emotion_snapshots ORDER BY timestamp DESC LIMIT 1",
             "SELECT created_at FROM notebook_entries ORDER BY created_at DESC LIMIT 1",
         ]
@@ -1524,7 +1525,7 @@ class DatabaseManager:
 
         cursor = await self._conn.execute(
             "SELECT COUNT(*) as cnt FROM episodic_memories "
-            "WHERE timestamp > ? AND importance > ?",
+            "WHERE session_id != 'character' AND timestamp > ? AND importance > ?",
             (cutoff, min_importance),
         )
         row = await cursor.fetchone()
@@ -1539,7 +1540,7 @@ class DatabaseManager:
 
         cursor = await self._conn.execute(
             "SELECT summary FROM episodic_memories "
-            "WHERE timestamp > ? AND importance > ? "
+            "WHERE session_id != 'character' AND timestamp > ? AND importance > ? "
             "ORDER BY timestamp DESC LIMIT ?",
             (cutoff, min_importance, limit),
         )
@@ -2008,10 +2009,10 @@ class DatabaseManager:
 
         deleted = {}
 
-        # 1. 收集 embedding_id 列表（用于向量清理）
+        # 1. 收集 embedding_id 列表（用于向量清理，保留角色记忆）
         cursor = await self._conn.execute(
             "SELECT embedding_id FROM episodic_memories "
-            "WHERE embedding_id IS NOT NULL"
+            "WHERE embedding_id IS NOT NULL AND session_id != 'character'"
         )
         embed_ids = [row[0] for row in await cursor.fetchall()]
 
@@ -2024,9 +2025,13 @@ class DatabaseManager:
             "core_profile", "phase_profile", "tool_usage_log",
         ]
         for table in tables:
-            cursor = await self._conn.execute(
-                f"DELETE FROM {table}"
-            )
+            if table == "episodic_memories":
+                # 保留角色记忆（session_id='character'），仅删除用户记忆
+                cursor = await self._conn.execute(
+                    "DELETE FROM episodic_memories WHERE session_id != 'character'"
+                )
+            else:
+                cursor = await self._conn.execute(f"DELETE FROM {table}")
             deleted[table] = cursor.rowcount
 
         # 3. 清理向量存储
