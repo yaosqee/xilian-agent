@@ -1680,9 +1680,7 @@ class DatabaseManager:
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
 
-        l2_id = None
         try:
-            await self._conn.execute("BEGIN")
             cursor = await self._conn.execute(
                 """INSERT INTO session_summaries
                    (content, source_event_ids, created_at, session_id)

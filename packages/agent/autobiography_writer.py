@@ -196,7 +196,8 @@ class AutobiographyWriter:
                     {"role": "system", "content": REFLECTION_SYSTEM_PROMPT},
                     {"role": "user", "content": f"本周日记：\n{combined}"},
                 ],
-                temperature=0.3,  # 低温度防脑补
+                temperature=0.3,   # 低温度防脑补
+                max_tokens=800,    # 4 字段 JSON 需要足够输出空间
             )
             raw_text = raw.content if hasattr(raw, 'content') else raw
             result = self._parse_reflection_json(raw_text)

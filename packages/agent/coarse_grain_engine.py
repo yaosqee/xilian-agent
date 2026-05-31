@@ -181,7 +181,7 @@ class CoarseGrainEngine:
                         if l0_id:
                             result["l0_updated"] = True
 
-            if any(result.values()):
+            if result["l2_updated"] or result["l1_updated"] or result["l0_updated"]:
                 return result
             return None
 
@@ -200,9 +200,9 @@ class CoarseGrainEngine:
             active_count = len(events)
 
             threshold = L2_TRIGGER_COUNT_FAST if self._tool_side_effect_seen else L2_TRIGGER_COUNT
-            self._tool_side_effect_seen = False
 
             if active_count >= threshold:
+                self._tool_side_effect_seen = False  # 仅触发时才消费标志
                 return True, f"count={active_count} >= threshold={threshold}"
 
             if active_count >= L2_MIN_EVENTS and events:
@@ -217,11 +217,12 @@ class CoarseGrainEngine:
             logger.warning("coarse.threshold_check_failed", error=str(e))
             return False, str(e)
 
-    async def _coarse_to_l2(self) -> int | None:
-        """微事件 → L2 会话摘要。"""
+    async def _coarse_to_l2(self, min_events: int | None = None) -> int | None:
+        """微事件 → L2 会话摘要。min_events 覆盖默认 L2_MIN_EVENTS。"""
+        effective_min = min_events if min_events is not None else L2_MIN_EVENTS
         try:
             events = await self._db.get_active_micro_events(limit=30)
-            if len(events) < L2_MIN_EVENTS:
+            if len(events) < effective_min:
                 logger.info("coarse.l2_not_enough_events", count=len(events))
                 return None
         except Exception as e:
@@ -567,18 +568,19 @@ class CoarseGrainEngine:
     # force_coarse_all — 强制级联粗粒化
     # ═══════════════════════════════════════════════════════
 
-    async def force_coarse_all(self) -> str | None:
+    async def force_coarse_all(self, min_events: int | None = None) -> str | None:
         """
         跳过阈值门控，强制执行完整级联：L2 → L1 → L0。
 
+        Args:
+            min_events: 覆盖 L2_MIN_EVENTS，用于冷启动加速。None 使用默认值。
+
         返回 L0 > L1 > L2 中第一个成功生成的内容。
-        用于破冰路径（_icebreaker_consolidate）、
-        每周日 cron 安全网、以及手动触发。
         """
         logger.info("coarse.force_all_start")
 
-        # Step 1: L2（强制，忽略阈值）
-        l2_id = await self._coarse_to_l2()
+        # Step 1: L2（强制，忽略阈值，允许覆盖 min_events）
+        l2_id = await self._coarse_to_l2(min_events=min_events)
         if not l2_id:
             logger.info("coarse.force_all_no_l2", reason="微事件不足或 LLM 失败")
             return None
