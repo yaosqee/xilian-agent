@@ -714,15 +714,29 @@ class DatabaseManager:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-    async def get_episodic_recent(self, limit: int = 20) -> list[dict]:
-        """查询最近 N 条记忆（按 timestamp 倒序）"""
+    async def get_episodic_recent(
+        self, limit: int = 20, exclude_character: bool = True,
+    ) -> list[dict]:
+        """查询最近 N 条记忆（按 timestamp 倒序）。
+
+        exclude_character=True 时排除角色记忆（session_id='character'），
+        避免画像/问候等模块误读角色背景故事。
+        """
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
 
-        cursor = await self._conn.execute(
-            "SELECT * FROM episodic_memories ORDER BY timestamp DESC LIMIT ?",
-            (limit,),
-        )
+        if exclude_character:
+            cursor = await self._conn.execute(
+                "SELECT * FROM episodic_memories "
+                "WHERE session_id != 'character' "
+                "ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await self._conn.execute(
+                "SELECT * FROM episodic_memories ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 

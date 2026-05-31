@@ -249,7 +249,7 @@ class CoarseGrainEngine:
                 "memory_encoding",
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=400,
+                max_tokens=600,
             )
         except Exception as e:
             logger.error("coarse.l2_llm_failed", error=str(e))

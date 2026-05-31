@@ -125,7 +125,7 @@ class MicroEventExtractor:
                 "memory_encoding",  # Flash
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=400,
+                max_tokens=600,
             )
         except Exception as e:
             logger.warning("micro_event.llm_failed", error=str(e))
