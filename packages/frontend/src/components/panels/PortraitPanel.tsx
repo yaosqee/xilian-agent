@@ -10,6 +10,11 @@ export const PortraitPanel: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Phase 2: 分层画像
+  const [stableTraits, setStableTraits] = useState<string[]>([]);
+  const [phasePortrait, setPhasePortrait] = useState<string | null>(null);
+  const [activeTopics, setActiveTopics] = useState<string[]>([]);
+
   const load = useCallback(async () => {
     try {
       setLoading(true);
@@ -22,6 +27,14 @@ export const PortraitPanel: React.FC = () => {
         setVersion(data.version);
         setUpdatedAt(data.updated_at);
         setChanges(data.changes);
+        // 分层数据
+        setStableTraits(
+          data.stable_traits
+            ? data.stable_traits.split('；').filter(Boolean)
+            : []
+        );
+        setPhasePortrait(data.phase_portrait || null);
+        setActiveTopics(data.active_topics || []);
       }
     } catch (e: any) {
       setError(e.message);
@@ -118,9 +131,43 @@ export const PortraitPanel: React.FC = () => {
         </div>
       )}
 
-      {/* 印象内容 */}
+      {/* 分层画像内容 */}
       {!loading && !error && portrait && (
         <>
+          {/* 稳定特征标签 */}
+          {stableTraits.length > 0 && (
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 6,
+              padding: '8px 12px', borderRadius: 8,
+              background: 'rgba(255, 183, 197, 0.06)',
+              border: '1px solid rgba(255, 183, 197, 0.12)',
+            }}>
+              {stableTraits.map((t, i) => (
+                <span key={i} style={{
+                  padding: '2px 10px', borderRadius: 'var(--radius-full)',
+                  background: 'rgba(216, 180, 226, 0.15)',
+                  color: 'var(--color-purple-dark)',
+                  fontSize: 11, fontWeight: 500,
+                }}>{t.trim()}</span>
+              ))}
+            </div>
+          )}
+
+          {/* 活跃话题 */}
+          {activeTopics.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+              <span style={{ color: 'var(--color-text-dim)', flexShrink: 0 }}>关注：</span>
+              {activeTopics.map((t, i) => (
+                <span key={i} style={{
+                  padding: '1px 8px', borderRadius: 'var(--radius-full)',
+                  background: 'rgba(200, 175, 220, 0.1)',
+                  color: 'var(--color-text-dim)',
+                }}>{t}</span>
+              ))}
+            </div>
+          )}
+
+          {/* L0 核心画像 */}
           <div style={{
             flex: 1, overflowY: 'auto',
             padding: '16px 20px',
@@ -129,14 +176,37 @@ export const PortraitPanel: React.FC = () => {
             backdropFilter: 'blur(8px)',
             WebkitBackdropFilter: 'blur(8px)',
             border: '1px solid rgba(255, 183, 197, 0.15)',
-            fontSize: 14,
-            lineHeight: 2,
-            color: 'var(--color-text)',
-            whiteSpace: 'pre-wrap',
-            fontFamily: 'var(--font-serif)',
-            letterSpacing: '0.02em',
           }}>
-            {portrait}
+            <div style={{
+              fontSize: 14, lineHeight: 2,
+              color: 'var(--color-text)',
+              whiteSpace: 'pre-wrap',
+              fontFamily: 'var(--font-serif)',
+              letterSpacing: '0.02em',
+              marginBottom: phasePortrait ? 12 : 0,
+            }}>
+              {portrait}
+            </div>
+
+            {/* L1 阶段画像（内嵌在 L0 卡片底部） */}
+            {phasePortrait && (
+              <div style={{
+                padding: '12px 0 0 0',
+                borderTop: '1px dashed rgba(200, 175, 220, 0.25)',
+                fontSize: 13, lineHeight: 1.9,
+                color: 'var(--color-text-dim)',
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'var(--font-serif)',
+              }}>
+                <div style={{
+                  fontSize: 10, color: 'var(--color-text-muted)',
+                  marginBottom: 6, letterSpacing: '0.05em',
+                }}>
+                  昔涟最近还注意到——
+                </div>
+                {phasePortrait}
+              </div>
+            )}
           </div>
 
           {/* 变更记录 */}

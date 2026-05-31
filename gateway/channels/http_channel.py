@@ -351,20 +351,58 @@ class HTTPChannel(Channel):
         # ── 用户印象文档 ──
         @self.app.get("/api/user/portrait")
         async def get_user_portrait():
-            """获取昔涟对伙伴的当前印象文档。"""
+            """获取昔涟对伙伴的分层印象文档（L0 核心画像 + L1 阶段画像）。"""
             _agent = self._agent
             if not _agent or not _agent._db:
                 return {"portrait": None, "version": 0}
             try:
-                portrait = await _agent._db.get_latest_portrait()
-                if not portrait:
-                    return {"portrait": None, "version": 0}
-                return {
-                    "portrait": portrait["content"],
-                    "version": portrait["version"],
-                    "updated_at": portrait["created_at"],
-                    "changes": portrait.get("change_log", ""),
+                # L0 核心画像
+                l0 = await _agent._db.get_latest_core_profile()
+                # L1 阶段画像
+                l1 = await _agent._db.get_latest_phase_profile()
+
+                # 构建返回（保留旧字段兼容）
+                result: dict = {
+                    "portrait": None,
+                    "version": 0,
+                    "updated_at": None,
+                    "changes": "",
                 }
+
+                # L0 数据
+                if l0 and l0.get("content"):
+                    result["portrait"] = l0["content"]
+                    result["version"] = l0.get("version", 0)
+                    result["updated_at"] = l0.get("created_at")
+                    result["changes"] = l0.get("change_log", "") or ""
+                    result["stable_traits"] = l0.get("stable_traits", "") or ""
+
+                # L1 数据
+                if l1 and l1.get("content"):
+                    result["phase_portrait"] = l1["content"]
+                    result["phase_version"] = l1.get("version", 0)
+                    result["phase_updated_at"] = l1.get("created_at")
+                    result["phase_changes"] = l1.get("change_log", "") or ""
+                    import json
+                    try:
+                        result["active_topics"] = json.loads(l1.get("active_topics", "[]") or "[]")
+                    except (json.JSONDecodeError, TypeError):
+                        result["active_topics"] = []
+                    try:
+                        result["faded_topics"] = json.loads(l1.get("faded_topics", "[]") or "[]")
+                    except (json.JSONDecodeError, TypeError):
+                        result["faded_topics"] = []
+
+                # 无分层数据时回退旧 user_portrait
+                if not result["portrait"]:
+                    old = await _agent._db.get_latest_portrait()
+                    if old and old.get("content"):
+                        result["portrait"] = old["content"]
+                        result["version"] = old.get("version", 0)
+                        result["updated_at"] = old.get("created_at")
+                        result["changes"] = old.get("change_log", "") or ""
+
+                return result
             except Exception as e:
                 logger.warning("api.portrait_failed", error=str(e))
                 return {"error": str(e)}

@@ -216,10 +216,14 @@ export async function fetchAffection(): Promise<{
   return res.json();
 }
 
-/** 获取用户印象文档 */
+/** 获取用户分层画像（L0 核心 + L1 阶段） */
 export async function fetchUserPortrait(): Promise<{
   portrait: string | null; version: number;
-  updated_at: number; changes: string;
+  updated_at: number | null; changes: string;
+  stable_traits?: string;
+  phase_portrait?: string; phase_version?: number;
+  phase_updated_at?: number; phase_changes?: string;
+  active_topics?: string[]; faded_topics?: string[];
   error?: string;
 }> {
   const res = await fetch(`${BASE}/user/portrait`);
