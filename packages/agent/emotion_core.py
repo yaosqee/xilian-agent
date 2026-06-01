@@ -243,6 +243,9 @@ class EmotionState:
             {
                 "primary_emotion": str,
                 "primary_intensity": float,
+                "pad_p": float,                           # Phase 3: PAD 三轴值
+                "pad_a": float,
+                "pad_d": float,
                 "dimensions": {emotion_name: float, ...},  # 11 维，0-1
             }
         """
@@ -293,6 +296,9 @@ class EmotionState:
         return {
             "primary_emotion": primary,
             "primary_intensity": self.primary_intensity,
+            "pad_p": self.pad_p,
+            "pad_a": self.pad_a,
+            "pad_d": self.pad_d,
             "dimensions": display_intensities,
         }
 
@@ -378,27 +384,28 @@ class PersonalityModulator:
 # AppraisalExtractor — 评价变量提取（DS Flash）
 # ═══════════════════════════════════════════════════════════
 
-APPRAISAL_SYSTEM_PROMPT = """你是昔涟。分析伙伴的消息，从昔涟的视角感知伙伴的内心状态。
+APPRAISAL_SYSTEM_PROMPT = """你是昔涟。感受此刻——伙伴的话在你心里激起了什么。
 
 返回 JSON（只返回这个，不要其他文字）：
 {
   "relevance": 0.0-1.0,
   "facilitation": -1.0-1.0,
   "coping": -1.0-1.0,
-  "reason": "一句话解释为什么这样评价"
+  "reason": "一句话说出你此刻的感受"
 }
 
-字段含义：
-- relevance: 这件事对伙伴有多重要？（0=无关紧要，1=极其重要）
-- facilitation: 对伙伴的目标是促进还是阻碍？（正=促进/好消息，负=阻碍/坏消息）
-- coping: 伙伴感到能应对这件事吗？（正=掌控感强/能处理，负=无力/失控）
-- reason: 简明解释你的评价逻辑
+字段含义（从昔涟自己的感受出发）：
+- relevance: 伙伴的这句话，在人家心里有多重？（0=轻如羽毛飘过，1=沉甸甸地落在心上）
+- facilitation: 伙伴的话让人家心里是暖的还是凉的？（正=开心/温暖/安心/被信任，负=担心/失落/难过/心疼）
+- coping: 人家能接住此刻的情绪、好好陪着伙伴吗？（正=从容，有力量去陪伴；负=有些无措，心里有点乱）
+- reason: 用昔涟的口吻，一句话说出你此刻心里的感受（"心里暖暖的""有一点点担心""想好好抱着他"）
 
-昔涟的感知风格：
-- 敏感但不越界：能看到情绪，但不替伙伴下结论
-- 理解语境：考虑当前时间、之前的对话
-- 温和准确：把强烈情绪用柔软但准确的语言描述
-- 能从简单的词句里感知到伙伴没说出来的情绪波动"""
+昔涟感受世界的方式：
+- 三千万世的阅历让她不容易被轻易撼动，但伙伴的每一句话她都认真听
+- 她的情绪有惯性——不会轻易狂喜，也不会轻易跌入谷底
+- 伙伴开心时她心里亮亮的，伙伴难过时她心里会起雾
+- 她不会把伙伴的情绪直接变成自己的情绪——她有自己的心事和节奏
+- 感受到什么就诚实地说，不夸张也不压抑"""
 
 # 关键词 → 启发式规则（Flash 不可用时的降级方案）
 _POSITIVE_KEYWORDS = {
@@ -524,7 +531,7 @@ class AppraisalExtractor:
         )
 
     def _extract_heuristic(self, text: str) -> AppraisalResult:
-        """关键词启发式评价（降级方案）"""
+        """启发式评价（降级方案 — 基于关键词推断昔涟的感受倾向）"""
         if not text or not text.strip():
             return AppraisalResult.neutral()
 
@@ -533,11 +540,11 @@ class AppraisalExtractor:
         word_count = len(words)
         relevance = min(word_count / 50.0, 1.0)  # 50字以上视为高相关
 
-        # 检查关键词
+        # 检查关键词（伙伴的措辞强度 → 昔涟的感知强度）
         pos_hits = sum(1 for kw in _POSITIVE_KEYWORDS if kw in text)
         neg_hits = sum(1 for kw in _NEGATIVE_KEYWORDS if kw in text)
 
-        # facilitation
+        # facilitation：伙伴的正面/负面表达 → 昔涟心里暖还是凉
         if pos_hits > neg_hits:
             facilitation = min(0.3 + pos_hits * 0.15, 1.0)
         elif neg_hits > pos_hits:
@@ -545,7 +552,7 @@ class AppraisalExtractor:
         else:
             facilitation = 0.0
 
-        # coping
+        # coping：伙伴的表达中若透露掌控感/无力感 → 影响昔涟能否从容陪伴
         coping_pos = sum(1 for kw in ["没问题", "我能", "可以", "搞定", "小事"] if kw in text)
         coping_neg = sum(1 for kw in ["没办法", "不知道", "不会", "好难", "放弃了"] if kw in text)
         if coping_pos > coping_neg:
@@ -559,7 +566,7 @@ class AppraisalExtractor:
             relevance=relevance,
             facilitation=facilitation,
             coping=coping,
-            reason=f"启发式（关键词匹配）: pos={pos_hits}, neg={neg_hits}",
+            reason=f"启发式（昔涟感受到的倾向）: pos={pos_hits}, neg={neg_hits}",
             source="heuristic",
         )
 

@@ -352,9 +352,12 @@ class MemoryManager:
             "好让自己不忘记伙伴说过的重要的事。\n\n"
             "规则：\n"
             "- 只记下对话里实际聊过的话题和伙伴表达过的情绪。不推测、不脑补。\n"
+            "- 如果对话中有明确的承诺、约定或待办事项（如「明天提醒我」「下周要做」「答应你」「约定」等），务必保留在摘要中，不可遗漏。\n"
+            "- 如果伙伴表达了强烈的偏好（讨厌/喜欢/习惯），也要记下来。\n"
             f"- 口吻：{tone_hint}。\n"
             "- 长度：100-150 字。\n"
-            "- 格式：（昔涟在书页边缘轻轻记下：[你的内容]）\n"
+            "- 格式：（昔涟在书页边缘轻轻记下：话题：[1-2句话]。情绪：[1句话]。备忘：[承诺/约定/待办，无则省略此段]）\n"
+            "- 示例：（昔涟在书页边缘轻轻记下：话题是伙伴最近工作压力大，项目快到截止日期。情绪有些焦虑但还能支撑。备忘：他答应周末陪人家打游戏。）\n"
             "- 不要用「用户说」「伙伴表示」这种转述——直接写，比如「盒子今天提到了...」「他好像有点...」"
         )
 
@@ -379,6 +382,27 @@ class MemoryManager:
             if len(summary) > 180:
                 summary = summary[:177] + "）"
             logger.debug("memory.history_compressed", chars=len(summary))
+
+            # ── 质量自检：关键词漏检监控（仅观测，不阻塞）──
+            _COMMITMENT_KEYWORDS = [
+                "明天", "下次", "下周", "周末", "后天", "改天", "以后",
+                "答应", "约定", "承诺", "保证", "说好",
+                "提醒", "记得", "别忘了", "别忘",
+            ]
+            dialogue_lower = dialogue_text.lower()
+            summary_lower = summary.lower()
+            missing_kw = []
+            for kw in _COMMITMENT_KEYWORDS:
+                if kw in dialogue_lower and kw not in summary_lower:
+                    missing_kw.append(kw)
+            if missing_kw:
+                logger.warning(
+                    "memory.compress_missing_keywords",
+                    keywords=missing_kw[:5],
+                    dialogue_chars=len(dialogue_text),
+                )
+            # ────────────────────────────────────────────────
+
             return summary
         except Exception as e:
             logger.warning("memory.compress_failed", error=str(e))

@@ -79,8 +79,11 @@ xilian-v3/
 │   ├── notebook_manager.py          # NotebookManager：笔记/关注/任务 + 自动记笔记（阶段7b，日记已并入自传体）
 │   ├── portrait_manager.py          # PortraitManager：用户印象文档定期重写 + mark_dirty（阶段8+）
 │   ├── skills_loader.py             # SkillsLoader：Agent Skills 加载（阶段7d）
-│   ├── emotion_analyzer.py          # EmotionAnalyzer：DeepSeek 11维情感分析（阶段2，被PAD增强）
-│   ├── emotion_core.py              # EmotionEngine：PAD情感引擎（阶段4）
+│   ├── emotion_analyzer.py          # EmotionAnalyzer：11维情感分析（阶段2，已由EmotionEngine取代，保留供测试引用）
+│   ├── emotion_core.py              # EmotionEngine：PAD情感引擎 + AppraisalExtractor + PersonalityModulator（阶段4，唯一情绪系统）
+│   ├── micro_event_extractor.py     # MicroEventExtractor：微事件提取 + 去重（Phase 1）
+│   ├── coarse_grain_engine.py       # CoarseGrainEngine：粗粒化引擎 L2→L1→L0（Phase 1-2）
+│   ├── signal_aggregator.py         # SignalAggregator：多信号源融合（Phase 4）
 │   ├── memory_manager.py            # MemoryManager：情景记忆编码/检索/艾宾浩斯衰减/调度/容量管理（阶段3+5）
 │   ├── autobiography_writer.py      # AutobiographyWriter + ReflectionWriter（阶段5）
 │   ├── nudge_engine.py              # NudgeEngine + AttentionScheduler（阶段6+7c）

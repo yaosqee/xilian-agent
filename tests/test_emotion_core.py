@@ -1,8 +1,8 @@
 """测试 EmotionState + PersonalityModulator 核心算法
-import sys
-sys.path.insert(0, ".")
 2026-05-15：阶段 4 第一周测试——纯算法，不涉及 LLM
 """
+import sys
+sys.path.insert(0, ".")
 
 import math
 import pytest

@@ -150,14 +150,66 @@ class DatetimeModule(ContextModule):
         return f"现在是星期{wd}的{period}，{time_desc}。"
 
 
+# ═══════════════════════════════════════════════════════════
+# PAD → 昔涟自身情绪映射（Phase 3: 情绪联动增强）
+# ═══════════════════════════════════════════════════════════
+
+def _classify_pad_mode(pad_p: float, pad_a: float, pad_d: float) -> str:
+    """根据 PAD 坐标返回昔涟的情绪模式标签。"""
+    if pad_p > 0.5 and pad_a > 0.4 and pad_d > 0.2:
+        return "surprised_sparkle"
+    if pad_p > 0.3 and -0.3 <= pad_a <= 0.5:
+        return "warm_bright"
+    if -0.3 <= pad_p <= 0.3 and pad_a < -0.3 and pad_d > 0:
+        return "quiet_gentle"
+    if -0.3 <= pad_p <= 0.3 and pad_a > 0.3:
+        return "faint_ripple"
+    if -0.8 <= pad_p <= -0.3 and pad_a > 0.2 and pad_d < 0:
+        return "slight_worry"
+    if pad_p < -0.5 and pad_a < -0.3 and pad_d < -0.3:
+        return "deep_sorrow"
+    return "fluid"
+
+_SELF_MOOD_MAP = {
+    "warm_bright": "人家自己心里也暖暖的",
+    "quiet_gentle": "心里很安静，只想陪在伙伴身边",
+    "faint_ripple": "心头泛起浅浅的涟漪",
+    "slight_worry": "心里有一点雾，但不太要紧",
+    "deep_sorrow": "心里有点沉甸甸的，但依然守在这里",
+    "surprised_sparkle": "心里蹦起一小颗星星",
+    "fluid": "心是流动的，像水一样",
+}
+
+_STRATEGY_MAP = {
+    "warm_bright": "回复中可以和他一起开心，轻盈的、明亮的。",
+    "quiet_gentle": "轻轻接住他的情绪就好，不必刻意活跃。",
+    "faint_ripple": "带着好奇去感受他，不用急着追问。",
+    "slight_worry": "先稳稳地接住他，不用急着安慰。",
+    "deep_sorrow": "陪伴比话语更重要。短一点也可以。",
+    "surprised_sparkle": "回复中可以和他一起开心，轻盈的、明亮的。",
+    "fluid": "顺着心里的感受，自然地回应他。",
+}
+
+
 class EmotionModule(ContextModule):
-    """当前 PAD 情绪状态 → 昔涟的内心感知 + 跨会话提示。
-    阈值门控：primary_emotion 未变化时复用上次渲染结果，减少缓存抖动。"""
+    """
+    PAD 情绪感知 + 响应策略引导（Phase 3 增强版）。
+
+    三层注入：
+      1. 伙伴的情绪基调（用户 emotion_snapshot → 昔涟感知）
+      2. 昔涟自身的内心状态（PAD 三轴 → 内心感知）
+      3. 响应策略引导（PAD 模式 → 一句话策略）
+
+    阈值门控：primary_emotion + PAD 变化 < 0.15 时复用缓存，减少抖动。
+    """
 
     def __init__(self, agent_context):
         super().__init__(name="emotion", priority=4, max_tokens=300)
         self._ctx = agent_context
         self._last_primary: str = ""
+        self._last_pad_p: float = 0.0
+        self._last_pad_a: float = 0.0
+        self._last_pad_d: float = 0.0
         self._last_emotion_text: str = ""
 
     def render(self) -> str:
@@ -190,22 +242,42 @@ class EmotionModule(ContextModule):
         return ""
 
     def _render_emotion(self) -> str:
-        """情绪感知渲染（阈值门控：primary_emotion 不变则复用缓存）。"""
+        """
+        三层情绪感知渲染（PAD 增强版）。
+
+        阈值门控：primary_emotion 不变 + PAD 三轴变化 < 0.15 → 复用缓存。
+        """
         snap = self._ctx.emotion_snapshot
         if not snap:
             self._last_primary = ""
+            self._last_pad_p = 0.0
+            self._last_pad_a = 0.0
+            self._last_pad_d = 0.0
             self._last_emotion_text = ""
             return ""
         primary = snap.get("primary_emotion", "")
         if not primary:
             self._last_primary = ""
+            self._last_pad_p = 0.0
+            self._last_pad_a = 0.0
+            self._last_pad_d = 0.0
             self._last_emotion_text = ""
             return ""
 
-        # 阈值门控：情绪标签未变 → 复用
-        if primary == self._last_primary and self._last_emotion_text:
+        # PAD 坐标（新增，可能不存在于旧数据）
+        pad_p = snap.get("pad_p", 0.0)
+        pad_a = snap.get("pad_a", 0.0)
+        pad_d = snap.get("pad_d", 0.0)
+
+        # 阈值门控：情绪标签 + PAD 均无显著变化 → 复用
+        if (primary == self._last_primary
+                and abs(pad_p - self._last_pad_p) < 0.15
+                and abs(pad_a - self._last_pad_a) < 0.15
+                and abs(pad_d - self._last_pad_d) < 0.15
+                and self._last_emotion_text):
             return self._last_emotion_text
 
+        # ── 第一层：伙伴的情绪基调（保留现有标签映射）──
         mood_map = {
             "快乐": "心里亮亮的",
             "悲伤": "心有点沉",
@@ -219,9 +291,25 @@ class EmotionModule(ContextModule):
             "平静": "心像无风的湖面",
             "兴奋": "心跳在加速",
         }
-        mood = mood_map.get(primary, f"心里泛起了{primary}的涟漪")
-        text = f"（昔涟感觉到——伙伴的心{mood}。去感受他便好。）"
+        user_mood = mood_map.get(primary, f"心里泛起了{primary}的涟漪")
+        layer1 = f"昔涟感觉到——伙伴的心{user_mood}"
+
+        # ── 第二层：昔涟自身情绪感知（基于 PAD）──
+        pad_mode = _classify_pad_mode(pad_p, pad_a, pad_d)
+        self_mood = _SELF_MOOD_MAP[pad_mode]
+        layer2 = f"{self_mood}"
+
+        # ── 第三层：响应策略引导 ──
+        strategy = _STRATEGY_MAP[pad_mode]
+        layer3 = f"{strategy}"
+
+        # 组装
+        text = f"（{layer1}。{layer2}。\n{layer3}）"
+
         self._last_primary = primary
+        self._last_pad_p = pad_p
+        self._last_pad_a = pad_a
+        self._last_pad_d = pad_d
         self._last_emotion_text = text
         return text
 

@@ -23,7 +23,7 @@
 ```
   用户消息
      │
-     ├──→ EmotionAnalyzer (PAD引擎) ──→ emotion_snapshots ──→ ContextBuilder.EmotionModule
+     ├──→ EmotionEngine (PAD引擎) ──→ emotion_snapshots ──→ ContextBuilder.EmotionModule
      │                                                       ↘
      │                                                        AutobiographyWriter (情绪轨迹)
      │

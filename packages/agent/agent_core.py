@@ -25,7 +25,6 @@ from .agent_context import AgentContext
 from .tool_registry import ToolRegistry
 from .tool_executor import ToolExecutor
 from .result_wrapper import ResultWrapper
-from .emotion_analyzer import EmotionAnalyzer
 from .emotion_core import EmotionEngine
 from .memory_manager import MemoryManager
 from .notebook_manager import NotebookManager
@@ -120,12 +119,10 @@ class AgentCore:
         _reg_qw()
         _reg_sw()
 
-        # 阶段 2: 情感分析
-        self.emotion_analyzer = EmotionAnalyzer(self.router)
+        # 阶段 2+4: PAD 情感引擎（唯一情绪系统，已取代阶段2 EmotionAnalyzer）
         self._pending_analysis: asyncio.Task | None = None
         self._emotion_generation: int = 0  # 代数计数器，确保只有最新分析的结果被采纳
 
-        # 阶段 4: PAD 情感引擎
         self.emotion_engine: EmotionEngine = EmotionEngine(
             model_router=self.router,
         )

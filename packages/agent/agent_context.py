@@ -7,6 +7,29 @@ from dataclasses import dataclass, field
 from typing import Optional, Callable
 
 # ═══════════════════════════════════════════════════════════
+# 工具函数
+# ═══════════════════════════════════════════════════════════
+
+def _bigram_jaccard(a: str, b: str) -> float:
+    """计算两段文本的 bigram Jaccard 相似度（0.0-1.0）。
+    用于压缩摘要去重：>0.5 视为话题高度重叠。"""
+    def _bigrams(text: str) -> set:
+        return {text[i:i+2] for i in range(len(text) - 1)} if len(text) >= 2 else set()
+
+    bg_a = _bigrams(a)
+    bg_b = _bigrams(b)
+
+    if not bg_a and not bg_b:
+        return 1.0
+    if not bg_a or not bg_b:
+        return 0.0
+
+    intersection = len(bg_a & bg_b)
+    union = len(bg_a | bg_b)
+    return intersection / union if union > 0 else 0.0
+
+
+# ═══════════════════════════════════════════════════════════
 # 上下文压缩参数
 # ═══════════════════════════════════════════════════════════
 
@@ -25,7 +48,7 @@ class AgentContext:
     # 压缩摘要 role = "system", content 以 COMPRESS_SUMMARY_PREFIX 开头
     history: list[dict] = field(default_factory=list)
 
-    # 阶段 2：情绪快照（来自 EmotionAnalyzer 后台分析）
+    # 阶段 4：情绪快照（来自 EmotionEngine.process_message，PAD 三维 + 11维 + appraisal）
     emotion_snapshot: Optional[dict] = None
 
     # 阶段 3：记忆检索结果 [{summary, score, ...}]
@@ -151,23 +174,31 @@ class AgentContext:
             pass
 
     def _inject_summary(self, summary: str) -> None:
-        """将压缩摘要插入 history 顶部（在所有原始消息之前）。"""
-        # 如果已有摘要，与旧摘要合并（保留旧 + 追加新）
+        """将压缩摘要插入 history 顶部（在所有原始消息之前）。
+        智能合并：与旧摘要做 bigram Jaccard 相似度检测，
+        高度重叠 → 替换旧摘要；低重叠 → 拼接。"""
+        from .context_builder import estimate_tokens as _et
+
         existing_idx = None
         for i, m in enumerate(self.history):
             if m["role"] == "system" and m["content"].startswith(COMPRESS_SUMMARY_PREFIX):
                 existing_idx = i
                 break
 
-        from .context_builder import estimate_tokens as _et
-
         if existing_idx is not None:
-            # 合并：取旧摘要结尾 + 新摘要开头，拼接
             old_content = self.history[existing_idx]["content"]
             old_tokens = _et(old_content)
-            merged = old_content.rstrip("）") + "；" + summary.lstrip(COMPRESS_SUMMARY_PREFIX).lstrip("（")
-            self.history[existing_idx]["content"] = merged
-            self._total_history_tokens += _et(merged) - old_tokens
+            sim = _bigram_jaccard(old_content, summary)
+
+            if sim > 0.5:
+                # 高度重叠 → 替换旧摘要（话题延续，旧摘要已过时）
+                self.history[existing_idx]["content"] = summary
+                self._total_history_tokens += _et(summary) - old_tokens
+            else:
+                # 低重叠 → 独立话题，拼接
+                merged = old_content.rstrip("）") + "；" + summary.lstrip(COMPRESS_SUMMARY_PREFIX).lstrip("（")
+                self.history[existing_idx]["content"] = merged
+                self._total_history_tokens += _et(merged) - old_tokens
         else:
             self.history.insert(0, {"role": "system", "content": summary})
             self._total_history_tokens += _et(summary)

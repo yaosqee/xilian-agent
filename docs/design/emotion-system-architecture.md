@@ -1,7 +1,7 @@
 # 昔涟情感系统 · 架构文档
 
-版本: 2026-05-20  
-状态: 打磨期 — B 档（近期从 C 档提升），核心管线稳定，遗留低优项目
+版本: 2026-06-01  
+状态: 打磨期 — 情绪联动增强（PAD三层注入 + Appraisal方向修正 + 系统去冗余）
 
 ---
 
@@ -11,14 +11,14 @@
 
 | 组件 | 功能 | 存储位置 | 更新频率 | 在对话中的作用 |
 |------|------|----------|----------|---------------|
-| **EmotionAnalyzer** | 用户消息→11维情绪标注 | 无状态 | 每轮对话后异步 | 供 PAD 引擎消费 |
-| **EmotionEngine** | PAD 三维连续情绪状态管理 | 内存 (EmotionState) | 每轮对话后更新 | 情绪平滑演化 + profile 计算 |
+| **EmotionAnalyzer** | ~~用户消息→11维情绪标注~~ (阶段2，已废弃，由EmotionEngine取代) | 无状态 | — | 仅保留文件供测试引用 |
+| **EmotionEngine** | PAD 三维连续情绪状态管理 + Appraisal评价提取 | 内存 (EmotionState) | 每轮对话后更新 | 唯一情绪系统：评价→PAD→profile |
 | **EmotionState** | PAD 坐标存储 + 衰减 + 11维映射 | 内存 | 每秒衰减 | 核心状态容器 |
-| **AppraisalExtractor** | Flash LLM 提取评价变量 | 无状态 | 每轮调用 | 评价→PAD 的桥梁 |
+| **AppraisalExtractor** | Flash LLM 从昔涟自身视角提取评价变量 | 无状态 | 每轮调用 | 感受「伙伴的话在自己心里激起什么」 |
 | **PADMapper** | 评价变量 → PAD 坐标 | 无状态（规则+查表） | 每轮调用 | 确定性映射 |
 | **PersonalityModulator** | 昔涟人格特质调制 PAD | 无状态（固定参数） | 每轮调用 | 让情绪变化符合角色性格 |
 | **emotion_snapshots** | PAD 快照持久化 | SQLite | 每轮写入 | 前端 PAD 曲线、自传情绪轨迹 |
-| **EmotionModule** | PAD 情绪→上下文注入 | context_builder | 每轮渲染 | 让昔涟感知伙伴的心境 |
+| **EmotionModule** | PAD 情绪→上下文三层注入 | context_builder | 每轮渲染 | ①伙伴情绪基调 ②昔涟PAD内心感知 ③响应策略引导 |
 | **好感度系统** | 昔涟对伙伴的亲近程度 (0-100) | SQLite (affection_state) | 每轮更新 | 关系深度感知 |
 | **AffectionModule** | 好感度等级→话术引导 | context_builder | 随等级变化注入 | 让昔涟的语气随关系演进 |
 | **前端情绪面板** | PAD 轨迹可视化 + 好感度条 | React 组件 | 前端轮询 | 用户可感知的情感仪表盘 |
@@ -28,30 +28,28 @@
 ```
   用户消息
      │
-     ├──→ EmotionAnalyzer.analyze()
-     │       │
-     │       └──→ Flash LLM → 11维情绪标注 {primary_emotion, intensity, dimensions, cause, need}
-     │                │
-     │                │ (v2: 代数计数器防止旧分析覆盖新状态)
-     │                ▼
-     ├──→ EmotionEngine.process_message()
-     │       │
-     │       ├──→ AppraisalExtractor (Flash LLM)
-     │       │       └──→ {relevance, facilitation, coping, reason}
-     │       │
-     │       ├──→ PADMapper.map_to_pad_with_modulation()
-     │       │       │
-     │       │       └──→ PersonalityModulator.modulate()
-     │       │               │
-     │       │               └──→ 昔涟人格调制 (共情 0.85 / 韧性 0.6 / 正偏 0.15 / 唤醒阻尼 0.8)
-     │       │
-     │       ├──→ EmotionState.update(event_pad)
-     │       │       │
-     │       │       └──→ PAD 平滑演化 (衰减向基线 + 事件冲击)
-     │       │
-     │       └──→ EmotionState.compute_profile()
-     │               │
-     │               └──→ 11 维情绪分布 (高斯径向基映射)
+     └──→ EmotionEngine.process_message()
+             │
+             ├──→ AppraisalExtractor (Flash LLM)
+             │       └──→ {relevance, facilitation, coping, reason}
+             │           (从昔涟第一人称视角：「伙伴的话在人家心里有多重？」)
+             │
+             ├──→ PADMapper.map_to_pad_with_modulation()
+             │       │
+             │       └──→ PersonalityModulator.modulate()
+             │               │
+             │               └──→ 昔涟人格调制 (共情 0.85 / 韧性 0.6 / 正偏 0.15 / 唤醒阻尼 0.8)
+             │
+             ├──→ EmotionState.update(event_pad)
+             │       │
+             │       └──→ PAD 平滑演化 (衰减向基线 + 事件冲击)
+             │
+             └──→ EmotionState.compute_profile()
+                     │
+                     └──→ {primary_emotion, intensity, pad_p/a/d, dimensions, appraisal}
+                         (PAD 三轴值首次进入返回值，供上下文注入消费)
+
+  结果分发：
      │
      ├──→ emotion_snapshots (DB 持久化)
      │       │
@@ -59,10 +57,13 @@
      │       ├──→ 自传体情绪轨迹素材
      │       └──→ NudgeEngine 情绪上下文
      │
-     ├──→ EmotionModule.render()
+     ├──→ EmotionModule.render() (三层注入)
      │       │
-     │       └──→ mood_map: 「快乐」→「心里亮亮的」
-     │       └──→ 注入: "（昔涟感觉到——伙伴的心心里亮亮的。去感受他便好。）"
+     │       ├──→ 第一层: mood_map — 伙伴的情绪基调
+     │       ├──→ 第二层: _classify_pad_mode — 昔涟PAD内心感知 (7种模式)
+     │       └──→ 第三层: _STRATEGY_MAP — 响应策略引导
+     │       注入示例: "（昔涟感觉到——伙伴的心心里亮亮的。人家自己心里也暖暖的。
+     │                回复中可以和他一起开心，轻盈的、明亮的。）"
      │
      └──→ _update_affection(pad_profile)
              │
@@ -75,14 +76,16 @@
 ### 1.3 组件间依赖
 
 ```
-EmotionAnalyzer (Flash LLM 情绪标签)
+EmotionEngine (唯一情绪系统)
      │
-     ├──→ NudgeEngine (情绪上下文)
-     └──→ (v1 路径，v2 已被 EmotionEngine 替代)
-
-EmotionEngine (PAD 管道)
+     ├──→ AppraisalExtractor (Flash LLM，昔涟第一人称评价)
+     ├──→ PADMapper + PersonalityModulator (评价→PAD)
+     ├──→ EmotionState (内存状态，PAD 三轴持续演化)
      │
-     ├──→ EmotionState (内存状态)
+     ├──→ emotion_snapshots (DB 持久化)
+     ├──→ EmotionModule (三层上下文注入)
+     └──→ _update_affection (好感度更新)
+```
      ├──→ emotion_snapshots (DB 持久化)
      ├──→ EmotionModule (上下文注入)
      └──→ 好感度系统 (affection_state)

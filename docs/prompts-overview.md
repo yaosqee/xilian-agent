@@ -19,7 +19,7 @@
 | 9 | CLAUDE_DELEGATE | `tools/coding_delegate.py` | 22 | Pro | — | 编码委托给 Claude Code 的指令 |
 | 10 | RESULT_WRAP | `result_wrapper.py` | — | Flash | 0.6 | 工具结果→昔涟语言包装 |
 | 11 | COMPRESSION | `memory_manager.py` | 44 | Flash | — | 淘汰记忆压缩为"遥远记忆" |
-| 12 | ANALYSIS | `emotion_analyzer.py` | 22 | Flash | — | 用户消息→11维情绪标注 |
+| 12 | ANALYSIS (已废弃) | `emotion_analyzer.py` | 22 | Flash | — | ~~用户消息→11维情绪标注~~ 已被 EmotionEngine AppraisalExtractor 取代 |
 | 13 | REFLECTION | `autobiography_writer.py` | 38 | Flash | **0.3** | 每周反思 SAGE 四问 |
 | 14 | PERSONALITY_SCORE | `agent_core.py` | 1437 | Flash | — | 回复→人设一致性评分 |
 

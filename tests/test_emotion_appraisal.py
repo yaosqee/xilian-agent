@@ -1,8 +1,8 @@
 """测试 AppraisalExtractor + PADMapper + EmotionEngine
-import sys
-sys.path.insert(0, ".")
 2026-05-15：阶段 4 第二周测试——评价提取 + PAD 映射 + 全流程
 """
+import sys
+sys.path.insert(0, ".")
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
