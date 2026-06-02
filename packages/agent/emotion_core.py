@@ -14,6 +14,13 @@ EmotionEngine — PAD 三维情感引擎
 PAD 参数参考：
   · Mehrabian, A. (1980). Basic dimensions for a general psychological theory.
   · Russell, J. A. (2003). Core affect and the psychological construction of emotion.
+
+── 优化路线图（2026-06 audit）──────────────────────────
+Phase 1 (当前): P1-④B 时间上下文注入 / P1-④A 短消息快速路径
+Phase 2 (后续): P1-① 情绪记忆链接 / P1-③ 反馈闭环
+Phase 3 (远期): P2-② 双通道衰减 / P3-③ Cardboard / P3-⑥ 情节记忆
+暂缓: P2-② 动态基线 / P3-② Markov 转移 / P3-⑤ 多模态
+──────────────────────────────────────────────────────────
 """
 import math
 import time
@@ -343,6 +350,8 @@ class PersonalityModulator:
     昔涟的人格调制 PAD 偏移。
 
     参数来源：昔涟人格设定"温柔、敏感但不脆弱"的数值化表达。
+
+    ── Phase 3 (远期): 动态参数 — 从角色记忆中学习情绪敏感性 ──
     """
 
     empathy_weight: float = 0.85       # 高共情 → 伙伴情绪容易影响她
@@ -434,12 +443,13 @@ class AppraisalResult:
     facilitation: float   # -1 to +1
     coping: float         # -1 to +1
     reason: str = ""
-    source: str = "llm"   # "llm" | "heuristic"
+    source: str = "llm"   # "llm" | "heuristic" | "fast_path"
+    confidence: float = 0.9  # P1: 评价置信度（llm=0.9, heuristic=0.4, fast_path=0.5）
 
     @classmethod
     def neutral(cls) -> "AppraisalResult":
         """中性评价（降级/空消息）"""
-        return cls(0.5, 0.0, 0.0, "无法感知", source="heuristic")
+        return cls(0.5, 0.0, 0.0, "无法感知", source="heuristic", confidence=0.3)
 
 
 class AppraisalExtractor:
@@ -448,23 +458,54 @@ class AppraisalExtractor:
 
     主路径：DS V4-Flash（异步，不阻塞回复）
     降级路径：关键词启发式（Flash 不可用时）
+
+    ── Phase 1 优化 (2026-06) ──
+    P1-④A: 短消息快速路径 — extract() 开头跳过无情绪短消息的 LLM 调用
+    P1-④B: 时间上下文注入 — _extract_llm() 注入上次对话时间和当前时段
+    ─────────────────────────────
     """
+
+    # ── P1-④A: 短消息快速路径 ──────────────────────────
+    # 严格 2 字以内（len < 3）且不含情感关键词 → 跳过 LLM 评价
+    _SHORT_MSG_EMOTION_KEYWORDS: frozenset = frozenset({
+        "想", "爱", "恨", "累", "烦", "哭", "笑", "怕", "气",
+        "难", "痛", "急", "慌", "闷", "酸", "甜", "抱", "谢",
+    })
 
     def __init__(self, model_router):
         self._router = model_router
+        # ── P1-④B: 时间上下文缓存 ──
+        self._last_appraisal_time: float = 0.0
+        self._last_appraisal_gap: float = 0.0
+        self._last_appraisal_emotion: str = ""
 
-    async def extract(self, user_message: str) -> AppraisalResult:
+    async def extract(
+        self, user_message: str,
+        last_interaction_gap: float = 0.0,
+        last_emotion: str = "",
+    ) -> AppraisalResult:
         """
         从用户消息中提取评价变量。
 
         Args:
             user_message: 用户原始消息文本
-
-        Returns:
-            AppraisalResult
+            last_interaction_gap: P1-④B 上次对话距今秒数（0=首次或未知）
+            last_emotion: P1-④B 上次对话结束时昔涟的主情绪
         """
         if not user_message or not user_message.strip():
             return AppraisalResult.neutral()
+
+        # ── P1-④B: 更新时间上下文缓存 ──
+        self._last_appraisal_time = time.time()
+        self._last_appraisal_gap = last_interaction_gap
+        self._last_appraisal_emotion = last_emotion
+
+        # ── P1-④A: 短消息快速路径 ──
+        if self._should_skip_llm(user_message):
+            return AppraisalResult(
+                relevance=0.1, facilitation=0.0, coping=0.0,
+                reason="短消息快速通道", source="fast_path", confidence=0.5,
+            )
 
         # 尝试 LLM 评价
         if self._router:
@@ -477,10 +518,66 @@ class AppraisalExtractor:
         # 降级到启发式
         return self._extract_heuristic(user_message)
 
+    # ── P1-④A: 短消息快速路径判断 ───────────────────────
+
+    def _should_skip_llm(self, text: str) -> bool:
+        """短消息且无情感关键词 → 跳过 LLM 评价，走快速通道。"""
+        stripped = text.strip()
+        if len(stripped) >= 3:
+            return False
+        return not any(kw in stripped for kw in self._SHORT_MSG_EMOTION_KEYWORDS)
+
+    # ── P1-④B: 时间上下文构建 ────────────────────────────
+
+    def _build_time_context(self) -> str:
+        """构建评价时的时间背景（注入 LLM prompt，不影响消息本体）。"""
+        parts: list[str] = []
+
+        # 时间间隔感知
+        if self._last_appraisal_gap > 0:
+            gap_minutes = self._last_appraisal_gap / 60
+            if gap_minutes < 5:
+                parts.append("伙伴刚刚还在和你聊天")
+            elif gap_minutes < 60:
+                parts.append(f"距离上次对话过去了约{int(gap_minutes)}分钟")
+            elif gap_minutes < 1440:  # < 24h
+                parts.append(f"距离上次对话过去了约{int(gap_minutes / 60)}小时")
+            else:
+                days = int(gap_minutes / 1440)
+                parts.append(f"伙伴有{days}天没来了")
+
+        # 上次情绪记忆
+        if self._last_appraisal_emotion:
+            parts.append(f"上次分别时，你心里是「{self._last_appraisal_emotion}」的")
+
+        # 时段感知
+        now = time.time()
+        from datetime import datetime
+        hour = datetime.fromtimestamp(now).hour
+        if 23 <= hour or hour < 5:
+            parts.append("现在是深夜了")
+        elif 5 <= hour < 8:
+            parts.append("现在是清晨")
+        elif 12 <= hour < 14:
+            parts.append("现在是午后")
+        elif 18 <= hour < 20:
+            parts.append("现在是傍晚")
+
+        if not parts:
+            return ""
+
+        return "（背景：" + "；".join(parts) + "。）"
+
     async def _extract_llm(self, user_message: str) -> AppraisalResult:
-        """DS Flash 评价提取"""
+        """DS Flash 评价提取（含 P1-④B 时间上下文注入）"""
+        # ── P1-④B: 构建时间上下文，合并到 system prompt 避免双 system 消息 ──
+        time_context = self._build_time_context()
+        system_prompt = APPRAISAL_SYSTEM_PROMPT
+        if time_context:
+            system_prompt = system_prompt + "\n\n" + time_context
+
         messages = [
-            {"role": "system", "content": APPRAISAL_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ]
 
@@ -498,6 +595,7 @@ class AppraisalExtractor:
             return self._extract_heuristic(user_message)
 
         result.source = "llm"
+        result.confidence = 0.9
         return result
 
     def _parse_response(self, raw: str) -> Optional[AppraisalResult]:
@@ -568,6 +666,7 @@ class AppraisalExtractor:
             coping=coping,
             reason=f"启发式（昔涟感受到的倾向）: pos={pos_hits}, neg={neg_hits}",
             source="heuristic",
+            confidence=0.4,
         )
 
 
@@ -642,7 +741,9 @@ class EmotionEngine:
     情感引擎统一入口。
 
     组合：EmotionState + AppraisalExtractor + PADMapper + PersonalityModulator。
-    Week 3 集成 AgentCore 时完整实现。
+
+    ── Phase 2 (后续): P1-① 情绪记忆链接 / P1-③ 反馈闭环 ──
+    ── Phase 3 (远期): P2-② 双通道衰减 (Tonic/Phasic) ──
     """
 
     def __init__(
@@ -659,18 +760,27 @@ class EmotionEngine:
         self.tau = tau
         self.sensitivity = sensitivity
 
-    async def process_message(self, user_message: str) -> dict:
+    async def process_message(
+        self, user_message: str,
+        last_interaction_gap: float = 0.0,
+    ) -> dict:
         """
         处理一条用户消息 → 更新情绪状态。
 
         Args:
             user_message: 用户消息文本
+            last_interaction_gap: P1-④B 上次对话距今秒数
 
         Returns:
             当前情绪 profile（11 维 + primary_emotion）
         """
-        # 1. 提取评价
-        appraisal = await self.appraisal_extractor.extract(user_message)
+        # 1. 提取评价（含 P1-④B 时间上下文）
+        last_emotion = self.state.primary_emotion or ""
+        appraisal = await self.appraisal_extractor.extract(
+            user_message,
+            last_interaction_gap=last_interaction_gap,
+            last_emotion=last_emotion,
+        )
 
         # 2. 评价 → PAD（含人格调制）
         event_pad = PADMapper.map_to_pad_with_modulation(appraisal, self.modulator)
@@ -686,6 +796,7 @@ class EmotionEngine:
             "coping": appraisal.coping,
             "reason": appraisal.reason,
             "source": appraisal.source,
+            "confidence": appraisal.confidence,  # P1: 供下游消费
         }
 
         return profile

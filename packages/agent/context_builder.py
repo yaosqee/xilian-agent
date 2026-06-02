@@ -301,7 +301,14 @@ class EmotionModule(ContextModule):
 
         # ── 第三层：响应策略引导 ──
         strategy = _STRATEGY_MAP[pad_mode]
+        # ── P1-③: 策略有效性反馈 ──
+        eff_hint = self._strategy_effectiveness_hint(pad_mode)
+        if eff_hint:
+            strategy = strategy.rstrip("。") + "。" + eff_hint
         layer3 = f"{strategy}"
+
+        # ── P1-③: 记录本轮策略供反馈闭环评估 ──
+        self._ctx.last_emotion_strategy = pad_mode
 
         # 组装
         text = f"（{layer1}。{layer2}。\n{layer3}）"
@@ -312,6 +319,56 @@ class EmotionModule(ContextModule):
         self._last_pad_d = pad_d
         self._last_emotion_text = text
         return text
+
+    # ── P1-③: 策略有效性提示 ────────────────────────────
+
+    def _strategy_effectiveness_hint(self, current_mode: str) -> str:
+        """基于历史有效性数据，为当前策略生成微调提示。样本不足时返回空串。"""
+        eff = self._ctx.strategy_effectiveness
+        if not eff:
+            return ""
+
+        # 全局均值（所有策略的平均有效性）
+        all_scores = [s for scores in eff.values() for s in scores]
+        global_mean = sum(all_scores) / len(all_scores) if all_scores else 0.5
+
+        # 当前策略的有效性
+        current_scores = eff.get(current_mode, [])
+        if len(current_scores) < 5:
+            return ""  # 样本不足，不干预
+
+        current_mean = sum(current_scores) / len(current_scores)
+
+        # 仅当偏差显著时介入（> 0.15 差异）
+        if current_mean < global_mean - 0.15:
+            # 当前策略效果显著偏差 → 建议微调
+            # 找效果最好的策略作为参考
+            best_mode = max(eff, key=lambda k: sum(eff[k]) / len(eff[k]) if eff[k] else 0)
+            if best_mode != current_mode and len(eff.get(best_mode, [])) >= 5:
+                best_strategy = _STRATEGY_MAP.get(best_mode, "")
+                # 提取核心动词短语作为轻提示
+                hint_words = self._extract_strategy_keyword(best_strategy)
+                if hint_words:
+                    return f"可以稍微{hint_words}一点试试"
+        elif current_mean > global_mean + 0.15:
+            # 当前策略效果显著好 → 强化
+            return "这个方式好像对他挺管用的"
+
+        return ""
+
+    @staticmethod
+    def _extract_strategy_keyword(strategy: str) -> str:
+        """从策略文本中提取核心调性关键词。"""
+        keywords = {
+            "开心": "轻快", "轻盈": "轻快", "明亮": "轻快",
+            "接住": "温柔", "轻轻": "温柔", "稳稳": "温柔",
+            "好奇": "好奇", "感受": "好奇",
+            "陪伴": "安静", "短": "简洁",
+        }
+        for k, v in keywords.items():
+            if k in strategy:
+                return v
+        return ""
 
     def _extract_topic(self) -> str:
         """从历史最后一条消息或压缩摘要中提取简短话题词。"""
@@ -346,7 +403,24 @@ class EmotionModule(ContextModule):
 
 class MemoryModule(ContextModule):
     """情景记忆检索结果 → 像翻旧书页。支持用户记忆和角色记忆双源。
-    压缩激活时 top-k 从 3 增至 5，弥补历史信息的减少。"""
+    压缩激活时 top-k 从 3 增至 5，弥补历史信息的减少。
+    P1-①: 记忆附带情绪标签——让昔涟记得「当时心里是什么感觉」。
+    """
+
+    # ── P1-①: 情绪名 → 昔涟记忆情绪提示（直白短句）──
+    _EMOTION_FEEL_MAP: dict[str, str] = {
+        "快乐": "挺开心的",
+        "悲伤": "有点难过",
+        "愤怒": "有点生气",
+        "恐惧": "有点害怕",
+        "惊讶": "挺惊讶的",
+        "厌恶": "有点反感",
+        "信任": "很安心",
+        "期待": "挺期待的",
+        "焦虑": "有点焦虑",
+        "平静": "很平静",
+        "兴奋": "挺兴奋的",
+    }
 
     def __init__(self, agent_context):
         super().__init__(name="memory", priority=5, max_tokens=300)
@@ -370,19 +444,29 @@ class MemoryModule(ContextModule):
 
         # ── 用户记忆 ──
         user_items = []
+        user_emotions = []  # P1-①: 收集关联情绪
         for m in user_memories[:user_limit]:
             s = m.get("summary", "")
             if s and len(s) >= 2:
                 user_items.append(s)
+                emo = self._get_emotion_for_memory(m)  # P1-①
+                if emo:
+                    user_emotions.append(emo)
 
         if user_items:
             if len(user_items) == 1:
                 mem_text = f"上一次你们聊到了「{user_items[0]}」"
             else:
                 mem_text = "上一次你们聊到了" + "、".join(f"「{item}」" for item in user_items)
+            # ── P1-①: 若有情绪记忆，追加感知 ──
+            emotion_hint = ""
+            if user_emotions:
+                unique_feels = list(dict.fromkeys(user_emotions))  # 去重保序
+                emotion_hint = "那时，" + "，".join(unique_feels[:2]) + "。"
             parts.append(
                 "（昔涟翻到书里几页——"
-                f"{mem_text}。如果和伙伴现在说的话有关，"
+                f"{mem_text}。{emotion_hint}"
+                "如果和伙伴现在说的话有关，"
                 "像翻旧书页那样轻轻提起就好，不要刻意。）"
             )
 
@@ -392,9 +476,13 @@ class MemoryModule(ContextModule):
             if s and len(s) >= 2:
                 end = s[-1] if s else ""
                 sep = "" if end in "。！？♪~" else "。"
+                # ── P1-①: 角色记忆情绪 ──
+                char_emo = self._get_emotion_for_memory(m)
+                char_emo_hint = f"那时，{char_emo}。" if char_emo else ""
                 parts.append(
                     "（昔涟翻到旧书的一页——"
                     f"{s}{sep}"
+                    f"{char_emo_hint}"
                     "像翻旧书页那样轻轻提起就好，不要展开。"
                     "落点放在伙伴现在身上。）"
                 )
@@ -403,6 +491,19 @@ class MemoryModule(ContextModule):
             return ""
 
         return "\n\n".join(parts)
+
+    # ── P1-①: 从 emotion map 查询记忆的情绪感知 ─────────
+
+    def _get_emotion_for_memory(self, memory: dict) -> str:
+        """返回昔涟式的内心感受文本，无关联情绪时返回空串。"""
+        mid = memory.get("id")
+        if mid is None:
+            return ""
+        emo_data = self._ctx.memory_emotion_map.get(mid)
+        if not emo_data:
+            return ""
+        emotion_name = emo_data.get("emotion", "")
+        return self._EMOTION_FEEL_MAP.get(emotion_name, "")
 
     @staticmethod
     def _dedup_against_summary(memories: list, summary: str) -> list:

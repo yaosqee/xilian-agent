@@ -51,11 +51,18 @@ class AgentContext:
     # 阶段 4：情绪快照（来自 EmotionEngine.process_message，PAD 三维 + 11维 + appraisal）
     emotion_snapshot: Optional[dict] = None
 
+    # ── P1-③: 上一轮使用的情绪策略（供反馈闭环评估）──
+    last_emotion_strategy: str = ""
+    strategy_effectiveness: dict[str, list[float]] = field(default_factory=dict)  # {strategy: [scores]}
+
     # 阶段 3：记忆检索结果 [{summary, score, ...}]
     memory_retrieval: Optional[list] = None
 
     # 阶段 9：角色情景记忆检索结果（昔涟自己的过去）
     character_memory_retrieval: Optional[list] = None
+
+    # ── P1-①: 记忆→情绪映射 {memory_id: {emotion, pad_p, pad_a, pad_d}} ──
+    memory_emotion_map: dict[int, dict] = field(default_factory=dict)
 
     # 阶段 8+: 用户印象文档（保留兼容）
     user_portrait: Optional[str] = None
@@ -229,8 +236,11 @@ class AgentContext:
         self._last_message_time = 0.0
         self._cross_session_hint_used = False
         self.emotion_snapshot = None
+        self.last_emotion_strategy = ""
+        self.strategy_effectiveness = {}
         self.memory_retrieval = None
         self.character_memory_retrieval = None
+        self.memory_emotion_map = {}
         self._current_portrait_version = None
         self._portrait_version_injected = None
         self.core_profile = None

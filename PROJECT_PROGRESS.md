@@ -1,8 +1,8 @@
 # 昔涟 V3.4 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-06-01
-> 🔖 当前阶段：画像系统全面优化完成（Phase 1-5）+ 对话质量最后一公里（PAD情绪联动 + 压缩质量）+ 情绪系统去冗余
+> 📅 最后更新：2026-06-02
+> 🔖 当前阶段：情感系统深度优化 Phase 1-2（参数调制 + 记忆链接 + 反馈闭环）
 
 ---
 
@@ -73,6 +73,31 @@
 | 二 | 历史时间标签 | 恢复历史标注「（约X小时前）」，帮助模型感知时间距离 |
 | 三 | ctx_notes 会话边界 | 长时间未对话注入自然时间锚点（"今天第一次和伙伴聊天呢"） |
 | 四 | 主动问候阈值降低 | 3.0 → 1.2，约 3 小时未对话触发主动问候 |
+
+### 情感系统深度优化（2026-06-02）
+
+> 📋 完整方案：[docs/design/emotion-system-audit-and-optimization.md](docs/design/emotion-system-audit-and-optimization.md)
+
+基于对 EmotionEngine + EmotionModule + AppraisalExtractor + 前后端数据通道的全方位评估，
+参考 Liminal Engine / MECoT / Echo-N1 / AnnaAgent 等 2025 年前沿实践，制定 4 Phase 优化路线：
+
+| Phase | 方向 | 核心交付 | 工作量 | 状态 |
+|-------|------|---------|--------|------|
+| 1 | 基础增强 | 时间上下文注入 + 短消息快速路径 + PAD→LLM参数调制(防锁死) | 小 | ✅ 完成 |
+| 2 | 核心体验 | 情绪记忆链接 + 策略反馈闭环(Flash评价+自适应) | 中 | ✅ 完成 |
+| 3 | 验证扩展 | Rupture & Repair + 双通道衰减(Tonic/Phasic) + 情节记忆 | 中 | ⏳ 待启动 |
+| 4 | 远期 | Cardboard Score检测 + 前后端命名统一 + WebSocket推送 | 小 | 📋 后续 |
+
+**Phase 1 交付：**
+- P1-④B: Appraisal 时间上下文注入（`_build_time_context` → 上次对话时间 + 上次情绪 + 时段感知）
+- P1-④A: 短消息快速路径（<2字且无情感词 → 跳过 LLM 评价，节省 ~30% API 调用）
+- P1-②: PAD→LLM 参数调制（temperature 受 arousal / max_tokens 受 dominance，三重防锁死：变化上限 + 回归均值 + clamp）
+
+**Phase 2 交付：**
+- P1-①: 情绪记忆链接（emotion_snapshots 新增 trigger_memory_id → 检索记忆时查关联情绪 → MemoryModule 渲染"那时，挺开心的"）
+- P1-③: 策略反馈闭环（Flash 评价每轮回应效果 → 累积策略有效性 → EmotionModule 自适应：效果好→强化，差→微调；置信度边界：样本<5不干预）
+
+**文件变更：** `emotion_core.py` (+~70行) · `agent_core.py` (+~130行) · `context_builder.py` (+~80行) · `agent_context.py` (+4字段) · `database.py` (+1列 + 1查询方法)
 
 ### 用户画像系统优化计划（2026-05-31）
 

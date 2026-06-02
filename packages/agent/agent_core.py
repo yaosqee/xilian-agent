@@ -10,6 +10,7 @@ ActorMind 推理链（阶段 7）：
 阶段 7a：ContextBuilder 模块化上下文（替换手工拼接）
 """
 import asyncio
+import math
 import re
 import time
 import os
@@ -99,7 +100,15 @@ def _tc_function_arguments(tc) -> str:
 
 
 class AgentCore:
-    """昔涟的核心引擎，接收 InternalEvent，返回文本回复"""
+    """
+    昔涟的核心引擎，接收 InternalEvent，返回文本回复。
+
+    ── 优化路线图 (2026-06 audit) ──
+    Phase 1 (当前): P1-② 情绪→LLM参数调制 (line ~494, ~1052)
+    Phase 2 (后续): P1-① 情绪记忆链接 / P1-③ 反馈闭环
+    Phase 3 (远期): P2-① Rupture & Repair
+    ──────────────────────────────────
+    """
 
     def __init__(self, model_router: ModelRouter | None = None, db_path: str = "data/xilian.db"):
         self.router = model_router or ModelRouter()
@@ -126,6 +135,14 @@ class AgentCore:
         self.emotion_engine: EmotionEngine = EmotionEngine(
             model_router=self.router,
         )
+
+        # ── P1-②: 情绪→LLM 参数调制（防锁死）────────────────
+        self._last_modulated_params: dict | None = None
+        self._emotion_flat_rounds: int = 0  # PAD 变化不显著的连续轮数
+
+        # ── P1-③: 情绪反馈闭环 ─────────────────────────
+        self._strategy_effectiveness: dict[str, list[float]] = {}  # {strategy: [scores]}
+        self._last_eval_data: dict | None = None  # 上一轮的 {user_msg, response, strategy}
 
         # 阶段 5: 人格漂移检测 + 时间感知
         self._drift_counter: int = 0
@@ -481,6 +498,21 @@ class AgentCore:
             self.memory_manager.signal_new_message()
         self.context.memory_retrieval = await self._retrieve_memories(event.payload)
 
+        # ── P1-①: 为检索到的记忆查询关联情绪 ──
+        if self._db and self._db._conn:
+            memory_ids = []
+            for mem_list in (self.context.memory_retrieval, self.context.character_memory_retrieval):
+                if mem_list:
+                    for m in mem_list:
+                        mid = m.get("id")
+                        if mid is not None:
+                            memory_ids.append(mid)
+            if memory_ids:
+                self.context.memory_emotion_map = await self._db.get_emotions_by_memory_ids(memory_ids)
+
+        # ── P1-③: 同步策略有效性数据供 EmotionModule 消费 ──
+        self.context.strategy_effectiveness = self._strategy_effectiveness
+
         # ── 3. 构建消息（情感+记忆由 ContextBuilder EmotionModule/MemoryModule 注入）──
         messages = await self._build_messages(event.payload)
 
@@ -491,11 +523,14 @@ class AgentCore:
 
         tools_called = False
         try:
+            # ── P1-②: 情绪调制 LLM 参数 ──
+            emo_params = self._emotion_modulated_params()
+
             result = await self.router.route(
                 "chat",
                 messages,
-                temperature=0.65,
-                max_tokens=800,
+                temperature=emo_params["temperature"],
+                max_tokens=emo_params["max_tokens"],
                 stream=stream,
                 tools=tools,
                 tool_choice="auto" if tools else None,
@@ -522,6 +557,15 @@ class AgentCore:
 
         # ── 6c. 语音兜底：确保每次回复都有实际对话 ──
         reply = self._enforce_speech_rule(reply)
+
+        # ── P1-③: 存储本轮数据供下轮反馈评估 ──
+        strategy = self.context.last_emotion_strategy
+        if strategy and reply and reply != DEGRADED_REPLY:
+            self._last_eval_data = {
+                "user_msg": event.payload,
+                "response": reply[:300],  # 截断避免 prompt 过长
+                "strategy": strategy,
+            }
 
         # ── 7. 情感分析（启动后台任务，稍后等待完成再写日志）──
         emotion_task = self._schedule_emotion_analysis(event.payload)
@@ -1049,9 +1093,12 @@ class AgentCore:
 
             # 回传 LLM（不带 tools，避免二次工具调用）
             try:
+                # ── P1-②: 情绪调制 LLM 参数 ──
+                emo_params_fu = self._emotion_modulated_params()
                 result = await self.router.route(
                     "chat", follow_up,
-                    temperature=0.65, max_tokens=800,
+                    temperature=emo_params_fu["temperature"],
+                    max_tokens=emo_params_fu["max_tokens"],
                 )
             except Exception as e:
                 # LLM 回传失败 → 降级返回已包装的工具结果
@@ -1390,8 +1437,12 @@ class AgentCore:
         避免了快速连发消息时旧分析覆盖新状态的问题。
         """
         try:
+            # ── P1-③: 评价上一轮回应的情绪改善效果 ──
+            await self._evaluate_last_response(user_message)
+
             # ── 阶段 4: PAD 情感引擎 ──
-            pad_profile = await self.emotion_engine.process_message(user_message)
+            last_gap = time.time() - self._last_interaction_time if self._last_interaction_time > 0 else 0.0
+            pad_profile = await self.emotion_engine.process_message(user_message, last_interaction_gap=last_gap)
 
             # 代数检查：如果期间有新消息触发了更新的分析，丢弃旧结果
             if generation < self._emotion_generation:
@@ -1408,6 +1459,18 @@ class AgentCore:
                 # 写入 DB 情感快照
                 if self._db and self._db._conn:
                     appraisal = pad_profile.get("appraisal", {})
+                    # ── P1-①: 捕获本轮检索到的记忆 ID（取第一个有效 ID）──
+                    trigger_id = None
+                    for mem_list in (self.context.memory_retrieval, self.context.character_memory_retrieval):
+                        if mem_list:
+                            for m in mem_list:
+                                mid = m.get("id")
+                                if mid is not None:
+                                    trigger_id = mid
+                                    break
+                        if trigger_id is not None:
+                            break
+
                     await self._db.insert_emotion_snapshot(
                         pad_p=self.emotion_engine.state.pad_p,
                         pad_a=self.emotion_engine.state.pad_a,
@@ -1419,12 +1482,26 @@ class AgentCore:
                         appraisal_facilitation=appraisal.get("facilitation"),
                         appraisal_coping=appraisal.get("coping"),
                         source=appraisal.get("source", "llm"),
+                        trigger_memory_id=trigger_id,  # P1-①
                     )
+
+                # ── P1-②: 跟踪情绪平坦度（供参数调制防锁死）──
+                prev_pad = getattr(self, '_prev_pad_for_flatness', (0.0, 0.0, 0.0))
+                curr_p, curr_a, curr_d = self.emotion_engine.state.pad
+                pad_delta = math.sqrt(
+                    (curr_p - prev_pad[0])**2 + (curr_a - prev_pad[1])**2 + (curr_d - prev_pad[2])**2
+                )
+                if pad_delta < 0.1:
+                    self._emotion_flat_rounds += 1
+                else:
+                    self._emotion_flat_rounds = 0
+                self._prev_pad_for_flatness = (curr_p, curr_a, curr_d)
 
                 logger.debug(
                     "emotion.pad_updated",
-                    pad=f"({self.emotion_engine.state.pad_p:.2f},{self.emotion_engine.state.pad_a:.2f},{self.emotion_engine.state.pad_d:.2f})",
+                    pad=f"({curr_p:.2f},{curr_a:.2f},{curr_d:.2f})",
                     emotion=pad_profile.get("primary_emotion"),
+                    flat_rounds=self._emotion_flat_rounds,
                 )
 
                 # 更新好感度
@@ -1433,6 +1510,144 @@ class AgentCore:
             logger.debug("emotion.analysis_cancelled")
         except Exception as e:
             logger.warning("emotion.analysis_failed", error=str(e))
+
+    # ============================================================
+    # P1-③: 情绪反馈闭环 — 评价提示词
+    # ============================================================
+
+    _EMOTION_EVAL_PROMPT = (
+        "你是昔涟。回顾刚才那一轮对话——人家说了那句话之后，伙伴的心情有没有好一点点？\n"
+        "\n"
+        "返回 JSON（只返回这个）：\n"
+        '{"improved": 0.0-1.0, "reason": "一句话"}\n'
+        "\n"
+        "- improved: 伙伴回应里透出的情绪，比之前好一些了吗？\n"
+        "  0.0-0.3 = 更差了或还是很难过\n"
+        "  0.4-0.6 = 差不多，没有明显变化\n"
+        "  0.7-1.0 = 有在变好，哪怕是轻轻的一点点\n"
+        "- reason: 简短说明（昔涟口吻）\n"
+        "\n"
+        "诚实评价。不用安慰自己。如果人家没帮上忙，就说没帮上。"
+    )
+
+    # ============================================================
+    # P1-②: 情绪→LLM 参数调制（含防锁死）
+    # ============================================================
+
+    def _emotion_modulated_params(self) -> dict:
+        """
+        根据当前 PAD 状态返回 LLM 调用参数调制。
+
+        当前调制维度：temperature（受 arousal 影响）、max_tokens（受 dominance 影响）。
+        top_p / presence_penalty 待 router 支持后启用（Phase 2）。
+
+        防锁死机制：
+          1. 单轮参数变化上限 ±12%（temperature）/ ±50（max_tokens）
+          2. 连续 10 轮 PAD 无显著变化 → 参数逐步回归默认值
+          3. 参数在合理范围内 clamp
+        """
+        state = self.emotion_engine.state
+        p, a, d = state.pad
+
+        # 默认值（temperature 0.65→0.75 微调；max_tokens 基线 600 使调制范围 500-837 ≈ 旧值 800）
+        base_temp, base_tokens = 0.75, 600
+
+        # PAD → 目标偏移
+        # arousal → temperature: 平静=0.65, 兴奋=0.95
+        temp_target = base_temp + a * 0.15
+        # dominance → max_tokens: 低落=100, 掌控=600
+        tokens_target = base_tokens + int(d * 250)
+
+        # 防锁死 1: 单轮变化上限
+        prev = self._last_modulated_params or {
+            "temperature": base_temp, "max_tokens": base_tokens,
+        }
+        temp = prev["temperature"] + max(-0.12, min(0.12, temp_target - prev["temperature"]))
+        tokens = prev["max_tokens"] + max(-50, min(50, tokens_target - prev["max_tokens"]))
+
+        # 防锁死 2: 回归均值力（PAD 连续平坦 > 10 轮 → 逐渐回归默认）
+        if self._emotion_flat_rounds > 10:
+            alpha = min(0.05 * (self._emotion_flat_rounds - 10), 0.5)
+            temp = temp * (1 - alpha) + base_temp * alpha
+            tokens = int(tokens * (1 - alpha) + base_tokens * alpha)
+
+        self._last_modulated_params = {
+            "temperature": max(0.6, min(0.95, temp)),
+            "max_tokens": max(100, min(900, tokens)),
+        }
+        return self._last_modulated_params
+
+    # ── P1-③: 评价上一轮回应效果 ────────────────────────
+
+    async def _evaluate_last_response(self, current_user_msg: str) -> None:
+        """后台评价上一轮回应的情绪改善效果，更新策略有效性追踪。"""
+        if not self._last_eval_data:
+            return
+
+        prev_data = self._last_eval_data
+        self._last_eval_data = None  # 只消费一次
+
+        strategy = prev_data.get("strategy", "")
+        if not strategy:
+            return
+
+        try:
+            messages = [
+                {"role": "system", "content": self._EMOTION_EVAL_PROMPT},
+                {"role": "user", "content": (
+                    f"伙伴说：{prev_data['user_msg']}\n\n"
+                    f"人家回应：{prev_data['response']}\n\n"
+                    f"伙伴现在说：{current_user_msg}"
+                )},
+            ]
+            raw = await self.router.route(
+                "emotion_analysis",  # 走 Flash
+                messages,
+                temperature=0.3,
+                max_tokens=60,
+            )
+            raw_text = raw.content if hasattr(raw, 'content') else str(raw)
+
+            # 解析 JSON
+            import json as _json
+            data = None
+            try:
+                data = _json.loads(raw_text)
+            except _json.JSONDecodeError:
+                # 尝试提取 {...}
+                try:
+                    start = raw_text.index("{")
+                    end = raw_text.rindex("}") + 1
+                    data = _json.loads(raw_text[start:end])
+                except (ValueError, _json.JSONDecodeError):
+                    pass
+
+            if data is None:
+                return
+
+            improved = data.get("improved", 0.5)
+            improved = max(0.0, min(1.0, float(improved)))
+
+            # ── 置信度边界：仅当评价看起来合理时才更新 ──
+            # 简单的启发式：improved 在 0.2-0.8 范围内视为有区分度的评价
+            if 0.15 <= improved <= 0.85:
+                if strategy not in self._strategy_effectiveness:
+                    self._strategy_effectiveness[strategy] = []
+                self._strategy_effectiveness[strategy].append(improved)
+                # 保留最近 50 个样本
+                if len(self._strategy_effectiveness[strategy]) > 50:
+                    self._strategy_effectiveness[strategy] = \
+                        self._strategy_effectiveness[strategy][-50:]
+
+                logger.debug(
+                    "emotion.eval_complete",
+                    strategy=strategy,
+                    improved=round(improved, 2),
+                    samples=len(self._strategy_effectiveness[strategy]),
+                )
+
+        except Exception as e:
+            logger.debug("emotion.eval_failed", error=str(e)[:120])
 
     # ============================================================
     # 好感度系统

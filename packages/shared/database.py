@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS emotion_snapshots (
     appraisal_coping     REAL,
     source          TEXT    DEFAULT 'appraisal',
     session_id      TEXT    NOT NULL,
-    trace_id        TEXT
+    trace_id        TEXT,
+    trigger_memory_id INTEGER  -- P1-①: 关联触发此情绪的记忆条目
 );
 """
 
@@ -420,6 +421,13 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_EPISODIC_MEMORIES)
         await self._conn.execute(_CREATE_MESSAGE_QUEUE)
         await self._conn.execute(_CREATE_EMOTION_SNAPSHOTS)
+        # ── P1-①: 迁移 — 为已有 emotion_snapshots 表补加 trigger_memory_id 列 ──
+        try:
+            await self._conn.execute(
+                "ALTER TABLE emotion_snapshots ADD COLUMN trigger_memory_id INTEGER"
+            )
+        except Exception:
+            pass  # 列已存在（新表已在 CREATE TABLE 中包含）
         await self._conn.execute(_CREATE_AUTOBIOGRAPHY)
         await self._conn.execute(_CREATE_REFLECTION_CRYSTALS)
         await self._conn.execute(_CREATE_AUTONOMY_SETTINGS)
@@ -822,6 +830,7 @@ class DatabaseManager:
         appraisal_coping: float | None = None,
         source: str = "appraisal",
         trace_id: str | None = None,
+        trigger_memory_id: int | None = None,  # P1-①: 关联触发情绪的记忆条目
     ) -> int:
         """写入一条情感快照"""
         if not self._conn:
@@ -834,14 +843,15 @@ class DatabaseManager:
                (timestamp, pad_p, pad_a, pad_d,
                 primary_emotion, primary_intensity, dimensions_json,
                 appraisal_relevance, appraisal_facilitation, appraisal_coping,
-                source, session_id, trace_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                source, session_id, trace_id, trigger_memory_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 time.time(),
                 pad_p, pad_a, pad_d,
                 primary_emotion, primary_intensity, dims_json,
                 appraisal_relevance, appraisal_facilitation, appraisal_coping,
                 source, self._session_id, trace_id,
+                trigger_memory_id,
             ),
         )
         await self._conn.commit()
@@ -888,6 +898,38 @@ class DatabaseManager:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+    # ── P1-①: 按记忆 ID 查询关联情绪 ──────────────────
+
+    async def get_emotions_by_memory_ids(
+        self, memory_ids: list[int],
+    ) -> dict[int, dict]:
+        """批量查询记忆条目关联的情绪快照。返回 {memory_id: {emotion, pad_p, pad_a, pad_d}}。"""
+        if not self._conn or not memory_ids:
+            return {}
+
+        placeholders = ",".join("?" for _ in memory_ids)
+        cursor = await self._conn.execute(
+            f"SELECT trigger_memory_id, primary_emotion, pad_p, pad_a, pad_d, timestamp "
+            f"FROM emotion_snapshots "
+            f"WHERE trigger_memory_id IN ({placeholders}) "
+            f"ORDER BY timestamp DESC",
+            memory_ids,
+        )
+        rows = await cursor.fetchall()
+        result: dict[int, dict] = {}
+        for row in rows:
+            row_d = dict(row)
+            mid = row_d["trigger_memory_id"]
+            # 每个 memory 只取最新一条情绪快照
+            if mid and mid not in result:
+                result[mid] = {
+                    "emotion": row_d["primary_emotion"],
+                    "pad_p": row_d["pad_p"],
+                    "pad_a": row_d["pad_a"],
+                    "pad_d": row_d["pad_d"],
+                }
+        return result
 
     async def get_emotion_stats(self, days: int = 7) -> dict:
         """获取情绪统计摘要"""
