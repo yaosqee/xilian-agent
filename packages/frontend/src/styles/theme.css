@@ -120,3 +120,40 @@ body {
 }
 
 ::placeholder { color: var(--color-text-muted); opacity: 1; }
+
+/* ═════════════════════════════════════════════════════
+   移动端
+   ═════════════════════════════════════════════════════ */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --bottom-nav-height: 56px;
+}
+
+@media (max-width: 767px) {
+  body {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  [data-chat-bubble],
+  textarea,
+  input {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  button, a, [role="button"], select {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  input, textarea, select {
+    font-size: 16px !important; /* 防止 iOS 自动缩放 */
+  }
+
+  ::-webkit-scrollbar { width: 2px; }
+}

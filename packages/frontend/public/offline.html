@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>昔涟 · 离线</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      min-height: 100dvh;
+      background: linear-gradient(135deg, #FFF5F8 0%, #F8F0FB 50%, #F5F0FA 100%);
+      font-family: 'Noto Serif SC', 'Source Han Serif SC', 'STSong', 'Songti SC', serif;
+      color: #5E4B66;
+      padding: 20px;
+      padding-top: env(safe-area-inset-top, 20px);
+      padding-bottom: env(safe-area-inset-bottom, 20px);
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.6);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      border-radius: 20px;
+      padding: 40px 32px;
+      text-align: center;
+      max-width: 340px;
+      box-shadow: 0 10px 30px -5px rgba(180, 140, 220, 0.25),
+                  0 0 60px -10px rgba(255, 183, 197, 0.15);
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0 0 12px;
+      background: linear-gradient(135deg, #D4899E, #B08BC4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    p {
+      font-size: 14px;
+      color: #8B7A93;
+      margin: 0;
+      line-height: 1.9;
+    }
+    .emoji {
+      font-size: 48px;
+      display: block;
+      margin-bottom: 16px;
+      -webkit-text-fill-color: initial;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="emoji">🐾</span>
+    <h1>昔涟 · 离线中</h1>
+    <p>人家暂时连接不到服务器呢……<br/><br/>
+    请确认电脑端的昔涟正在运行，<br/>
+    并且手机和电脑连接在同一个 WiFi 下哦~</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "name": "昔涟 · 心之涟漪",
+  "short_name": "昔涟",
+  "description": "三千万世轮回的记录者，你的情感陪伴AI",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#FFB7C5",
+  "background_color": "#FFF5F8",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

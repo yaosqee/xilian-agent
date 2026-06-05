@@ -112,9 +112,9 @@ xilian-v3/
 │   ├── game-knowledge.md            # 昔涟游戏知识（崩坏3/原神/星铁等）
 │   └── CHANGELOG.md                 # 提示词变更记录
 │
-├── packages/frontend/               # 🎨 前端（阶段 3 正式搭建，阶段 4-6 持续集成）
-│   ├── package.json                 # Vite + React + Zustand + framer-motion
-│   ├── vite.config.ts               # Vite proxy /api → localhost:8000
+├── packages/frontend/               # 🎨 前端（阶段3搭建，阶段4-6集成，V3.5 PWA+移动端 768px响应式）
+│   ├── package.json                 # Vite + React + Zustand + framer-motion + vite-plugin-pwa + qrcode
+│   ├── vite.config.ts               # Vite proxy /api → localhost:8000 + VitePWA Service Worker
 │   ├── dist/                        # Vite build 产物（生产模式 serve 用）
 │   ├── src/
 │   │   ├── main.tsx / App.tsx       # 入口 + 根组件（含引导页检测 /api/config/check）

@@ -1,12 +1,15 @@
 /* FILE: src/components/layout/MainLayout.tsx */
 import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './Sidebar';
+import { MobileBottomNav } from './MobileBottomNav';
+import { ConnectionInfo } from './ConnectionInfo';
 import { ChatView } from '../chat/ChatView';
 import { SlidePanel } from '../panels/SlidePanel';
 import { BackgroundLayer } from './BackgroundLayer';
 import { fetchBackground } from '../../services/api';
 import { useAutonomyStore } from '../../stores/autonomyStore';
 import { useChatStore } from '../../stores/chatStore';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 
 const Atmosphere: React.FC = () => (
   <div className="atmosphere" aria-hidden="true">
@@ -75,17 +78,19 @@ export const MainLayout: React.FC = () => {
     });
   }, [greeting, doAckGreeting, addMessage]);
 
+  const isMobile = useMediaQuery('(max-width: 767px)');
+
   return (
     <div
       style={{
         position: 'relative',
         display: 'flex',
         width: '100vw',
-        height: '100vh',
+        height: '100dvh',
         color: 'var(--color-text)',
         fontFamily: 'var(--font-sans)',
         overflow: 'hidden',
-        background: 'var(--color-bg)', // 兜底色
+        background: 'var(--color-bg)',
       }}
     >
       {/* 背景图层 */}
@@ -94,26 +99,47 @@ export const MainLayout: React.FC = () => {
       {/* 弥散光氛围层 */}
       <Atmosphere />
 
-      {/* 侧栏 */}
-      <Sidebar />
-
-      {/* 主内容区 */}
-      <main
-        style={{
-          position: 'relative',
-          zIndex: 10,
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-          height: '100vh',
-        }}
-      >
-        <ChatView />
-      </main>
-
-      {/* 右侧滑出面板 */}
-      <SlidePanel />
+      {isMobile ? (
+        /* ─── 移动端布局 ─── */
+        <>
+          <main
+            style={{
+              position: 'relative',
+              zIndex: 10,
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              minWidth: 0,
+              height: '100%',
+              paddingBottom: 'var(--bottom-nav-height)',
+            }}
+          >
+            <ConnectionInfo />
+            <ChatView isMobile />
+          </main>
+          <SlidePanel isMobile />
+          <MobileBottomNav />
+        </>
+      ) : (
+        /* ─── 桌面端布局（无改动）─── */
+        <>
+          <Sidebar />
+          <main
+            style={{
+              position: 'relative',
+              zIndex: 10,
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              minWidth: 0,
+              height: '100vh',
+            }}
+          >
+            <ChatView />
+          </main>
+          <SlidePanel />
+        </>
+      )}
     </div>
   );
 };

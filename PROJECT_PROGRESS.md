@@ -1,8 +1,8 @@
 # 昔涟 V3.4 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-06-02
-> 🔖 当前阶段：情感系统深度优化 Phase 1-2（参数调制 + 记忆链接 + 反馈闭环）
+> 📅 最后更新：2026-06-05
+> 🔖 当前阶段：移动端 PWA + 局域网访问（V3.5）
 
 ---
 
@@ -73,6 +73,24 @@
 | 二 | 历史时间标签 | 恢复历史标注「（约X小时前）」，帮助模型感知时间距离 |
 | 三 | ctx_notes 会话边界 | 长时间未对话注入自然时间锚点（"今天第一次和伙伴聊天呢"） |
 | 四 | 主动问候阈值降低 | 3.0 → 1.2，约 3 小时未对话触发主动问候 |
+
+### 移动端 PWA + 局域网访问（V3.5 · 2026-06-05）
+
+| # | 交付物 | 说明 |
+|---|--------|------|
+| 网络层 | CORS 动态化 + `/api/lan-info` | 自动检测局域网 IP，私有网络正则白名单，手机浏览器可直连 |
+| | 启动脚本增强 | `BIND_HOST=0.0.0.0` 时自动显示手机访问 URL + 终端二维码 |
+| PWA | manifest.json + 离线回退页 | `display: standalone`，主题色 #FFB7C5，全屏沉浸 |
+| | VitePWA 插件 + Service Worker | NetworkFirst API 缓存 + CacheFirst 图片缓存，autoUpdate |
+| | PWA 图标 | 192×192 / 512×512，从 xilian.png 裁剪生成 |
+| 移动端布局 | 768px 断点响应式 | 桌面端零改动，移动端底部标签栏 + 全屏面板覆盖 |
+| | MobileBottomNav | 5 标签：对话/情绪/记忆/笔记/设置，玻璃拟态 |
+| | ChatView 适配 | 隐藏头部、气泡 maxWidth 88%、输入字号 16px 防 iOS 缩放 |
+| | SlidePanel 全屏覆盖 | Framer Motion 底部滑入，安全区适配 |
+| | 移动端 CSS | `@media (max-width: 767px)` 触摸优化、最小 44px 触控区 |
+| 连接体验 | ConnectionInfo + 二维码 | 局域网横幅 + 点击弹出二维码模态框（qrcode 库客户端生成） |
+
+**使用方式：** `.env` 设置 `BIND_HOST=0.0.0.0` → `bash scripts/start.sh` → 手机同 WiFi 访问终端显示的局域网 URL → 添加到主屏幕安装为 PWA。
 
 ### 情感系统深度优化（2026-06-02）
 
@@ -416,6 +434,7 @@
 - **2026-05-14**：前缀缓存优化。`_build_messages()` 重构：系统提示只含纯静态人格，记忆/共情注入从 system prompt 移到用户消息末尾。预期效果：DeepSeek prefix caching 命中率大幅提升，响应延迟降低 ~40%，月 token 消耗降低 ~60%。
 - **2026-05-12 深夜**：Qwen3.6-Plus 实测延迟 ~27s 不可接受 → 全量迁移至 DeepSeek。Pro→高质量（chat/empathy/reasoning/安全），Flash→后台（memory_encoding/reflection/dream/approval）。Pro 双 Key 轮询防限流。本地 first 任务 fallback 改走 Flash。
 - **2026-05-12**：阶段2完成。情感分析走 DeepSeek V4-Pro。共情注入为昔涟风格自然语言。SQLite 开启 WAL 模式。EmotionGauge 原型用 Canvas 绘制雷达图。64/64 测试全绿。
+- **2026-06-05**：移动端 PWA + 局域网访问上线。CORS 动态化、VitePWA 插件、768px 响应式布局（底部标签栏 + 全屏面板）、ConnectionInfo 二维码、启动脚本局域网 URL 显示。
 - **2026-05-10**：架构审查完成，LiteLLM → ModelRouter 进程内路由，MCP 降级为可选适配器，AgentVisor 推迟至阶段9
 - **2026-05-10**：人格提示词 v1→v2 精简（3000→~1800字），去 markdown 格式，语言标记更自然
 - **2026-05-10**：阶段1完成，40/40 测试全绿

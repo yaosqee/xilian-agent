@@ -70,9 +70,32 @@ fi
 # ═══════════════════════════════════════════════════
 # 3. 启动
 # ═══════════════════════════════════════════════════
+HTTP_PORT_VAL="${HTTP_PORT:-8000}"
 echo ""
 echo -e "${MAGENTA}🐾 昔涟正在醒来...${NC}"
-echo -e "${CYAN}   → http://localhost:${HTTP_PORT:-8000}${NC}"
+echo -e "${CYAN}   → http://localhost:${HTTP_PORT_VAL}${NC}"
+
+# 局域网访问提示
+BIND_HOST_VAL="${BIND_HOST:-127.0.0.1}"
+if [ "$BIND_HOST_VAL" = "0.0.0.0" ]; then
+    LAN_IP=$(python3 -c "
+import socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(('8.8.8.8', 80))
+    print(s.getsockname()[0])
+    s.close()
+except:
+    pass
+" 2>/dev/null)
+    if [ -n "$LAN_IP" ]; then
+        LAN_URL="http://${LAN_IP}:${HTTP_PORT_VAL}"
+        echo -e "${GREEN}📱 手机访问 → ${LAN_URL}${NC}"
+        if command -v qrencode &>/dev/null; then
+            qrencode -t ANSIUTF8 -m 1 -s 2 "${LAN_URL}" 2>/dev/null || true
+        fi
+    fi
+fi
 echo ""
 
 uv run python main.py

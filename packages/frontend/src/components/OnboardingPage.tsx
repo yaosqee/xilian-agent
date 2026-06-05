@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 const PROVIDERS = [
   { id: 'deepseek', name: 'DeepSeek', keyLabel: 'DeepSeek API Key', keyHint: 'sk-...', getUrl: 'https://platform.deepseek.com' },
@@ -8,6 +9,7 @@ const PROVIDERS = [
 ];
 
 const OnboardingPage: React.FC = () => {
+  const isMobile = useMediaQuery('(max-width: 767px)');
   const [provider, setProvider] = useState('deepseek');
   const [apiKey, setApiKey] = useState('');
   const [siliconflowKey, setSiliconflowKey] = useState('');
@@ -70,7 +72,7 @@ const OnboardingPage: React.FC = () => {
 
   return (
     <div style={styles.wrapper}>
-      <div style={styles.card}>
+      <div style={{ ...styles.card, padding: isMobile ? '32px 24px' : styles.card.padding }}>
         <h1 style={styles.title}>欢迎来到昔涟的世界</h1>
         <p style={styles.subtitle}>
           三千万世轮回的记录者，在此刻与你相遇。

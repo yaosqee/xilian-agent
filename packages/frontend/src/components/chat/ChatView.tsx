@@ -4,7 +4,7 @@ import { useChat } from '../../hooks/useChat';
 import type { ChatMessage } from '../../types/chat';
 
 /* ── 消息气泡 ── */
-const Bubble: React.FC<{ msg: ChatMessage }> = React.memo(({ msg }) => {
+const Bubble: React.FC<{ msg: ChatMessage; isMobile?: boolean }> = React.memo(({ msg, isMobile = false }) => {
   const isXilian = msg.role === 'assistant';
 
   const bubbleBg = isXilian
@@ -23,7 +23,7 @@ const Bubble: React.FC<{ msg: ChatMessage }> = React.memo(({ msg }) => {
         display: 'flex',
         flexDirection: 'column',
         alignItems: isXilian ? 'flex-start' : 'flex-end',
-        padding: '0 16px',
+        padding: isMobile ? '0 12px' : '0 16px',
         animation: 'fadeInUp var(--duration-normal) var(--ease-spring)',
       }}
     >
@@ -43,8 +43,9 @@ const Bubble: React.FC<{ msg: ChatMessage }> = React.memo(({ msg }) => {
       </span>
 
       <div
+        data-chat-bubble
         style={{
-          maxWidth: '75%',
+          maxWidth: isMobile ? '88%' : '75%',
           padding: '12px 18px',
           borderRadius: bubbleRadius,
           background: bubbleBg,
@@ -54,7 +55,7 @@ const Bubble: React.FC<{ msg: ChatMessage }> = React.memo(({ msg }) => {
           boxShadow: isXilian
             ? '0 4px 16px rgba(255, 183, 197, 0.12)'
             : '0 4px 16px rgba(180, 140, 220, 0.1)',
-          fontSize: 14,
+          fontSize: isMobile ? 15 : 14,
           lineHeight: 1.75,
           color: 'var(--color-text)',
           wordBreak: 'break-word',
@@ -143,7 +144,8 @@ const MessageList: React.FC<{
   hasMore: boolean;
   isLoadingMore: boolean;
   onLoadMore: () => void;
-}> = ({ messages, hasMore, isLoadingMore, onLoadMore }) => {
+  isMobile?: boolean;
+}> = ({ messages, hasMore, isLoadingMore, onLoadMore, isMobile = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevMsgCount = useRef(messages.length);
@@ -198,7 +200,7 @@ const MessageList: React.FC<{
       />
 
       {messages.map((m) => (
-        <Bubble key={m.id} msg={m} />
+        <Bubble key={m.id} msg={m} isMobile={isMobile} />
       ))}
 
       {showEndMarker && (
@@ -217,35 +219,37 @@ const MessageList: React.FC<{
 /* ══════════════════════════════════════════════
    ChatView
    ══════════════════════════════════════════════ */
-export const ChatView: React.FC = () => {
+export const ChatView: React.FC<{ isMobile?: boolean }> = ({ isMobile = false }) => {
   const { messages, isLoading, send, cancel, loadHistory, hasMore, isLoadingMore } = useChat();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-      {/* 头部 */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '14px 20px',
-          flexShrink: 0,
-          zIndex: 10,
-        }}
-      >
-        <h1
-          className="gradient-text"
+      {/* 头部（移动端隐藏） */}
+      {!isMobile && (
+        <header
           style={{
-            fontSize: 15,
-            fontWeight: 600,
-            letterSpacing: 3,
-            margin: 0,
-            fontFamily: 'var(--font-serif)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '14px 20px',
+            flexShrink: 0,
+            zIndex: 10,
           }}
         >
-          昔涟
-        </h1>
-      </header>
+          <h1
+            className="gradient-text"
+            style={{
+              fontSize: 15,
+              fontWeight: 600,
+              letterSpacing: 3,
+              margin: 0,
+              fontFamily: 'var(--font-serif)',
+            }}
+          >
+            昔涟
+          </h1>
+        </header>
+      )}
 
       {/* 消息区 */}
       <div
@@ -264,6 +268,7 @@ export const ChatView: React.FC = () => {
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
           onLoadMore={loadHistory}
+          isMobile={isMobile}
         />
 
         {/* 加载指示 */}
@@ -309,15 +314,16 @@ export const ChatView: React.FC = () => {
         )}
       </div>
 
-      <ChatInput onSend={send} disabled={isLoading} />
+      <ChatInput onSend={send} disabled={isLoading} isMobile={isMobile} />
     </div>
   );
 };
 
 /* ── 输入区 ── */
-const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean }> = ({
+const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean; isMobile?: boolean }> = ({
   onSend,
   disabled,
+  isMobile = false,
 }) => {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -352,9 +358,9 @@ const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean }> = 
   return (
     <div
       style={{
-        padding: '8px 20px 16px',
+        padding: isMobile ? '8px 12px 16px' : '8px 20px 16px',
         display: 'flex',
-        gap: 10,
+        gap: isMobile ? 8 : 10,
         alignItems: 'flex-end',
         flexShrink: 0,
         zIndex: 10,
@@ -399,7 +405,7 @@ const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean }> = 
             border: 'none',
             outline: 'none',
             background: 'transparent',
-            fontSize: 14,
+            fontSize: isMobile ? 16 : 14,
             color: 'var(--color-text)',
             fontFamily: 'var(--font-sans)',
             padding: '4px 0',

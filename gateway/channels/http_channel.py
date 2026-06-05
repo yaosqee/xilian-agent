@@ -60,9 +60,49 @@ class HTTPChannel(Channel):
     # ── 中间件 ──
 
     def _setup_middleware(self):
+        import re
+        import socket
+
+        # 基础来源：开发模式
+        origins = [
+            f"http://localhost:{self.port}",
+            "http://localhost:5173",
+            "http://localhost:3000",
+        ]
+
+        # 从环境变量解析额外来源
+        extra = os.getenv("CORS_ORIGINS", "")
+        if extra:
+            origins.extend(o.strip() for o in extra.split(",") if o.strip())
+
+        # 如果绑定 0.0.0.0，自动添加检测到的局域网 IP
+        lan_ip = None
+        if self.host == "0.0.0.0":
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                lan_ip = s.getsockname()[0]
+                s.close()
+                origins.append(f"http://{lan_ip}:{self.port}")
+                origins.append(f"http://{lan_ip}:5173")  # 开发模式
+            except Exception:
+                pass
+
+        # 同时允许私有网络来源（应对多网卡 / Docker 虚拟网卡等场景）
+        # 匹配 192.168.x.x, 10.x.x.x, 172.16-31.x.x，可选端口
+        private_net_regex = (
+            r"^https?://("
+            r"(localhost|127\.0\.0\.1)(:\d+)?"
+            r"|(192\.168\.\d+\.\d+)(:\d+)?"
+            r"|(10\.\d+\.\d+\.\d+)(:\d+)?"
+            r"|(172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?"
+            r")$"
+        )
+
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://localhost:5173", "http://localhost:3000"],
+            allow_origins=origins,
+            allow_origin_regex=private_net_regex,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
@@ -77,6 +117,29 @@ class HTTPChannel(Channel):
         @self.app.get("/api/health")
         async def health():
             return {"status": "ok", "service": "xilian-v3"}
+
+        @self.app.get("/api/lan-info")
+        async def lan_info():
+            """返回局域网连接信息，供手机扫描二维码"""
+            import socket
+
+            result = {
+                "host": self.host,
+                "port": self.port,
+                "lan_url": None,
+                "lan_ip": None,
+            }
+            if self.host == "0.0.0.0":
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    lan_ip = s.getsockname()[0]
+                    s.close()
+                    result["lan_ip"] = lan_ip
+                    result["lan_url"] = f"http://{lan_ip}:{self.port}"
+                except Exception:
+                    pass
+            return result
 
         @self.app.post("/api/chat")
         async def chat(request: Request):
