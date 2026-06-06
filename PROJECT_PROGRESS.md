@@ -1,8 +1,8 @@
 # 昔涟 V3.4 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 📅 最后更新：2026-06-05
-> 🔖 当前阶段：移动端 PWA + 局域网访问（V3.5）
+> 📅 最后更新：2026-06-06
+> 🔖 当前阶段：表情包 + 多模态识图（V3.6）
 
 ---
 
@@ -368,9 +368,31 @@
 | 十七 | 昔涟角色历史融入系统 | 三层混合架构：(1) personality_v4.md→v4.1 新增「你的来处」小节(身份锚点+叙事约束)；(2) 25条角色情景记忆(昔涟第一人称)导入episodic_memories + bge-m3向量化，session_id='character'，seed脚本幂等；(3) MemoryModule双源渲染(用户记忆"翻到书里几页"/角色记忆"翻到旧书的一页→落点伙伴")；(4) agent_core 33关键词主动检索分流→character_memory_retrieval。端到端测试4场景全通过(触发3/不触发1)。 |
 | — | Git commits: 6237a81, ... | — |
 
+### 表情包 + 多模态识图（V3.6 · 2026-06-06）
+
+| # | 交付物 | 说明 |
+|---|--------|------|
+| 基础 | InternalEvent 扩展 | +`images` +`sticker` 字段，向后兼容 |
+| | MarkerParser +sticker 标记 | `[sticker:blush]` 解析，前端渲染图片 |
+| | ChatMessage 扩展 | +`StickerData` +`sticker` +`images` 可选字段 |
+| | AgentResponse 数据类 | `{reply, sticker}` 替代纯字符串返回 |
+| 多模态 | MiMoAdapter | 小米 MiMo-V2.5 适配器（api.xiaomimimo.com），api-key 鉴权，仅用于图片描述 |
+| | 识图能力（策略C） | Gemini 原生 vision → MiMo 描述兜底 → 优雅降级 |
+| | 图片上传 API | POST /api/upload + 本地存储 base64 转换 + 30天自动清理 |
+| | 人格提示词「识图能力」声明 | §十 明确昔涟拥有识图能力，图片描述是客观事实非内部感知 |
+| 表情包 | 25张预设表情包目录 | 12类（greeting/joy/shy/moody/thinking/comfort/affection/surprise/determined/anticipation/farewell） |
+| | catalog.json | 元数据：id/分类/情绪标签/描述/冷却/强度阈值 |
+| | LLM 主导 + 情绪兜底 | `[sticker:id]` 标记 + EmotionEngine 阈值触发 + 冷却控制 |
+| | SSE 多事件协议 | `event: sticker` / `event: token` / `event: done` |
+| 前端 | 图片上传按钮 + 粘贴 | ChatInput 🖼 按钮 + Ctrl+V 粘贴 + 缩略图预览 |
+| | StickerPanel 用户表情面板 | 分类网格 + API 加载 + 点击发送 |
+| | Bubble sticker/images 渲染 | 入场动画 stickerEnter + onError 容错 |
+| ⚠️ | **表情包素材待填充** | 当前为 25 张**纯色占位 PNG**，后续替换 `data/stickers/*/` 下的 webp 文件即可，文件名和目录结构不变 |
+
 ## 下一步
 
 和风天气 API Key 需在控制台激活（当前使用 Zhipu 搜索 fallback，功能正常）。
+**表情包素材**需要找到合适图片后替换 `data/stickers/` 下的占位文件。
 不进入阶段 9（多模态是远期探索，当前交付版已足够展示）。
 
 ## 打磨期最新交付（2026-06-01）

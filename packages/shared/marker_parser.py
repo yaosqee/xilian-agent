@@ -4,12 +4,13 @@ MarkerParser — LLM 输出标记解析器
 阶段 7c 核心交付。从 LLM 流式输出中分离 literal（用户可见文本）
 和 special（系统级标记）。支持跨 chunk 边界的标记解析。
 
-标记语法（5 种）：
+标记语法（6 种）：
   [emotion:joy:0.8]  → 情感状态切换 → EmotionEngine
   [action:thinking]  → 动作/表情触发 → 前端动画
   [pause:1.5]        → TTS 停顿（阶段 9 转 SSML）
   [emph:重要]        → TTS 重读（阶段 9 转 SSML）
   [whisper:悄悄话]   → TTS 低语（阶段 9 转 SSML）
+  [sticker:blush]    → 表情包触发 → 前端渲染图片
 
 SSML 接口 markers_to_ssml() 已定义（空实现），为语音管道预留。
 """
@@ -29,6 +30,7 @@ _MARKER_RE = re.compile(
     r'|pause:[0-9.]+'               # [pause:1.5]
     r'|emph:[^\]]+'                 # [emph:重要]
     r'|whisper:[^\]]+'              # [whisper:悄悄话]
+    r'|sticker:[a-z_]+'             # [sticker:blush]
     r')\]'
 )
 
@@ -42,7 +44,7 @@ class ParsedToken:
     """解析后的 token"""
     kind: str                    # "literal" | "special"
     text: str                    # 文本内容（literal）或原始标记（special）
-    marker_type: str = ""       # 仅 special: emotion/action/pause/emph/whisper
+    marker_type: str = ""       # 仅 special: emotion/action/pause/emph/whisper/sticker
     payload: dict = field(default_factory=dict)  # 标记参数
 
 
@@ -164,6 +166,11 @@ class MarkerParser:
             return ParsedToken(
                 kind="special", text=raw, marker_type="whisper",
                 payload={"text": inner[8:]},
+            )
+        elif inner.startswith("sticker:"):
+            return ParsedToken(
+                kind="special", text=raw, marker_type="sticker",
+                payload={"sticker_id": inner[8:]},
             )
         # 无法识别的 [xxx] 当作 literal
         return ParsedToken(kind="literal", text=raw)

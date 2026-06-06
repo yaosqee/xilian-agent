@@ -1,20 +1,22 @@
 const BASE = '/api';
 
-export async function postChat(message: string): Promise<string> {
+export async function postChat(message: string, images?: string[]): Promise<{ reply: string; sticker?: { id: string; file: string } | null }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, user_id: 'hezi' }),
+    body: JSON.stringify({ message, images: images || [], user_id: 'hezi' }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   if (data.error) throw new Error(data.error);
-  return data.reply;
+  return data;
 }
 
 export function postChatStream(
   message: string,
+  images: string[],
   onToken: (token: string) => void,
+  onSticker: (sticker: { id: string; file: string }) => void,
   onDone: () => void,
   onError: (err: Error) => void,
 ): AbortController {
@@ -22,7 +24,7 @@ export function postChatStream(
   fetch(`${BASE}/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, user_id: 'hezi' }),
+    body: JSON.stringify({ message, images: images || [], user_id: 'hezi' }),
     signal: controller.signal,
   })
     .then(async (res) => {
@@ -31,6 +33,7 @@ export function postChatStream(
       if (!reader) { onDone(); return; }
       const decoder = new TextDecoder();
       let buffer = '';
+      let currentEvent = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -39,11 +42,24 @@ export function postChatStream(
         const lines = buffer.split('\n');
         buffer = lines.pop() || ''; // keep incomplete line
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
             const data = line.slice(6);
-            if (data === '[DONE]') { onDone(); return; }
-            // Unescape newlines from SSE transport
-            onToken(data.replace(/\\n/g, '\n'));
+            if (currentEvent === 'done' || data === '[DONE]') {
+              onDone();
+              return;
+            }
+            if (currentEvent === 'sticker') {
+              try {
+                const sticker = JSON.parse(data);
+                onSticker(sticker);
+              } catch { /* ignore malformed sticker data */ }
+            } else {
+              // default: token (backward compat with old format)
+              onToken(data.replace(/\\n/g, '\n'));
+            }
+            currentEvent = '';
           }
         }
       }
@@ -189,6 +205,26 @@ export async function updateAutonomySettings(patch: Record<string, any>): Promis
 export async function fetchBackground(): Promise<{ filename: string; url: string }> {
   const res = await fetch(`${BASE}/background/current`);
   if (!res.ok) return { filename: 'xilian.png', url: '/photo/xilian.png' };
+  return res.json();
+}
+
+/** 上传聊天图片 */
+export async function uploadImage(file: File): Promise<{ id: string; url: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+/** 获取可用表情包列表 */
+export async function fetchStickers(): Promise<{ stickers: Array<{ id: string; category: string; emotion_tags: string[]; description: string; file: string }>; version: number }> {
+  const res = await fetch(`${BASE}/stickers`);
   return res.json();
 }
 

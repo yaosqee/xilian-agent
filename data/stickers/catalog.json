@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "stickers": [
+    {"id": "wave", "category": "greeting", "emotion_tags": ["期待", "喜悦"], "description": "昔涟挥手打招呼「伙伴来啦~」", "file": "greeting/wave.webp", "cooldown_rounds": 3, "min_intensity": 0.3},
+    {"id": "waiting", "category": "greeting", "emotion_tags": ["期待", "孤独"], "description": "昔涟托腮等待「伙伴怎么还不来…」", "file": "greeting/waiting.webp", "cooldown_rounds": 3, "min_intensity": 0.3},
+
+    {"id": "smile", "category": "joy", "emotion_tags": ["喜悦", "感激"], "description": "昔涟温柔微笑", "file": "joy/smile.webp", "cooldown_rounds": 3, "min_intensity": 0.5},
+    {"id": "giggle", "category": "joy", "emotion_tags": ["喜悦", "好奇"], "description": "昔涟捂嘴轻笑「嘻…」", "file": "joy/giggle.webp", "cooldown_rounds": 3, "min_intensity": 0.6},
+    {"id": "sparkle", "category": "joy", "emotion_tags": ["喜悦", "期待", "好奇"], "description": "昔涟眼睛发亮「真的吗！」", "file": "joy/sparkle.webp", "cooldown_rounds": 4, "min_intensity": 0.7},
+
+    {"id": "blush", "category": "shy", "emotion_tags": ["喜悦", "感激"], "description": "昔涟脸颊微红，害羞地低头", "file": "shy/blush.webp", "cooldown_rounds": 3, "min_intensity": 0.4},
+    {"id": "peek", "category": "shy", "emotion_tags": ["好奇", "喜悦"], "description": "昔涟从门后偷偷探出头", "file": "shy/peek.webp", "cooldown_rounds": 4, "min_intensity": 0.5},
+    {"id": "shy_smile", "category": "shy", "emotion_tags": ["喜悦", "期待"], "description": "昔涟低头浅笑", "file": "shy/shy_smile.webp", "cooldown_rounds": 3, "min_intensity": 0.4},
+
+    {"id": "pout", "category": "moody", "emotion_tags": ["悲伤", "焦虑"], "description": "昔涟撇嘴委屈「人家不是这个意思…」", "file": "moody/pout.webp", "cooldown_rounds": 5, "min_intensity": 0.5},
+    {"id": "sulk", "category": "moody", "emotion_tags": ["愤怒", "悲伤"], "description": "昔涟转身生闷气「哼」", "file": "moody/sulk.webp", "cooldown_rounds": 6, "min_intensity": 0.6},
+    {"id": "coy", "category": "moody", "emotion_tags": ["期待", "喜悦", "感激"], "description": "昔涟扯袖子撒娇「好不好嘛…」", "file": "moody/coy.webp", "cooldown_rounds": 5, "min_intensity": 0.5},
+    {"id": "smug", "category": "moody", "emotion_tags": ["喜悦", "平静"], "description": "昔涟得意仰头「人家早就知道了♪」", "file": "moody/smug.webp", "cooldown_rounds": 4, "min_intensity": 0.5},
+    {"id": "sigh", "category": "moody", "emotion_tags": ["悲伤", "疲惫", "孤独"], "description": "昔涟小失落「这样啊…」肩膀微垂", "file": "moody/sigh.webp", "cooldown_rounds": 5, "min_intensity": 0.4},
+
+    {"id": "ponder", "category": "thinking", "emotion_tags": ["好奇", "平静"], "description": "昔涟歪头思考中", "file": "thinking/ponder.webp", "cooldown_rounds": 4, "min_intensity": 0.3},
+    {"id": "book", "category": "thinking", "emotion_tags": ["平静", "好奇"], "description": "昔涟低头翻书", "file": "thinking/book.webp", "cooldown_rounds": 4, "min_intensity": 0.3},
+
+    {"id": "pat", "category": "comfort", "emotion_tags": ["悲伤", "焦虑", "疲惫"], "description": "昔涟轻轻拍头安慰", "file": "comfort/pat.webp", "cooldown_rounds": 4, "min_intensity": 0.4},
+    {"id": "tea", "category": "comfort", "emotion_tags": ["平静", "疲惫", "悲伤"], "description": "昔涟递茶陪伴", "file": "comfort/tea.webp", "cooldown_rounds": 4, "min_intensity": 0.3},
+    {"id": "beside", "category": "comfort", "emotion_tags": ["悲伤", "孤独", "焦虑"], "description": "昔涟并肩坐着「人家在呢」", "file": "comfort/beside.webp", "cooldown_rounds": 4, "min_intensity": 0.4},
+
+    {"id": "heart", "category": "affection", "emotion_tags": ["喜悦", "感激", "爱"], "description": "昔涟双手比心", "file": "affection/heart.webp", "cooldown_rounds": 6, "min_intensity": 0.7},
+    {"id": "close", "category": "affection", "emotion_tags": ["感激", "喜悦", "爱"], "description": "昔涟贴近依靠", "file": "affection/close.webp", "cooldown_rounds": 6, "min_intensity": 0.8},
+
+    {"id": "oh", "category": "surprise", "emotion_tags": ["好奇", "恐惧", "期待"], "description": "昔涟微微睁大眼睛", "file": "surprise/oh.webp", "cooldown_rounds": 4, "min_intensity": 0.5},
+
+    {"id": "firm", "category": "determined", "emotion_tags": ["愤怒", "平静", "期待"], "description": "昔涟握拳胸前「这次听人家的」", "file": "determined/firm.webp", "cooldown_rounds": 5, "min_intensity": 0.6},
+
+    {"id": "expect", "category": "anticipation", "emotion_tags": ["期待", "喜悦", "好奇"], "description": "昔涟身体前倾，眼中有光", "file": "anticipation/expect.webp", "cooldown_rounds": 4, "min_intensity": 0.5},
+
+    {"id": "bye", "category": "farewell", "emotion_tags": ["悲伤", "期待", "感激"], "description": "昔涟轻轻挥手「要早点回来哦」", "file": "farewell/bye.webp", "cooldown_rounds": 3, "min_intensity": 0.3},
+    {"id": "night", "category": "farewell", "emotion_tags": ["平静", "疲惫", "感激"], "description": "昔涟晚安关灯", "file": "farewell/night.webp", "cooldown_rounds": 3, "min_intensity": 0.3}
+  ]
+}

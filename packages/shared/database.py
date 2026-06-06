@@ -294,6 +294,21 @@ CREATE TABLE IF NOT EXISTS embed_config (
 );
 """
 
+_CREATE_UPLOADED_IMAGES = """
+CREATE TABLE IF NOT EXISTS uploaded_images (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    original_name   TEXT DEFAULT '',
+    stored_path     TEXT NOT NULL,
+    mime_type       TEXT DEFAULT '',
+    size_bytes      INTEGER DEFAULT 0,
+    width           INTEGER DEFAULT 0,
+    height          INTEGER DEFAULT 0,
+    created_at      REAL NOT NULL,
+    conversation_id INTEGER DEFAULT NULL
+);
+"""
+
 _CREATE_INDEXES_SQL = [
     # conversation_logs
     "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON conversation_logs(timestamp);",
@@ -380,6 +395,7 @@ class DatabaseManager:
             await self._conn.execute(_CREATE_CORE_PROFILE)
             await self._conn.execute(_CREATE_PHASE_PROFILE)
             await self._conn.execute(_CREATE_TOOL_USAGE_LOG)
+            await self._conn.execute(_CREATE_UPLOADED_IMAGES)
             for idx_sql in _CREATE_INDEXES_SQL:
                 if "user_portrait" in idx_sql or "portrait_version" in idx_sql:
                     await self._conn.execute(idx_sql)
@@ -451,6 +467,7 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_CRON_RUNS)
         await self._conn.execute(_CREATE_MODEL_CONFIGS)
         await self._conn.execute(_CREATE_EMBED_CONFIG)
+        await self._conn.execute(_CREATE_UPLOADED_IMAGES)
         for idx_sql in _CREATE_INDEXES_SQL:
             await self._conn.execute(idx_sql)
         await self._conn.commit()
@@ -2273,6 +2290,60 @@ class DatabaseManager:
             values,
         )
         await self._conn.commit()
+
+    # ============================================================
+    # uploaded_images CRUD
+    # ============================================================
+
+    async def insert_image(
+        self,
+        image_id: str,
+        user_id: str,
+        original_name: str,
+        stored_path: str,
+        mime_type: str = "",
+        size_bytes: int = 0,
+        width: int = 0,
+        height: int = 0,
+        conversation_id: int | None = None,
+    ) -> None:
+        """记录上传的图片。"""
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO uploaded_images
+               (id, user_id, original_name, stored_path, mime_type,
+                size_bytes, width, height, created_at, conversation_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (image_id, user_id, original_name, stored_path, mime_type,
+             size_bytes, width, height, time.time(), conversation_id),
+        )
+        await self._conn.commit()
+
+    async def delete_expired_images(self, days: int = 30) -> int:
+        """删除超过 N 天的图片记录。返回删除数量。"""
+        cutoff = time.time() - days * 86400
+        cursor = await self._conn.execute(
+            "SELECT stored_path FROM uploaded_images WHERE created_at < ?",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        count = len(rows)
+        if count > 0:
+            # 删除文件
+            data_dir = self.db_path.parent
+            for row in rows:
+                fp = data_dir / "uploads" / row["stored_path"]
+                try:
+                    if fp.exists():
+                        fp.unlink()
+                except OSError:
+                    pass
+            # 删除数据库记录
+            await self._conn.execute(
+                "DELETE FROM uploaded_images WHERE created_at < ?",
+                (cutoff,),
+            )
+            await self._conn.commit()
+        return count
 
     # ============================================================
 

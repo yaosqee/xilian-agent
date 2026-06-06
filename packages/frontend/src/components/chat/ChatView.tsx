@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useChat } from '../../hooks/useChat';
 import type { ChatMessage } from '../../types/chat';
+import { StickerPanel } from './StickerPanel';
 
 /* ── 消息气泡 ── */
 const Bubble: React.FC<{ msg: ChatMessage; isMobile?: boolean }> = React.memo(({ msg, isMobile = false }) => {
@@ -63,7 +64,49 @@ const Bubble: React.FC<{ msg: ChatMessage; isMobile?: boolean }> = React.memo(({
           letterSpacing: '0.01em',
         }}
       >
-        {msg.content || (
+        {/* 用户图片 */}
+        {msg.images && msg.images.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            {msg.images.map((url, i) => (
+              <img
+                key={i}
+                src={url}
+                alt="发送的图片"
+                style={{
+                  maxWidth: 200,
+                  maxHeight: 200,
+                  borderRadius: 12,
+                  border: '1px solid rgba(216, 180, 226, 0.3)',
+                  objectFit: 'cover',
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {/* 表情包（用户或昔涟） */}
+        {msg.sticker && (
+          <div style={{
+            marginBottom: msg.content ? 8 : 0,
+            animation: 'stickerEnter 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+          }}>
+            <img
+              src={`/api/stickers/${msg.sticker.file}`}
+              alt={msg.sticker.id}
+              style={{
+                maxWidth: 120,
+                maxHeight: 120,
+                borderRadius: 8,
+              }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          </div>
+        )}
+        {/* 文字 */}
+        {msg.content ? (
+          msg.content
+        ) : msg.sticker ? null : (
           <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
             昔涟在思考...
           </span>
@@ -220,7 +263,7 @@ const MessageList: React.FC<{
    ChatView
    ══════════════════════════════════════════════ */
 export const ChatView: React.FC<{ isMobile?: boolean }> = ({ isMobile = false }) => {
-  const { messages, isLoading, send, cancel, loadHistory, hasMore, isLoadingMore } = useChat();
+  const { messages, isLoading, send, sendSticker, cancel, loadHistory, hasMore, isLoadingMore } = useChat();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
@@ -314,19 +357,29 @@ export const ChatView: React.FC<{ isMobile?: boolean }> = ({ isMobile = false })
         )}
       </div>
 
-      <ChatInput onSend={send} disabled={isLoading} isMobile={isMobile} />
+      <ChatInput onSend={send} onSendSticker={sendSticker} disabled={isLoading} isMobile={isMobile} />
     </div>
   );
 };
 
 /* ── 输入区 ── */
-const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean; isMobile?: boolean }> = ({
+const ChatInput: React.FC<{
+  onSend: (t: string, images?: string[]) => void;
+  onSendSticker?: (sticker: { id: string; file: string }) => void;
+  disabled: boolean;
+  isMobile?: boolean;
+}> = ({
   onSend,
+  onSendSticker,
   disabled,
   isMobile = false,
 }) => {
   const [text, setText] = useState('');
+  const [showStickers, setShowStickers] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!disabled) textareaRef.current?.focus();
@@ -341,10 +394,13 @@ const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean; isMo
 
   const send = useCallback(() => {
     const t = text.trim();
-    if (!t || disabled) return;
-    onSend(t);
+    if (!t && !imageUrl) return;
+    if (disabled) return;
+    const imgs = imageUrl ? [imageUrl] : undefined;
+    onSend(t || '看看这张图', imgs);
     setText('');
-  }, [text, disabled, onSend]);
+    setImageUrl(null);
+  }, [text, disabled, onSend, imageUrl]);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -353,101 +409,252 @@ const ChatInput: React.FC<{ onSend: (t: string) => void; disabled: boolean; isMo
     }
   };
 
-  const canSend = !!text.trim() && !disabled;
+  const handleStickerSelect = useCallback((sticker: { id: string; file: string }) => {
+    setShowStickers(false);
+    onSendSticker?.(sticker);
+  }, [onSendSticker]);
+
+  // ── 图片上传 ──
+  const handleImageSelect = useCallback(async (file: File) => {
+    setUploading(true);
+    try {
+      const { uploadImage } = await import('../../services/api');
+      const result = await uploadImage(file);
+      setImageUrl(result.url);
+    } catch (err) {
+      console.error('Image upload failed:', err);
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleImageSelect(file);
+    // reset so same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [handleImageSelect]);
+
+  // 粘贴图片
+  const onPaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (file) handleImageSelect(file);
+        break;
+      }
+    }
+  }, [handleImageSelect]);
+
+  const canSend = (!!text.trim() || !!imageUrl) && !disabled;
 
   return (
-    <div
-      style={{
-        padding: isMobile ? '8px 12px 16px' : '8px 20px 16px',
-        display: 'flex',
-        gap: isMobile ? 8 : 10,
-        alignItems: 'flex-end',
-        flexShrink: 0,
-        zIndex: 10,
-      }}
-    >
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'flex-end',
-          borderRadius: 'var(--radius-btn)',
-          padding: '8px 12px 8px 16px',
-          background: 'rgba(255, 255, 255, 0.35)',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          border: '1px solid rgba(255, 255, 255, 0.5)',
-          boxShadow: '0 4px 20px rgba(180, 140, 220, 0.12)',
-          transition: `box-shadow var(--duration-normal) var(--ease-spring), border-color var(--duration-normal) var(--ease-spring)`,
-        }}
-        onFocus={(e) => {
-          const target = e.currentTarget;
-          target.style.boxShadow = '0 4px 24px rgba(255, 183, 197, 0.22)';
-          target.style.borderColor = 'rgba(255, 183, 197, 0.6)';
-        }}
-        onBlur={(e) => {
-          const target = e.currentTarget;
-          target.style.boxShadow = '0 4px 20px rgba(180, 140, 220, 0.12)';
-          target.style.borderColor = 'rgba(255, 255, 255, 0.5)';
-        }}
-        tabIndex={-1}
-      >
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
-          disabled={disabled}
-          placeholder={disabled ? '昔涟正在整理记忆...' : '说点什么...'}
-          rows={1}
-          style={{
-            flex: 1,
-            border: 'none',
-            outline: 'none',
-            background: 'transparent',
-            fontSize: isMobile ? 16 : 14,
-            color: 'var(--color-text)',
-            fontFamily: 'var(--font-sans)',
-            padding: '4px 0',
-            resize: 'none',
-            lineHeight: 1.6,
-            minHeight: 28,
-            maxHeight: 160,
-          }}
+    <div style={{ position: 'relative', flexShrink: 0, zIndex: 10 }}>
+      {/* 表情包面板 */}
+      {showStickers && (
+        <StickerPanel
+          onSelect={handleStickerSelect}
+          onClose={() => setShowStickers(false)}
         />
-      </div>
+      )}
 
-      <button
-        onClick={send}
-        disabled={!canSend}
-        aria-label="发送"
-        style={{
-          width: 44,
-          height: 44,
-          minWidth: 44,
-          borderRadius: 'var(--radius-btn)',
-          border: 'none',
-          background: canSend
-            ? 'linear-gradient(135deg, var(--color-pink), var(--color-purple))'
-            : 'rgba(200, 160, 190, 0.18)',
-          color: canSend ? '#fff' : 'var(--color-text-muted)',
-          fontSize: 16,
-          cursor: canSend ? 'pointer' : 'default',
+      {/* 图片预览 */}
+      {imageUrl && (
+        <div style={{
+          padding: '0 20px 4px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          transition: `all var(--duration-normal) var(--ease-spring)`,
-          boxShadow: canSend ? '0 4px 16px rgba(255, 183, 197, 0.35)' : 'none',
-          flexShrink: 0,
+          gap: 8,
+        }}>
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <img
+              src={imageUrl}
+              alt="预览"
+              style={{
+                maxWidth: 100, maxHeight: 80,
+                borderRadius: 10,
+                border: '1px solid rgba(216, 180, 226, 0.4)',
+                objectFit: 'cover',
+              }}
+            />
+            <button
+              onClick={() => setImageUrl(null)}
+              aria-label="移除图片"
+              style={{
+                position: 'absolute',
+                top: -6, right: -6,
+                width: 18, height: 18,
+                borderRadius: '50%',
+                border: '1px solid rgba(200,160,190,0.3)',
+                background: 'rgba(255,255,255,0.9)',
+                fontSize: 11,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--color-text-dim)',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div
+        style={{
+          padding: isMobile ? '8px 12px 16px' : '8px 20px 16px',
+          display: 'flex',
+          gap: isMobile ? 8 : 10,
+          alignItems: 'flex-end',
         }}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-          strokeLinejoin="round">
-          <line x1="12" y1="19" x2="12" y2="5" />
-          <polyline points="5 12 12 5 19 12" />
-        </svg>
-      </button>
+        {/* 表情包按钮 */}
+        {onSendSticker && (
+          <button
+            onClick={() => setShowStickers(!showStickers)}
+            disabled={disabled}
+            aria-label="表情包"
+            style={{
+              width: 44, height: 44, minWidth: 44,
+              borderRadius: 'var(--radius-btn)',
+              border: '1px solid rgba(200, 160, 190, 0.2)',
+              background: 'rgba(255, 255, 255, 0.35)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              fontSize: 20,
+              cursor: disabled ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: disabled ? 0.4 : 1,
+              transition: `all var(--duration-normal) var(--ease-spring)`,
+              flexShrink: 0,
+            }}
+          >
+            😊
+          </button>
+        )}
+
+        {/* 图片上传按钮 */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || uploading}
+          aria-label="上传图片"
+          style={{
+            width: 44, height: 44, minWidth: 44,
+            borderRadius: 'var(--radius-btn)',
+            border: '1px solid rgba(200, 160, 190, 0.2)',
+            background: 'rgba(255, 255, 255, 0.35)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            fontSize: 18,
+            cursor: disabled ? 'default' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: disabled ? 0.4 : uploading ? 0.6 : 1,
+            transition: `all var(--duration-normal) var(--ease-spring)`,
+            flexShrink: 0,
+          }}
+        >
+          {uploading ? '⏳' : '🖼'}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={onFileChange}
+        />
+
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'flex-end',
+            borderRadius: 'var(--radius-btn)',
+            padding: '8px 12px 8px 16px',
+            background: 'rgba(255, 255, 255, 0.35)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255, 255, 255, 0.5)',
+            boxShadow: '0 4px 20px rgba(180, 140, 220, 0.12)',
+            transition: `box-shadow var(--duration-normal) var(--ease-spring), border-color var(--duration-normal) var(--ease-spring)`,
+          }}
+          onFocus={(e) => {
+            const target = e.currentTarget;
+            target.style.boxShadow = '0 4px 24px rgba(255, 183, 197, 0.22)';
+            target.style.borderColor = 'rgba(255, 183, 197, 0.6)';
+          }}
+          onBlur={(e) => {
+            const target = e.currentTarget;
+            target.style.boxShadow = '0 4px 20px rgba(180, 140, 220, 0.12)';
+            target.style.borderColor = 'rgba(255, 255, 255, 0.5)';
+          }}
+          tabIndex={-1}
+        >
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKey}
+            onPaste={onPaste}
+            disabled={disabled}
+            placeholder={disabled ? '昔涟正在整理记忆...' : uploading ? '上传中...' : '说点什么...'}
+            rows={1}
+            style={{
+              flex: 1,
+              border: 'none',
+              outline: 'none',
+              background: 'transparent',
+              fontSize: isMobile ? 16 : 14,
+              color: 'var(--color-text)',
+              fontFamily: 'var(--font-sans)',
+              padding: '4px 0',
+              resize: 'none',
+              lineHeight: 1.6,
+              minHeight: 28,
+              maxHeight: 160,
+            }}
+          />
+        </div>
+
+        <button
+          onClick={send}
+          disabled={!canSend}
+          aria-label="发送"
+          style={{
+            width: 44,
+            height: 44,
+            minWidth: 44,
+            borderRadius: 'var(--radius-btn)',
+            border: 'none',
+            background: canSend
+              ? 'linear-gradient(135deg, var(--color-pink), var(--color-purple))'
+              : 'rgba(200, 160, 190, 0.18)',
+            color: canSend ? '#fff' : 'var(--color-text-muted)',
+            fontSize: 16,
+            cursor: canSend ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: `all var(--duration-normal) var(--ease-spring)`,
+            boxShadow: canSend ? '0 4px 16px rgba(255, 183, 197, 0.35)' : 'none',
+            flexShrink: 0,
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+            strokeLinejoin="round">
+            <line x1="12" y1="19" x2="12" y2="5" />
+            <polyline points="5 12 12 5 19 12" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 };

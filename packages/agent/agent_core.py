@@ -14,6 +14,7 @@ import math
 import re
 import time
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from loguru import logger
 
@@ -99,9 +100,16 @@ def _tc_function_arguments(tc) -> str:
     return getattr(fn, "arguments", "{}") if fn else "{}"
 
 
+@dataclass
+class AgentResponse:
+    """AgentCore.process() 的返回结构。"""
+    reply: str
+    sticker: dict | None = None  # {id, file} 或 None
+
+
 class AgentCore:
     """
-    昔涟的核心引擎，接收 InternalEvent，返回文本回复。
+    昔涟的核心引擎，接收 InternalEvent，返回 AgentResponse。
 
     ── 优化路线图 (2026-06 audit) ──
     Phase 1 (当前): P1-② 情绪→LLM参数调制 (line ~494, ~1052)
@@ -399,6 +407,18 @@ class AgentCore:
         except Exception as e:
             logger.warning(f"agent.context_restore_failed: {type(e).__name__} — {e}")
 
+        # Phase 2: 30 天图片清理任务（每 24h 执行一次）
+        async def _cleanup_loop():
+            while True:
+                await asyncio.sleep(86400)  # 24h
+                try:
+                    count = await self._db.delete_expired_images(days=30)
+                    if count > 0:
+                        logger.info("cleanup.expired_images", count=count)
+                except Exception as e:
+                    logger.warning("cleanup.failed", error=str(e))
+        self._cleanup_task = asyncio.create_task(_cleanup_loop())
+
         logger.info("agent.startup_complete")
 
     async def shutdown(self) -> str:
@@ -408,6 +428,10 @@ class AgentCore:
         Returns:
             "done" / "empty" / "failed"
         """
+        # 取消清理任务
+        if hasattr(self, '_cleanup_task') and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+
         # 取消 pending 的情感分析
         if self._pending_analysis and not self._pending_analysis.done():
             self._pending_analysis.cancel()
@@ -449,7 +473,7 @@ class AgentCore:
         self,
         event: InternalEvent,
         stream: bool = False,
-    ) -> str:
+    ) -> AgentResponse:
         """
         处理一条用户消息，返回昔涟的回复。
 
@@ -462,6 +486,15 @@ class AgentCore:
         # ── 0. 输入清洗：修复 WSL/终端传入的 lone surrogate 字符 ──
         event.payload = _sanitize_surrogates(event.payload)
 
+        # ── 0b. 用户表情包消息转换 ──
+        # 检查 payload 是否仅为 sticker 标记
+        sticker_only = re.match(r'^\[sticker:([a-z_]+)\]$', event.payload.strip())
+        if sticker_only:
+            sticker_id = sticker_only.group(1)
+            event.payload = f"伙伴发了一个表情：{sticker_id}"
+            # 在 ctx_notes 层面提示（后续通过 emotion 系统感知）
+            self._user_sent_sticker = True
+
         trace_log.info(
             "agent.process.start",
             source=event.source,
@@ -472,7 +505,7 @@ class AgentCore:
         # ── 1. 安全 ──
         if not event.is_owner:
             trace_log.warning("agent.process.blocked")
-            return ""
+            return AgentResponse(reply="")
 
         # ── 1. 感知 ──
         intent = self._perceive(event.payload)
@@ -491,12 +524,31 @@ class AgentCore:
                     self._process_tool_side_effects(tool_results, event.payload)
                 self.context.add_message("user", event.payload)
                 self.context.add_message("assistant", reply)
-                return reply
+                return AgentResponse(reply=reply)
+
+        # ── 1c. 多模态：图片预处理 ──
+        image_description = ""
+        self._current_images = list(event.images) if event.images else []
+        if self._current_images:
+            provider, model = self.router.get_current_model_info()
+            if self.router.supports_vision(provider, model):
+                trace_log.info("agent.multimodal.native", provider=provider, model=model)
+            else:
+                # 视觉兜底：用 MiMo 描述图片
+                trace_log.info("agent.multimodal.fallback", provider=provider)
+                image_url = self._current_images[0]  # 单图
+                image_description = await self._describe_image(image_url)
+                if image_description:
+                    trace_log.debug("agent.image_described", preview=image_description[:80])
 
         # ── 2. 记忆检索 ──
         if self.memory_manager:
             self.memory_manager.signal_new_message()
-        self.context.memory_retrieval = await self._retrieve_memories(event.payload)
+        # 如果图片描述存在，将其附加到用户消息中以便记忆检索
+        search_query = event.payload
+        if image_description:
+            search_query = f"{event.payload}\n{image_description}"
+        self.context.memory_retrieval = await self._retrieve_memories(search_query)
 
         # ── P1-①: 为检索到的记忆查询关联情绪 ──
         if self._db and self._db._conn:
@@ -515,6 +567,41 @@ class AgentCore:
 
         # ── 3. 构建消息（情感+记忆由 ContextBuilder EmotionModule/MemoryModule 注入）──
         messages = await self._build_messages(event.payload)
+        # 注入可用 sticker 列表（供 LLM 选择使用）
+        available = self._get_available_sticker_ids()
+        if available:
+            sticker_hint = "可用表情包：" + "、".join(
+                f"[sticker:{s['id']}]({s['desc']})" for s in available
+            )
+            sticker_hint += "。在对话中自然使用 [sticker:id] 标记发送表情包，不能替代文字。"
+            # 在 user 消息前插入
+            insert_at = len(messages) - 1
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i]["role"] == "system":
+                    insert_at = i + 1
+                    break
+            messages.insert(insert_at, {"role": "system", "content": sticker_hint})
+        # 多模态：注入图片到消息中（vision 模型原生支持）
+        if image_description:
+            # 兜底路径：在 user 消息前注入图片描述
+            ctx_note = f"[识图结果] 伙伴发来的图片画面：{image_description}"
+            # 找到最后一条 system 消息的位置并在其后插入
+            insert_idx = len(messages) - 1  # 默认在 user 消息之前
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i]["role"] == "system":
+                    insert_idx = i + 1
+                    break
+            messages.insert(insert_idx, {"role": "system", "content": ctx_note})
+            trace_log.debug("multimodal.injected", idx=insert_idx, total=len(messages), desc_preview=image_description[:80])
+        elif self._current_images:
+            # 原生 vision 路径（仅当模型确实支持 vision 时才转换）
+            provider, model = self.router.get_current_model_info()
+            if self.router.supports_vision(provider, model):
+                self._convert_to_multimodal(messages, self._current_images, provider)
+            else:
+                # MiMo fallback 也失败了 → 优雅降级
+                messages.insert(-1, {"role": "system", "content": "（伙伴发来了一张图片，但人家暂时看不太清楚呢……）"})
+                trace_log.warning("agent.multimodal.degraded", provider=provider)
 
         # ── 4. 模型调用（打磨期：LLM 驱动工具选择）──
         tools = None
@@ -554,6 +641,22 @@ class AgentCore:
 
         # ── 6b. 阶段 7c: 标记后处理 ──
         reply, _markers = self._extract_markers(reply)
+        # 提取 sticker 标记（从 markers 中收集，传递给前端）
+        sticker = None
+        for m in _markers:
+            if m.marker_type == "sticker":
+                sticker_id = m.payload.get("sticker_id", "")
+                if sticker_id:
+                    sticker = self._resolve_sticker(sticker_id)
+                    if sticker:
+                        self._sticker_cooldown = 3  # LLM 主动发的也设冷却
+                    break  # 只取第一个 sticker
+
+        # 兜底：LLM 没发 sticker 时，情绪引擎触发
+        if not sticker and self._should_auto_sticker():
+            sticker = self._pick_sticker_by_emotion()
+            if sticker:
+                trace_log.debug("sticker.auto_triggered", sticker=sticker["id"])
 
         # ── 6c. 语音兜底：确保每次回复都有实际对话 ──
         reply = self._enforce_speech_rule(reply)
@@ -637,7 +740,10 @@ class AgentCore:
         if self._round_count % 5 == 0:
             asyncio.create_task(self._score_personality_consistency())
 
-        return reply
+        # 表情包冷却递减
+        self._tick_sticker_cooldown()
+
+        return AgentResponse(reply=reply, sticker=sticker)
 
     # ============================================================
     # ActorMind 各阶段
@@ -1243,6 +1349,168 @@ class AgentCore:
             cleaned = "……♪"  # 纯标记时给个最小回复
 
         return cleaned, markers
+
+    def _resolve_sticker(self, sticker_id: str) -> dict | None:
+        """
+        根据 sticker_id 查找表情包元信息。
+        从 data/stickers/catalog.json 加载完整元数据。
+        """
+        catalog = self._get_sticker_catalog()
+        if catalog:
+            for s in catalog.get("stickers", []):
+                if s["id"] == sticker_id:
+                    return {"id": s["id"], "file": s["file"]}
+        return {"id": sticker_id, "file": ""}
+
+    def _get_sticker_catalog(self) -> dict | None:
+        """加载或返回缓存的 sticker catalog。"""
+        if not hasattr(self, '_sticker_catalog_cache'):
+            catalog_path = Path(__file__).resolve().parent.parent.parent / "data" / "stickers" / "catalog.json"
+            try:
+                import json
+                self._sticker_catalog_cache = json.loads(catalog_path.read_text())
+            except Exception:
+                self._sticker_catalog_cache = None
+        return self._sticker_catalog_cache
+
+    def _get_available_sticker_ids(self) -> list[dict]:
+        """返回可用 sticker 的 id + description 列表（供 ctx_notes 注入）。"""
+        catalog = self._get_sticker_catalog()
+        if not catalog:
+            return []
+        return [{"id": s["id"], "desc": s["description"]} for s in catalog.get("stickers", [])]
+
+    # ── 表情包兜底（规则驱动）───────────────────────────────
+
+    _sticker_cooldown: int = 0
+
+    def _should_auto_sticker(self) -> bool:
+        """检查是否应该自动发送表情包（兜底）。"""
+        import random
+        if self._sticker_cooldown > 0:
+            return False
+        if not hasattr(self, 'emotion_engine') or self.emotion_engine is None:
+            return False
+        state = self.emotion_engine.state
+        intensity = max(abs(state.pad[1]), abs(state.pad[2]))
+        if intensity < 0.65:
+            return False
+        profile = state.compute_profile()
+        if profile.get("primary_emotion") in ("悲伤", "愤怒", "恐惧"):
+            return False
+        return random.random() < 0.6
+
+    def _pick_sticker_by_emotion(self) -> dict | None:
+        """根据当前情绪从 catalog 中选择表情包（加权随机）。"""
+        import random
+        if not hasattr(self, 'emotion_engine') or self.emotion_engine is None:
+            return None
+        catalog = self._get_sticker_catalog()
+        if not catalog:
+            return None
+
+        state = self.emotion_engine.state
+        profile = state.compute_profile()
+        primary = profile.get("primary_emotion", "")
+
+        candidates = []
+        for s in catalog.get("stickers", []):
+            if primary in s.get("emotion_tags", []):
+                score = s.get("min_intensity", 0.5)
+                candidates.append((s, score))
+
+        if not candidates:
+            return None
+
+        total = sum(c[1] for c in candidates)
+        r = random.random() * total
+        acc = 0
+        for s, score in candidates:
+            acc += score
+            if r <= acc:
+                self._sticker_cooldown = s.get("cooldown_rounds", 3)
+                return {"id": s["id"], "file": s["file"]}
+
+        return None
+
+    def _tick_sticker_cooldown(self):
+        """每轮递减 sticker 冷却计数。"""
+        if self._sticker_cooldown > 0:
+            self._sticker_cooldown -= 1
+
+    def _convert_to_multimodal(self, messages: list[dict], images: list[str], provider: str):
+        """将最后一条 user 消息的 content 从 str 转为 multimodal content array。
+
+        本地相对路径自动转为 base64 data URL（远程 API 无法访问本地文件）。
+        """
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["role"] == "user":
+                text = messages[i]["content"]
+                parts = [{"type": "text", "text": text}]
+                for img_url in images:
+                    resolved = self._resolve_image_url(img_url)
+                    parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": resolved},
+                    })
+                messages[i]["content"] = parts
+                break
+
+    def _resolve_image_url(self, url: str) -> str:
+        """将本地相对路径转为 base64 data URL，远程 URL 原样返回。"""
+        if url.startswith("/api/uploads/"):
+            try:
+                import base64
+                rel_path = url[len("/api/uploads/"):]
+                local_path = Path("data/uploads") / rel_path
+                if local_path.exists():
+                    image_data = local_path.read_bytes()
+                    ext = local_path.suffix.lower()
+                    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                                ".webp": "image/webp", ".gif": "image/gif"}
+                    mime = mime_map.get(ext, "image/webp")
+                    b64 = base64.b64encode(image_data).decode("ascii")
+                    logger.debug("image.to_base64", url=url[:50], path=str(local_path), size=len(image_data))
+                    return f"data:{mime};base64,{b64}"
+                else:
+                    logger.warning("image.file_not_found", path=str(local_path))
+            except Exception as e:
+                logger.warning("image.base64_failed", error=str(e))
+        return url
+
+    # ── 多模态：图片描述 ──────────────────────────────────────
+
+    async def _describe_image(self, image_url: str) -> str:
+        """
+        使用 MiMo-V2.5 描述图片内容（视觉兜底）。
+
+        Phase 2: 当主模型不支持 vision 时调用。
+        缓存：同一 URL 在单次会话中只调用一次。
+        本地相对路径自动转为 base64 data URL。
+        """
+        if not hasattr(self, '_image_desc_cache'):
+            self._image_desc_cache: dict[str, str] = {}
+
+        if image_url in self._image_desc_cache:
+            return self._image_desc_cache[image_url]
+
+        resolved_url = self._resolve_image_url(image_url)
+
+        try:
+            adapter = self.router._create_adapter("mimo")
+            if adapter is None:
+                logger.warning("agent.describe_image.no_adapter")
+                return ""
+
+            description = await adapter.describe_image(resolved_url)
+            if description:
+                self._image_desc_cache[image_url] = description
+                logger.debug("agent.describe_image.ok", preview=description[:80])
+                return description
+        except Exception as e:
+            logger.warning("agent.describe_image.failed", error=str(e))
+
+        return ""
 
     def _enforce_speech_rule(self, text: str) -> str:
         """

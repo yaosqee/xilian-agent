@@ -51,11 +51,12 @@ class HTTPChannel(Channel):
         self.app = FastAPI(title="昔涟 V3.2 API", version="0.1.0")
         self._setup_middleware()
         self._setup_routes()
-        # 注册 Notebook + 审计/技能 + 背景图片路由（提前到 __init__，确保 FastAPI 路由生效）
+        # 注册 Notebook + 审计/技能 + 背景图片 + 多模态路由（提前到 __init__，确保 FastAPI 路由生效）
         self._register_background_routes()
         self._register_notebook_routes()
         self._register_stage8_routes()
         self._register_model_routes()
+        self._register_multimodal_routes()
 
     # ── 中间件 ──
 
@@ -147,15 +148,16 @@ class HTTPChannel(Channel):
             body = await request.json()
             user_msg = body.get("message", "")
             user_id = body.get("user_id", "anonymous")
-            stream = body.get("stream", False)
+            images = body.get("images", []) or []
 
-            if not user_msg.strip():
+            if not user_msg.strip() and not images:
                 return {"error": "empty message"}
 
             event = InternalEvent(
                 source="http",
                 user_id=user_id,
                 payload=user_msg,
+                images=images,
                 is_owner=(user_id == self.security.owner_id),
             )
 
@@ -170,8 +172,8 @@ class HTTPChannel(Channel):
             if self._nudge_engine:
                 self._nudge_engine.poke()
 
-            reply = await self._handler(filtered)
-            return {"reply": reply}
+            response = await self._handler(filtered)
+            return {"reply": response.reply, "sticker": response.sticker}
 
         @self.app.post("/api/chat/stream")
         async def chat_stream(request: Request):
@@ -179,14 +181,16 @@ class HTTPChannel(Channel):
             body = await request.json()
             user_msg = body.get("message", "")
             user_id = body.get("user_id", "anonymous")
+            images = body.get("images", []) or []
 
-            if not user_msg.strip():
+            if not user_msg.strip() and not images:
                 return {"error": "empty message"}
 
             event = InternalEvent(
                 source="http",
                 user_id=user_id,
                 payload=user_msg,
+                images=images,
                 is_owner=(user_id == self.security.owner_id),
             )
 
@@ -202,21 +206,29 @@ class HTTPChannel(Channel):
                 self._nudge_engine.poke()
 
             async def sse_generator():
+                import json as _json
                 try:
-                    reply = await self._handler(filtered)
-                    # 逐块流式推送（模拟打字效果，3字符/块，50ms间隔）
+                    response = await self._handler(filtered)
+                    reply = response.reply
+                    sticker = response.sticker
+
+                    # 先发送 sticker 事件（如果有）
+                    if sticker:
+                        yield f"event: sticker\ndata: {_json.dumps(sticker, ensure_ascii=False)}\n\n"
+
+                    # 逐块流式推送 token（模拟打字效果，3字符/块，50ms间隔）
                     chunk_size = 3
                     for i in range(0, len(reply), chunk_size):
                         chunk = reply[i:i+chunk_size]
                         # SSE 格式需要转义换行符
                         safe = chunk.replace("\n", "\\n")
-                        yield f"data: {safe}\n\n"
+                        yield f"event: token\ndata: {safe}\n\n"
                         await asyncio.sleep(0.05)
-                    yield "data: [DONE]\n\n"
+                    yield "event: done\ndata: [DONE]\n\n"
                 except Exception as e:
                     logger.error("sse.error", error=str(e))
-                    yield f"data: 人家走神了呢……伙伴再试一次好不好？\n\n"
-                    yield "data: [DONE]\n\n"
+                    yield "event: token\ndata: 人家走神了呢……伙伴再试一次好不好？\n\n"
+                    yield "event: done\ndata: [DONE]\n\n"
 
             return StreamingResponse(
                 sse_generator(),
@@ -816,6 +828,99 @@ class HTTPChannel(Channel):
                 return {"error": "请输入确认短语「我确认删除所有记忆」"}
             result = await agent._db.forget_user_data()
             return {"status": "ok", **result}
+
+    # ── 多模态 + 表情包 API ──
+
+    def _register_multimodal_routes(self):
+        """注册图片上传 + 表情包 API 端点。"""
+        import uuid as _uuid
+        import json as _json
+        from pathlib import Path as _Path
+        from fastapi import UploadFile, File
+        from fastapi.responses import FileResponse
+
+        # 上传目录
+        uploads_dir = _Path(__file__).resolve().parent.parent.parent / "data" / "uploads"
+        stickers_dir = _Path(__file__).resolve().parent.parent.parent / "data" / "stickers"
+
+        @self.app.post("/api/upload")
+        async def upload_image(file: UploadFile = File(...)):
+            """上传图片（供聊天多模态使用）"""
+            if not file.content_type or not file.content_type.startswith("image/"):
+                return {"error": "仅支持图片文件"}
+            contents = await file.read()
+            max_size = 10 * 1024 * 1024  # 10MB
+            if len(contents) > max_size:
+                return {"error": "图片大小不能超过 10MB"}
+
+            ext = _Path(file.filename).suffix if file.filename else ".png"
+            if ext.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                ext = ".webp"
+
+            from datetime import datetime
+            month_dir = datetime.now().strftime("%Y-%m")
+            dest = uploads_dir / month_dir
+            dest.mkdir(parents=True, exist_ok=True)
+
+            img_id = _uuid.uuid4().hex[:12]
+            filename = f"{img_id}{ext}"
+            save_path = dest / filename
+            save_path.write_bytes(contents)
+
+            stored_path = f"{month_dir}/{filename}"
+            url = f"/api/uploads/{stored_path}"
+
+            # 写入数据库
+            if self._agent and self._agent._db:
+                try:
+                    await self._agent._db.insert_image(
+                        image_id=img_id,
+                        user_id="hezi",
+                        original_name=file.filename or "",
+                        stored_path=stored_path,
+                        mime_type=file.content_type or "",
+                        size_bytes=len(contents),
+                    )
+                except Exception:
+                    pass  # DB 非关键路径
+
+            logger.info("upload.image_ok", id=img_id, name=file.filename, size=len(contents))
+            return {"id": img_id, "url": url}
+
+        @self.app.get("/api/stickers")
+        async def get_stickers():
+            """返回可用表情包列表"""
+            catalog_path = stickers_dir / "catalog.json"
+            if catalog_path.exists():
+                try:
+                    return _json.loads(catalog_path.read_text())
+                except Exception:
+                    pass
+            return {"stickers": [], "version": 0}
+
+        # 静态文件路由：上传的图片和表情包
+        @self.app.get("/api/uploads/{file_path:path}")
+        async def serve_upload(file_path: str):
+            fp = uploads_dir / file_path
+            # 安全检查：确保路径在 uploads_dir 内
+            try:
+                fp.resolve().relative_to(uploads_dir.resolve())
+            except ValueError:
+                return {"error": "invalid path"}
+            if fp.exists():
+                return FileResponse(str(fp))
+            return {"error": "not found"}
+
+        @self.app.get("/api/stickers/{file_path:path}")
+        async def serve_sticker(file_path: str):
+            fp = stickers_dir / file_path
+            try:
+                fp.resolve().relative_to(stickers_dir.resolve())
+            except ValueError:
+                return {"error": "invalid path"}
+            if fp.exists():
+                return FileResponse(str(fp))
+            return {"error": "not found"}
 
     # ── 启动/停止 ──
 

@@ -76,9 +76,11 @@ export function useChat() {
     }).catch(() => { /* 静默失败，不影响正常使用 */ });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const send = useCallback((text: string, stream: boolean = true) => {
+  const send = useCallback((text: string, images?: string[], stream: boolean = true) => {
     const userMsg: ChatMessage = {
-      id: nextId(), role: 'user', content: text, timestamp: Date.now(),
+      id: nextId(), role: 'user', content: text,
+      images: images && images.length > 0 ? images : undefined,
+      timestamp: Date.now(),
     };
     addMessage(userMsg);
     setLoading(true);
@@ -88,6 +90,7 @@ export function useChat() {
       let partial = '';
       const controller = postChatStream(
         text,
+        images || [],
         (token) => {
           partial += token;
           const existing = useChatStore.getState().messages;
@@ -98,6 +101,16 @@ export function useChat() {
             useChatStore.setState({ messages: updated });
           } else {
             addMessage({ id: nextId(), role: 'assistant', content: partial, timestamp: Date.now() });
+          }
+        },
+        (sticker) => {
+          // 收到 sticker 事件 → 更新当前 assistant 消息
+          const existing = useChatStore.getState().messages;
+          const lastIdx = existing.length - 1;
+          if (lastIdx >= 0 && existing[lastIdx].role === 'assistant') {
+            const updated = [...existing];
+            updated[lastIdx] = { ...updated[lastIdx], sticker };
+            useChatStore.setState({ messages: updated });
           }
         },
         () => {
@@ -111,9 +124,13 @@ export function useChat() {
       abortRef.current = controller;
       addMessage({ id: nextId(), role: 'assistant', content: '', timestamp: Date.now() });
     } else {
-      postChat(text)
-        .then((reply) => {
-          addMessage({ id: nextId(), role: 'assistant', content: reply, timestamp: Date.now() });
+      postChat(text, images)
+        .then((data) => {
+          addMessage({
+            id: nextId(), role: 'assistant',
+            content: data.reply, sticker: data.sticker || undefined,
+            timestamp: Date.now(),
+          });
           setLoading(false);
         })
         .catch((err) => {
@@ -128,5 +145,50 @@ export function useChat() {
     setLoading(false);
   }, [setLoading]);
 
-  return { messages, isLoading, error, send, cancel, loadHistory, hasMore, isLoadingMore };
+  const sendSticker = useCallback((sticker: { id: string; file: string }) => {
+    // 只添加用户消息到 UI，不通过 send（避免重复）
+    const userMsg: ChatMessage = {
+      id: nextId(),
+      role: 'user',
+      content: '',
+      sticker,
+      timestamp: Date.now(),
+    };
+    addMessage(userMsg);
+    setLoading(true);
+    setError(null);
+
+    let partial = '';
+    const controller = postChatStream(
+      `[sticker:${sticker.id}]`,
+      [],
+      (token) => {
+        partial += token;
+        const existing = useChatStore.getState().messages;
+        const lastIdx = existing.length - 1;
+        if (lastIdx >= 0 && existing[lastIdx].role === 'assistant') {
+          const updated = [...existing];
+          updated[lastIdx] = { ...updated[lastIdx], content: partial };
+          useChatStore.setState({ messages: updated });
+        } else {
+          addMessage({ id: nextId(), role: 'assistant', content: partial, timestamp: Date.now() });
+        }
+      },
+      (stk) => {
+        const existing = useChatStore.getState().messages;
+        const lastIdx = existing.length - 1;
+        if (lastIdx >= 0 && existing[lastIdx].role === 'assistant') {
+          const updated = [...existing];
+          updated[lastIdx] = { ...updated[lastIdx], sticker: stk };
+          useChatStore.setState({ messages: updated });
+        }
+      },
+      () => { setLoading(false); },
+      (err) => { setError(err.message); setLoading(false); },
+    );
+    abortRef.current = controller;
+    addMessage({ id: nextId(), role: 'assistant', content: '', timestamp: Date.now() });
+  }, [addMessage, setLoading, setError]);
+
+  return { messages, isLoading, error, send, sendSticker, cancel, loadHistory, hasMore, isLoadingMore };
 }

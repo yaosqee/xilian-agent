@@ -219,6 +219,7 @@ PROVIDER_REGISTRY: dict[str, tuple[str, str, bool]] = {
     "openai":    ("packages.shared.providers.openai_adapter",  "OpenAIAdapter",     True),
     "anthropic": ("packages.shared.providers.anthropic",       "AnthropicAdapter",  True),
     "google":    ("packages.shared.providers.google_adapter",   "GoogleAdapter",     False),
+    "mimo":      ("packages.shared.providers.mimo_adapter",     "MiMoAdapter",       True),
 }
 
 

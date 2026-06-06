@@ -494,6 +494,35 @@ class ModelRouter:
         return self._tools_support_cache.get(model_key, True)
 
     # ══════════════════════════════════════════════════════════
+    # Multimodal support
+    # ══════════════════════════════════════════════════════════
+
+    def supports_vision(self, provider: str, model: str) -> bool:
+        """检查指定模型是否支持视觉输入（image）。"""
+        adapter = self._adapters.get(provider)
+        if adapter is None:
+            return False
+        try:
+            models = adapter.get_available_models()
+            for m in models:
+                if m.id == model or m.name == model:
+                    return "image" in m.input_modalities
+        except Exception:
+            pass
+        return False
+
+    def get_current_model_info(self) -> tuple[str, str]:
+        """返回当前对话使用的 (provider, model_name)。"""
+        tier = self._tier_configs.get("powerful")
+        if tier:
+            return tier.provider, tier.model_name
+        # Fallback
+        if self._adapters:
+            provider = next(iter(self._adapters.keys()))
+            return provider, DEFAULT_TIER_MODELS.get(provider, {}).get("powerful", "")
+        return "deepseek", "deepseek-v4-pro"
+
+    # ══════════════════════════════════════════════════════════
     # Manual override (for testing / debugging)
     # ══════════════════════════════════════════════════════════
 
