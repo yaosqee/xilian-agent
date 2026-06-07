@@ -28,6 +28,7 @@ export function useChat() {
             id: `hist-${item.id}-u`,
             role: 'user',
             content: item.user_message,
+            images: item.images?.length ? item.images : undefined,
             timestamp: item.timestamp * 1000,
           });
         }

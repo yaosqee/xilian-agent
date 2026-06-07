@@ -7,7 +7,6 @@ ToolExecutor — 工具执行调度器
 import asyncio
 import json
 import time
-from typing import Optional
 from loguru import logger
 
 from .tool_registry import ToolRegistry, ToolPermission
@@ -41,7 +40,7 @@ class ToolExecutor:
         """
         执行一个工具调用。
 
-        流程: validate → permission → rate_limit → confirm → execute → audit_log
+        流程: validate → permission → rate_limit → confirm → execute → record_call → audit_log
         """
         # 1. validate
         tool = self.registry.get_tool(tool_name)
@@ -77,6 +76,9 @@ class ToolExecutor:
             notebook_manager=self.notebook,
         )
         result = await self._execute_with_timeout(tool, arguments, ctx)
+
+        # 5b. 记录调用时间戳（频率限制统计）
+        self._record_call(tool_name)
 
         # 6. Phase 4: 记录工具调用日志（fire-and-forget，不阻塞）──
         try:
@@ -161,11 +163,16 @@ class ToolExecutor:
         except Exception as e:
             logger.warning("tool_executor.audit_log_failed", error=str(e))
 
-    async def _record_call(self, tool_name: str):
-        """记录一次成功调用（频率统计）。"""
+    def _record_call(self, tool_name: str):
+        """记录一次调用时间戳（频率统计，含过期清理）。"""
         now = time.time()
+        window = 3600  # 与 _check_rate_limit 保持一致
         if tool_name not in self._call_counts:
             self._call_counts[tool_name] = []
+        # 追加 + 清理过期记录，避免列表无限增长
+        self._call_counts[tool_name] = [
+            t for t in self._call_counts[tool_name] if now - t < window
+        ]
         self._call_counts[tool_name].append(now)
 
     # ── LLM 格式 ────────────────────────────────────────

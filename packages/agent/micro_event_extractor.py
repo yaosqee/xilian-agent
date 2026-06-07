@@ -8,9 +8,7 @@ Phase 1 核心交付。每条消息后用 Flash LLM 提取关于伙伴的新信�
 粗粒化时由 LLM 推演当前状态。
 """
 import json
-import time
 from dataclasses import dataclass
-from typing import Optional
 
 from loguru import logger
 

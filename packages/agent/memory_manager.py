@@ -563,9 +563,14 @@ class MemoryManager:
                             embed_tasks.append(self._embed_text(summary))
 
                     if embed_tasks:
-                        results = await asyncio.gather(
-                            *embed_tasks, return_exceptions=True,
-                        )
+                        try:
+                            results = await asyncio.wait_for(
+                                asyncio.gather(*embed_tasks, return_exceptions=True),
+                                timeout=10.0,  # 最多等 10 秒，超时则跳过加权
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning("memory.persona_boost_timeout", count=len(embed_tasks))
+                            results = []  # 空列表 → 跳过加权循环
 
                         # 同步应用 boost/penalty（纯数学运算，零延迟）
                         for j, idx in enumerate(valid_indices):

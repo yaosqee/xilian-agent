@@ -67,6 +67,10 @@ class ProviderAdapter(Protocol):
     async def embed(self, model: str, texts: list[str]) -> list[list[float]] | None:
         ...
 
+    async def describe_image(self, image_url: str) -> str:
+        """描述图片内容（可选——仅视觉模型如 MiMo 需要实现）。"""
+        ...
+
     @staticmethod
     def get_available_models() -> list[ModelInfo]:
         ...

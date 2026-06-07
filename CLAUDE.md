@@ -1,6 +1,6 @@
-# 昔涟 V3.4
+# 昔涟 V3.7
 
-> 个人情感陪伴型 AI Agent。核心角色：三千万世轮回的记录者，自称「人家」称用户「伙伴」。9/10 阶段完成，打磨期。多供应商模型路由 + 对话质量持续优化。
+> 个人情感陪伴型 AI Agent。核心角色：三千万世轮回的记录者，自称「人家」称用户「伙伴」。9/10 阶段完成，打磨期。多供应商模型路由 + 代码审查修复 + 架构优化（database 拆分 / agent_core 提取）。
 
 ## 启动
 
@@ -23,7 +23,8 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/shared/providers/` — 多供应商适配器（DeepSeek/OpenAI/Anthropic/Google）+ ProviderAdapter Protocol + PROVIDER_REGISTRY
 - `packages/shared/events.py` — InternalEvent 统一消息结构
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点
-- `packages/shared/database.py` — SQLite 13 表 CRUD + 游标分页查询
+- `packages/shared/database/` — DatabaseManager 拆分为 6 个领域 Repository（V3.7）
+- `packages/shared/database/_manager.py` — DatabaseManager 主类（生命周期 + 跨表操作）
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器
 - `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值 + TokenBucket + GreetingBanner）
 - `packages/agent/context_builder.py` — 模块化上下文注入（7模块: Datetime精密1-2h/Portrait/Emotion阈值门控/Memory/Notebook/Affection/NotebookTask + 会话边界感知 + 历史时间标签）

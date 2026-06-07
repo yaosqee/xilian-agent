@@ -16,7 +16,7 @@ import time as _time_module
 
 from loguru import logger
 
-from .base import ModelInfo, ProviderAdapter
+from .base import ModelInfo
 from . import ProviderResponse
 
 # ── Available models ─────────────────────────────────────────
@@ -261,9 +261,9 @@ class AnthropicAdapter:
         blocks = []
         # Include reasoning/thinking as a text preamble
         # (Anthropic expects thinking blocks; text block preserves context minimally)
-        # TODO: when enabling Anthropic extended thinking (thinking param in chat()),
-        #       use {"type": "thinking", "thinking": "..."} blocks instead of text,
-        #       and ensure _parse_response extracts thinking blocks correctly for relay.
+        # NOTE: reasoning_content 当前以 text block 形式保留。启用 Anthropic extended
+        #       thinking 时需改用 {"type": "thinking", "thinking": "..."} 块，并同步
+        #       更新 _parse_response 的 thinking block 提取逻辑。
         if reasoning_content:
             blocks.append({"type": "text", "text": f"[thinking] {reasoning_content}"})
         # Include text if present

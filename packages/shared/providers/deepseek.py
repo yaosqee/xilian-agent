@@ -9,13 +9,12 @@ from __future__ import annotations
 import asyncio
 import os
 import time as _time_module
-from typing import Literal
 
 import httpx
 from loguru import logger
 from openai import AsyncOpenAI
 
-from .base import ModelInfo, ProviderAdapter
+from .base import ModelInfo
 from . import ProviderResponse, extract_tool_calls, extract_usage
 
 # ── Available models ─────────────────────────────────────────

@@ -2,7 +2,39 @@
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
 > 📅 最后更新：2026-06-06
-> 🔖 当前阶段：表情包 + 多模态识图（V3.6）
+> 🔖 当前阶段：代码审查 + 架构优化（V3.7）
+
+---
+
+## 代码审查与架构优化（V3.7 · 2026-06-06）
+
+### 审查范围
+- ~27,000 行 Python + ~6,300 行 TypeScript，分 4 轮系统审查
+- 完整审查记录：[docs/code-review-findings.md](docs/code-review-findings.md)
+
+### 关键问题修复（第〇~三轮，24 项）
+
+| 批次 | 数量 | 关键修复 |
+|------|------|---------|
+| 🔴 关键 | 5 | 工具频率限制失效、被遗忘权不完整(3表缺失+同步阻塞)、tool error retry 无上限、f-string SQL |
+| ⚠️ 重要 | 10 | 闭包引用过期、os.environ 热重载不一致、adapter 创建不检查、bare except 批量加日志、gather 超时、compute_profile 重复计算 |
+| 🟡 中 | 6 | 情绪统计 O(n²)→O(n)、模板注入修复、SSE 超时、函数去重 |
+| 🟢 低 | 3 | 代码重复消除、SSE buffer 改进、TODO 清理 |
+
+### 架构重构（4 项）
+
+| # | 项目 | 说明 |
+|---|------|------|
+| 1 | **database.py 拆分** | 2403 行 → 6 个领域 Repository：Conversation / EpisodicMemory / Emotion / Profile / Notebook / Analytics。新包 `packages/shared/database/`，DatabaseManager 公开 API 不变 |
+| 2 | **agent_core.py 提取** | 2276 行 → 3 个 Pipeline ServiceModule 提取：PerceptionProcessor / MultimodalProcessor / MemoryRetrievalProcessor。新包 `packages/agent/pipeline/` |
+| 3 | **测试覆盖补充** | tool_executor (8 测试) + model_router (8 测试) + providers (6 测试) — 22 个新测试，所有通过 |
+| 4 | **MiMoAdapter Protocol** | `describe_image()` 纳入 ProviderAdapter Protocol |
+
+### 文件变更
+- `database.py` → `database/_manager.py` + 7 个新文件（_base / __init__ / 6 repos）
+- `agent_core.py` → 提取 4 个 pipeline/*.py 文件
+- `tests/` → 新增 `test_tool_executor.py` / `test_model_router.py` / `test_providers.py`
+- `providers/base.py` → +3 行 describe_image Protocol
 
 ---
 

@@ -15,7 +15,6 @@ LLM 消费在粗粒化 prompt 中进行。
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Optional
 
 from loguru import logger
 

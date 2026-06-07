@@ -11,12 +11,22 @@ NudgeEngine — 昔涟的自主生命节律
 """
 import asyncio
 import hashlib
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from loguru import logger
+
+
+# ── 模板替换辅助（避免链式 .replace() 中值内容被二次替换）──
+
+def _template_replace(template: str, values: dict[str, str]) -> str:
+    """安全模板替换：仅替换 {key} 占位符，不干预值中的 { 字符。"""
+    import re
+    def _replacer(m):
+        key = m.group(1)
+        return values.get(key, m.group(0))
+    return re.sub(r"\{(\w+)\}", _replacer, template)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -374,7 +384,8 @@ class NudgeEngine:
             elif pad_p > 0.5:
                 return 1.2
             return 1.0
-        except Exception:
+        except Exception as e:
+            logger.debug("nudge.urgency_mod_failed", error=str(e))
             return 1.0
 
     async def _get_significance_mod(self) -> float:
@@ -385,7 +396,8 @@ class NudgeEngine:
             if count > 0:
                 return 1.3
             return 1.0
-        except Exception:
+        except Exception as e:
+            logger.debug("nudge.significance_mod_failed", error=str(e))
             return 1.0
 
     def _get_time_mod(self) -> float:
@@ -428,15 +440,15 @@ class NudgeEngine:
         # 组装印象上下文
         portrait_context = await self._build_portrait_context()
 
-        # 使用 .replace() 避免用户文本中的花括号被 .format() 误解析
-        prompt = (
-            GREETING_SYSTEM_PROMPT
-            .replace("{time_of_day}", time_of_day)
-            .replace("{hours_ago}", f"{hours_ago:.1f}")
-            .replace("{emotion_context}", emotion_context)
-            .replace("{memory_context}", memory_context)
-            .replace("{portrait_context}", portrait_context)
-        )
+        # 单次遍历模板替换，避免链式 .replace() 中用户文本被误替换
+        template_values = {
+            "time_of_day": time_of_day,
+            "hours_ago": f"{hours_ago:.1f}",
+            "emotion_context": emotion_context,
+            "memory_context": memory_context,
+            "portrait_context": portrait_context,
+        }
+        prompt = _template_replace(GREETING_SYSTEM_PROMPT, template_values)
 
         messages = [
             {"role": "system", "content": prompt},

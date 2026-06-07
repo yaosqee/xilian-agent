@@ -14,7 +14,10 @@ def agent():
     with patch("packages.agent.agent_core.ModelRouter") as MockRouter, \
          patch("packages.agent.agent_core.MemoryManager") as MockMM:
         mock_router = MockRouter.return_value
-        mock_router.route = AsyncMock(return_value="昔涟的回复~♪")
+        mock_result = MagicMock()
+        mock_result.tool_calls = None
+        mock_result.content = "昔涟的回复~♪"
+        mock_router.route = AsyncMock(return_value=mock_result)
 
         mock_mm = MockMM.return_value
         mock_mm.encoding_state = "idle"
@@ -55,7 +58,8 @@ async def test_shutdown_returns_result(agent):
 async def test_process_basic_flow(agent):
     event = InternalEvent(source="test", user_id="hezi", payload="你好啊昔涟，今天天气真好", is_owner=True)
     reply = await agent.process(event)
-    assert reply == "昔涟的回复~♪"
+    assert reply.reply == "昔涟的回复~♪"
+    assert reply.sticker is None
     agent.memory_manager.signal_new_message.assert_called_once()
     agent.memory_manager.retrieve_memories.assert_awaited_once()
 
@@ -64,7 +68,7 @@ async def test_process_basic_flow(agent):
 async def test_process_non_owner_blocked(agent):
     event = InternalEvent(source="test", user_id="stranger", payload="你好", is_owner=False)
     reply = await agent.process(event)
-    assert reply == ""
+    assert reply.reply == ""
 
 
 @pytest.mark.asyncio
@@ -98,7 +102,7 @@ async def test_process_model_error_degraded(agent):
     agent.router.route.side_effect = Exception("API down")
     event = InternalEvent(source="test", user_id="hezi", payload="测试错误处理", is_owner=True)
     reply = await agent.process(event)
-    assert "人家" in reply
+    assert "人家" in reply.reply
 
 
 @pytest.mark.asyncio

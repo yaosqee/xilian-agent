@@ -57,34 +57,20 @@ class ContextModule(ABC):
 
     def render_with_budget(self, budget: int) -> tuple[str, int]:
         """带 token 预算渲染。Returns (text, tokens_used)."""
-        content = self.render()
-        if not content:
-            return "", 0
-
-        module_limit = min(budget, self.max_tokens)
-        tokens = self._estimate_tokens(content)
-
-        if tokens <= module_limit:
-            return content, tokens
-
-        truncated = self._truncate_content(
-            content,
-            int(len(content) * (module_limit / max(tokens, 1))),
-        )
-        return truncated, module_limit
+        return self._apply_budget(self.render(), budget)
 
     async def render_with_budget_async(self, budget: int) -> tuple[str, int]:
         """异步版本（用于 NotebookModule 等需要 IO 的模块）。"""
-        content = await self.render_async()
+        return self._apply_budget(await self.render_async(), budget)
+
+    def _apply_budget(self, content: str, budget: int) -> tuple[str, int]:
+        """公共预算裁剪逻辑。"""
         if not content:
             return "", 0
-
         module_limit = min(budget, self.max_tokens)
         tokens = self._estimate_tokens(content)
-
         if tokens <= module_limit:
             return content, tokens
-
         truncated = self._truncate_content(
             content,
             int(len(content) * (module_limit / max(tokens, 1))),

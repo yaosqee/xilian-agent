@@ -14,6 +14,10 @@ from typing import Optional
 import aiosqlite
 from loguru import logger
 
+from .conversation_repo import ConversationRepository
+from .emotion_repo import EmotionRepository
+from .episodic_memory_repo import EpisodicMemoryRepository
+
 
 # ── 建表 SQL ──────────────────────────────────────────
 
@@ -357,6 +361,10 @@ class DatabaseManager:
         self.db_path = Path(db_path)
         self._conn: Optional[aiosqlite.Connection] = None
         self._session_id: str = uuid.uuid4().hex[:12]
+        # ── 领域 Repository（init() 中初始化，共享连接）──
+        self._conv: ConversationRepository | None = None
+        self._emo: EmotionRepository | None = None
+        self._episodic: EpisodicMemoryRepository | None = None
 
     # ============================================================
     # 生命周期
@@ -377,6 +385,11 @@ class DatabaseManager:
         # 开启 WAL 模式（读写并发更好）
         await self._conn.execute("PRAGMA journal_mode=WAL;")
         await self._conn.execute("PRAGMA foreign_keys=ON;")
+
+        # ── 初始化领域 Repository（共享同一个连接）──
+        self._conv = ConversationRepository(self._conn, self._session_id)
+        self._emo = EmotionRepository(self._conn, self._session_id)
+        self._episodic = EpisodicMemoryRepository(self._conn, self._session_id)
 
         # 阶段 7d: 尝试 Alembic 迁移（仅默认路径）
         default_db = Path("data/xilian.db").resolve()
@@ -493,6 +506,7 @@ class DatabaseManager:
         emotion_intensity: float | None = None,
         user_id: str = "hezi",
         source: str = "console",
+        images: list[str] | None = None,
     ) -> int:
         """
         写入一条对话记录。
@@ -504,12 +518,13 @@ class DatabaseManager:
             raise RuntimeError("DatabaseManager.init() 未调用")
 
         emotion_json = json.dumps(emotion_label, ensure_ascii=False) if emotion_label else None
+        images_json = json.dumps(images, ensure_ascii=False) if images else "[]"
 
         cursor = await self._conn.execute(
             """INSERT INTO conversation_logs
                (timestamp, session_id, event_id, user_message, assistant_reply,
-                emotion_label, emotion_primary, emotion_intensity, user_id, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                emotion_label, emotion_primary, emotion_intensity, user_id, source, images)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 time.time(),
                 self._session_id,
@@ -521,6 +536,7 @@ class DatabaseManager:
                 emotion_intensity,
                 user_id,
                 source,
+                images_json,
             ),
         )
         await self._conn.commit()
@@ -2092,6 +2108,7 @@ class DatabaseManager:
             "scheduled_tasks", "user_portrait",
             "micro_events", "session_summaries",
             "core_profile", "phase_profile", "tool_usage_log",
+            "autobiography_entries", "reflection_crystals", "uploaded_images",
         ]
         for table in tables:
             if table == "episodic_memories":
@@ -2103,17 +2120,11 @@ class DatabaseManager:
                 cursor = await self._conn.execute(f"DELETE FROM {table}")
             deleted[table] = cursor.rowcount
 
-        # 3. 清理向量存储
+        # 3. 清理向量存储（sqlite-vec 需同步连接，在 executor 线程中运行避免阻塞事件循环）
         if embed_ids:
             try:
-                import sqlite3 as _sync_sqlite
-                vec_conn = _sync_sqlite.connect(str(self.db_path))
-                for eid in embed_ids:
-                    vec_conn.execute(
-                        "DELETE FROM memories_vec WHERE rowid = ?", (eid,)
-                    )
-                vec_conn.commit()
-                vec_conn.close()
+                import asyncio
+                await asyncio.to_thread(self._vec_delete_batch, str(self.db_path), embed_ids)
                 deleted["memories_vec"] = len(embed_ids)
             except Exception as e:
                 logger.warning("forget.vec_cleanup_failed", error=str(e))
@@ -2128,6 +2139,20 @@ class DatabaseManager:
 
         logger.info("privacy.forgotten", deleted=deleted)
         return {"deleted": deleted}
+
+    @staticmethod
+    def _vec_delete_batch(db_path: str, embed_ids: list[str]):
+        """在调用线程中批量删除向量（供 asyncio.to_thread 使用）。"""
+        import sqlite3 as _sync_sqlite
+        vec_conn = _sync_sqlite.connect(db_path)
+        try:
+            for eid in embed_ids:
+                vec_conn.execute(
+                    "DELETE FROM memories_vec WHERE rowid = ?", (eid,)
+                )
+            vec_conn.commit()
+        finally:
+            vec_conn.close()
 
     # ============================================================
     # cron_runs CRUD（启动补执行）

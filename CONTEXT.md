@@ -62,7 +62,16 @@ xilian-v3/
 │   ├── events.py                    # InternalEvent dataclass
 │   ├── model_router.py              # ModelRouter：多供应商 Tier 路由（task→tier→provider+model，支持 DeepSeek/OpenAI/Anthropic + 热切换）
 │   ├── providers/                    # 供应商适配器（deepseek.py / openai_adapter.py / anthropic.py + base.py）
-│   ├── database.py                  # DatabaseManager：SQLite 13张表 + 完整CRUD + 游标分页 + Alembic优先
+│   ├── database.py → database/      # DatabaseManager 拆分为领域 Repository（V3.7）
+│   │   ├── __init__.py               #   重导出 DatabaseManager（兼容旧 import）
+│   │   ├── _base.py                  #   BaseRepository（共享连接 + _ensure_conn）
+│   │   ├── _manager.py               #   DatabaseManager 主类（生命周期 + 跨表操作）
+│   │   ├── conversation_repo.py      #   对话日志 CRUD
+│   │   ├── episodic_memory_repo.py   #   情景记忆 + 嵌入状态
+│   │   ├── emotion_repo.py           #   PAD 情绪快照
+│   │   ├── profile_repo.py           #   用户画像 L0/L1
+│   │   ├── notebook_repo.py          #   笔记本 + 任务
+│   │   └── analytics_repo.py         #   微事件 + 会话摘要 + 工具使用
 │   ├── vector_store.py              # VectorStore：sqlite-vec 向量检索（零外部依赖）
 │   ├── backup.py                    # BackupManager：每日备份 + 清理 + 恢复（阶段 3）
 │   ├── marker_parser.py             # MarkerParser：5种标记流式解析 + SSML接口（阶段7c）
@@ -87,6 +96,12 @@ xilian-v3/
 │   ├── memory_manager.py            # MemoryManager：情景记忆编码/检索/艾宾浩斯衰减/调度/容量管理（阶段3+5）
 │   ├── autobiography_writer.py      # AutobiographyWriter + ReflectionWriter（阶段5）
 │   ├── nudge_engine.py              # NudgeEngine + AttentionScheduler（阶段6+7c）
+│   ├── pipeline/                     # ServiceModule 提取（V3.7）
+│   │   ├── _base.py                  #   ServiceModule 基类（依赖注入容器）
+│   │   ├── perception.py             #   PerceptionProcessor（感知阶段）
+│   │   ├── multimodal.py             #   MultimodalProcessor（图片处理+MiMo描述）
+│   │   ├── memory_retrieval.py       #   MemoryRetrievalProcessor（记忆检索）
+│   │   └── tool_handler.py           #   ToolHandlerProcessor（骨架，待后续填充）
 │   └── tools/
 │       ├── __init__.py              # 工具包入口
 │       ├── coding_delegate.py       # 编码委托（Claude Code CLI，EXECUTE，需确认）

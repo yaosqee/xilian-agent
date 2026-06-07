@@ -11,11 +11,8 @@ NotebookManager — 昔涟的笔记本管理器
 LLM 驱动的自动记笔记是本模块的核心差异化功能：
   对话后用 DS Flash 快速判断是否值得记录 → fire-and-forget 不阻塞主回复。
 """
-import asyncio
-import json
-import time
 from dataclasses import dataclass
-from typing import Optional
+from datetime import datetime
 
 from loguru import logger
 

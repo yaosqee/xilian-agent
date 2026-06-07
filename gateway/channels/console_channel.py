@@ -5,7 +5,6 @@ ConsoleChannel — 终端控制台通道（阶段 6：rich 美化）
 支持 rich 美化输出、Ctrl+D/Ctrl+C 优雅退出。
 """
 import asyncio
-import sys
 from typing import Optional
 
 from loguru import logger
@@ -18,8 +17,6 @@ from gateway.security import SecurityFilter
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-from rich.live import Live
-from rich.spinner import Spinner
 
 # 主题色
 PINK = "#ff69b4"        # 昔涟粉

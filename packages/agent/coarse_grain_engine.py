@@ -12,7 +12,6 @@ Phase 2 完整交付。RGMem 启发的多尺度画像演化：
 import json
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 from loguru import logger
 

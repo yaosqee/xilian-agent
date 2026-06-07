@@ -5,8 +5,6 @@ AutobiographyWriter — 自传体写作 + 每周反思
   · 每日凌晨 4:00 → 提取过去 24h 记忆+情绪 → DS Flash 生成《生命故事》
   · 每周日凌晨 4:30 → 提取本周自传体 → DS Flash 回答 SAGE 四问 → 反思结晶
 """
-import asyncio
-import time
 import json
 from datetime import datetime, timedelta
 from typing import Optional

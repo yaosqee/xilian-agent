@@ -13,6 +13,7 @@ HTTPChannel — FastAPI HTTP 通道
   · GET  /api/status          系统状态摘要（阶段 3 新增）
 """
 import asyncio
+import json
 import os
 import time
 from typing import Optional
@@ -61,7 +62,6 @@ class HTTPChannel(Channel):
     # ── 中间件 ──
 
     def _setup_middleware(self):
-        import re
         import socket
 
         # 基础来源：开发模式
@@ -113,7 +113,6 @@ class HTTPChannel(Channel):
 
     def _setup_routes(self):
         """注册 HTTP 端点"""
-        agent = self  # 闭包引用
 
         @self.app.get("/api/health")
         async def health():
@@ -259,6 +258,7 @@ class HTTPChannel(Channel):
                     "timestamp": row["timestamp"],
                     "user_message": row["user_message"],
                     "assistant_reply": row["assistant_reply"],
+                    "images": json.loads(row["images"]) if row["images"] else [],
                 } for row in reversed(rows)]
                 return {
                     "items": items,
@@ -283,7 +283,6 @@ class HTTPChannel(Channel):
             engine = self._agent.emotion_engine
             # 先衰减再返回（反映当前时刻的真实状态）
             engine.state.decay()
-            profile = engine.state.compute_profile()
             state_dict = engine.state.to_dict()
             state_dict["since_last_update_seconds"] = round(time.time() - engine.state.timestamp, 1)
             return state_dict
@@ -706,48 +705,48 @@ class HTTPChannel(Channel):
     # ── 阶段 7b: Notebook API ──
 
     def _register_notebook_routes(self):
-        """注册 Notebook API 端点（在 AgentCore 就绪后调用）。"""
-        agent = self._agent
+        """注册 Notebook API 端点。通过 self 动态访问 _agent，避免闭包过期。"""
+        http = self  # 引用 HTTPChannel 实例，运行时动态取 _agent
 
         @self.app.get("/api/notebook/notes")
         async def notebook_notes(limit: int = 10):
             """获取最近笔记"""
-            if not agent or not agent.notebook_manager:
+            if not http._agent or not http._agent.notebook_manager:
                 return []
-            items = await agent.notebook_manager.get_recent_notes(limit)
+            items = await http._agent.notebook_manager.get_recent_notes(limit)
             return items
 
         @self.app.get("/api/notebook/tasks")
         async def notebook_tasks(status: str = "pending"):
             """获取任务列表"""
-            if not agent or not agent.notebook_manager:
+            if not http._agent or not http._agent.notebook_manager:
                 return []
             if status == "pending":
-                return await agent.notebook_manager.get_pending_tasks()
+                return await http._agent.notebook_manager.get_pending_tasks()
             return []
 
         @self.app.post("/api/notebook/tasks/{task_id}/complete")
         async def notebook_task_complete(task_id: int):
             """标记任务完成"""
-            if not agent or not agent.notebook_manager:
+            if not http._agent or not http._agent.notebook_manager:
                 return {"error": "notebook not available"}
-            await agent.notebook_manager.complete_task(task_id)
+            await http._agent.notebook_manager.complete_task(task_id)
             return {"status": "ok"}
 
         @self.app.post("/api/notebook/tasks/{task_id}/cancel")
         async def notebook_task_cancel(task_id: int):
             """取消任务"""
-            if not agent or not agent.notebook_manager:
+            if not http._agent or not http._agent.notebook_manager:
                 return {"error": "notebook not available"}
-            await agent.notebook_manager.cancel_task(task_id)
+            await http._agent.notebook_manager.cancel_task(task_id)
             return {"status": "ok"}
 
         @self.app.delete("/api/notebook/notes/{note_id}")
         async def notebook_note_delete(note_id: int):
             """删除笔记"""
-            if not agent or not agent.notebook_manager:
+            if not http._agent or not http._agent.notebook_manager:
                 return {"error": "notebook not available"}
-            ok = await agent.notebook_manager.delete_note(note_id)
+            ok = await http._agent.notebook_manager.delete_note(note_id)
             if ok:
                 return {"status": "ok"}
             return {"status": "not_found"}
@@ -755,9 +754,9 @@ class HTTPChannel(Channel):
         @self.app.delete("/api/notebook/tasks/{task_id}")
         async def notebook_task_delete(task_id: int):
             """删除任务"""
-            if not agent or not agent.notebook_manager:
+            if not http._agent or not http._agent.notebook_manager:
                 return {"error": "notebook not available"}
-            ok = await agent.notebook_manager.delete_task(task_id)
+            ok = await http._agent.notebook_manager.delete_task(task_id)
             if ok:
                 return {"status": "ok"}
             return {"status": "not_found"}
@@ -765,8 +764,8 @@ class HTTPChannel(Channel):
     # ── 阶段 8: 审计 + 技能 + 安全状态 API ──
 
     def _register_stage8_routes(self):
-        """注册阶段 8 管理面板 API 端点。"""
-        agent = self._agent
+        """注册阶段 8 管理面板 API 端点。通过 self 动态访问 _agent。"""
+        http = self
 
         # ── 审计日志 ──
         @self.app.get("/api/audit/logs")
@@ -774,25 +773,25 @@ class HTTPChannel(Channel):
             limit: int = 50, event_type: str | None = None,
             severity: str | None = None,
         ):
-            if not agent or not agent._db:
+            if not http._agent or not http._agent._db:
                 return []
-            return await agent._db.get_audit_logs(
+            return await http._agent._db.get_audit_logs(
                 limit=limit, event_type=event_type, severity=severity,
             )
 
         @self.app.get("/api/audit/stats")
         async def audit_stats():
-            if not agent or not agent._db:
+            if not http._agent or not http._agent._db:
                 return {"total": 0, "by_type": {}}
-            return await agent._db.get_audit_stats()
+            return await http._agent._db.get_audit_stats()
 
         # ── 技能管理 ──
         @self.app.get("/api/skills")
         async def skills_list():
-            if not agent or not agent._skills_loader:
+            if not http._agent or not http._agent._skills_loader:
                 return {"skills": {}}
             result = {}
-            for name, s in agent._skills_loader.skills.items():
+            for name, s in http._agent._skills_loader.skills.items():
                 result[name] = {
                     "category": s.category,
                     "description": s.description,
@@ -805,11 +804,11 @@ class HTTPChannel(Channel):
         # ── 安全状态 ──
         @self.app.get("/api/security/status")
         async def security_status():
-            if not agent:
-                return {"error": "agent not available"}
+            if not http._agent:
+                return {"error": "http._agent not available"}
             return {
-                "safe_mode": agent.is_safe_mode,
-                "round_count": agent._round_count,
+                "safe_mode": http._agent.is_safe_mode,
+                "round_count": http._agent._round_count,
             }
 
 
@@ -817,8 +816,8 @@ class HTTPChannel(Channel):
         @self.app.post("/api/privacy/forget")
         async def privacy_forget(request: Request):
             """级联删除用户数据（需二次确认）。"""
-            if not agent or not agent._db:
-                return {"error": "agent not available"}
+            if not http._agent or not http._agent._db:
+                return {"error": "http._agent not available"}
             try:
                 body = await request.json()
             except Exception:
@@ -826,7 +825,7 @@ class HTTPChannel(Channel):
             confirm = body.get("confirm", "")
             if confirm != "我确认删除所有记忆":
                 return {"error": "请输入确认短语「我确认删除所有记忆」"}
-            result = await agent._db.forget_user_data()
+            result = await http._agent._db.forget_user_data()
             return {"status": "ok", **result}
 
     # ── 多模态 + 表情包 API ──
@@ -881,8 +880,8 @@ class HTTPChannel(Channel):
                         mime_type=file.content_type or "",
                         size_bytes=len(contents),
                     )
-                except Exception:
-                    pass  # DB 非关键路径
+                except Exception as e:
+                    logger.warning("upload.insert_db_failed", error=str(e))
 
             logger.info("upload.image_ok", id=img_id, name=file.filename, size=len(contents))
             return {"id": img_id, "url": url}
@@ -954,16 +953,26 @@ class HTTPChannel(Channel):
     # ── 模型配置 API（Phase B: 多供应商路由）──
 
     def _register_model_routes(self):
-        """注册模型配置管理端点。"""
+        """注册模型配置管理端点。通过 self 动态访问 _agent。"""
+        http = self
 
-        # ── 可用供应商和模型列表（静态）──
+        # ── 可用供应商和模型列表（动态从 PROVIDER_REGISTRY 生成）──
         @self.app.get("/api/models/providers")
         async def model_providers():
-            """动态从各 adapter 的 get_available_models() 生成供应商列表。"""
-            from packages.shared.providers.deepseek import DEEPSEEK_MODELS
-            from packages.shared.providers.openai_adapter import OPENAI_MODELS
-            from packages.shared.providers.anthropic import ANTHROPIC_MODELS
-            from packages.shared.providers.google_adapter import GEMINI_MODELS
+            """动态从各 adapter 的 get_available_models() 生成供应商列表。
+
+            遍历 PROVIDER_REGISTRY，排除专用 adapter（如 MiMo），
+            通过静态方法获取模型列表，无需实例化 adapter。
+            """
+            from packages.shared.providers import PROVIDER_REGISTRY
+            import importlib
+
+            # 仅面向用户的对话供应商（排除内部专用 adapter）
+            CHAT_PROVIDERS = {"deepseek", "openai", "anthropic", "google"}
+            PROVIDER_DISPLAY: dict[str, str] = {
+                "deepseek": "DeepSeek", "openai": "OpenAI",
+                "anthropic": "Anthropic", "google": "Google",
+            }
 
             def _serialize(models):
                 return [{
@@ -974,23 +983,34 @@ class HTTPChannel(Channel):
                     "supports_thinking": m.supports_thinking,
                 } for m in models]
 
-            providers = [
-                {"id": "deepseek", "name": "DeepSeek", "models": _serialize(DEEPSEEK_MODELS)},
-                {"id": "openai", "name": "OpenAI", "models": _serialize(OPENAI_MODELS)},
-                {"id": "anthropic", "name": "Anthropic", "models": _serialize(ANTHROPIC_MODELS)},
-                {"id": "google", "name": "Google", "models": _serialize(GEMINI_MODELS)},
-            ]
+            providers = []
+            for pid in CHAT_PROVIDERS:
+                entry = PROVIDER_REGISTRY.get(pid)
+                if not entry:
+                    continue
+                module_path, class_name, _lazy = entry
+                try:
+                    mod = importlib.import_module(module_path)
+                    cls = getattr(mod, class_name)
+                    models = cls.get_available_models()
+                    providers.append({
+                        "id": pid,
+                        "name": PROVIDER_DISPLAY.get(pid, pid),
+                        "models": _serialize(models),
+                    })
+                except Exception:
+                    logger.warning("api.models.providers_skip", provider=pid)
+
             return {"providers": providers}
 
         # ── 当前模型配置 ──
         @self.app.get("/api/models/config")
         async def get_model_config():
-            agent = self._agent
-            if not agent or not agent._db:
-                return {"error": "agent not ready"}
+            if not http._agent or not http._agent._db:
+                return {"error": "http._agent not ready"}
 
             try:
-                db_configs = await agent._db.get_model_configs()
+                db_configs = await http._agent._db.get_model_configs()
                 tiers = {}
                 overrides = {}
                 for c in db_configs:
@@ -1008,7 +1028,7 @@ class HTTPChannel(Channel):
 
                 # 若无 DB 配置，返回内存中的默认配置
                 if not tiers:
-                    for tier, cfg in agent.router._tier_configs.items():
+                    for tier, cfg in http._agent.router._tier_configs.items():
                         tiers[tier] = {
                             "provider": cfg.provider,
                             "model": cfg.model_name,
@@ -1016,7 +1036,7 @@ class HTTPChannel(Channel):
                             "max_tokens": cfg.max_tokens,
                         }
 
-                embed_cfg = await agent._db.get_embed_config()
+                embed_cfg = await http._agent._db.get_embed_config()
                 embed_info = None
                 if embed_cfg:
                     embed_info = {
@@ -1024,8 +1044,8 @@ class HTTPChannel(Channel):
                         "model": embed_cfg["model_name"],
                         "base_url": embed_cfg.get("base_url", ""),
                     }
-                elif agent.router._embed_config:
-                    rc = agent.router._embed_config
+                elif http._agent.router._embed_config:
+                    rc = http._agent.router._embed_config
                     embed_info = {
                         "provider": rc.get("provider", ""),
                         "model": rc.get("model_name", ""),
@@ -1036,7 +1056,7 @@ class HTTPChannel(Channel):
                     "tiers": tiers,
                     "overrides": overrides,
                     "embed": embed_info,
-                    "adapters": list(agent.router._adapters.keys()),
+                    "adapters": list(http._agent.router._adapters.keys()),
                 }
             except Exception as e:
                 logger.warning("api.models.config_error", error=str(e))
@@ -1045,14 +1065,14 @@ class HTTPChannel(Channel):
         # ── 更新模型配置 ──
         @self.app.put("/api/models/config")
         async def update_model_config(request: Request):
-            agent = self._agent
-            if not agent or not agent._db:
+            agent_ref = self._agent
+            if not agent_ref or not agent_ref._db:
                 return {"error": "agent not ready"}
 
             body = await request.json()
             tier_updates = body.get("tiers", {})
-            api_keys = body.get("api_keys", {})
-            base_urls = body.get("base_urls", {})
+            api_keys: dict[str, str] = body.get("api_keys", {})
+            base_urls: dict[str, str] = body.get("base_urls", {})
 
             import time
             now = time.time()
@@ -1067,17 +1087,13 @@ class HTTPChannel(Channel):
                 # Embed tier → write to embed_config table instead
                 if tier == "embed":
                     try:
-                        await agent._db.insert_embed_config(
+                        await agent_ref._db.insert_embed_config(
                             provider=provider,
                             model_name=model,
                             api_key=api_keys.get(provider, ""),
                             base_url=base_urls.get(provider, ""),
                             created_at=now, updated_at=now,
                         )
-                        if provider in api_keys:
-                            os.environ[f"{provider.upper()}_API_KEY"] = api_keys[provider]
-                        if provider in base_urls:
-                            os.environ[f"{provider.upper()}_BASE_URL"] = base_urls[provider]
                     except Exception as e:
                         errors.append(f"embed:{tier}: {e}")
                     continue
@@ -1085,7 +1101,7 @@ class HTTPChannel(Channel):
                 # Detect override: vs tier: prefix
                 config_key = tier if tier.startswith("override:") else f"tier:{tier}"
                 try:
-                    await agent._db.insert_model_config(
+                    await agent_ref._db.insert_model_config(
                         config_key=config_key,
                         provider=provider,
                         model_name=model,
@@ -1094,23 +1110,20 @@ class HTTPChannel(Channel):
                         max_tokens=info.get("max_tokens", 800),
                         created_at=now, updated_at=now,
                     )
-                    # 更新 os.environ 以便创建新的 adapter
-                    if provider in api_keys:
-                        os.environ[f"{provider.upper()}_API_KEY"] = api_keys[provider]
-                    if provider in base_urls:
-                        os.environ[f"{provider.upper()}_BASE_URL"] = base_urls[provider]
                 except Exception as e:
                     errors.append(f"tier:{tier}: {e}")
 
-            # 处理仅在 api_keys 中但不在 tiers 中的供应商（纯添加 Key）
+            # ── 统一更新 os.environ（仅当 DB 写入全部成功后，reload 前一次性写入）──
             for provider, key in api_keys.items():
-                os.environ[f"{provider.upper()}_API_KEY"] = key
-                if provider in base_urls:
-                    os.environ[f"{provider.upper()}_BASE_URL"] = base_urls[provider]
+                if key:
+                    os.environ[f"{provider.upper()}_API_KEY"] = key
+            for provider, url in base_urls.items():
+                if url:
+                    os.environ[f"{provider.upper()}_BASE_URL"] = url
 
-            # 热重载
+            # 热重载（仅当 os.environ 已更新）
             try:
-                await agent.router.reload_config()
+                await agent_ref.router.reload_config()
             except Exception as e:
                 errors.append(f"reload: {e}")
 
@@ -1156,13 +1169,13 @@ class HTTPChannel(Channel):
                         )
                         return {"valid": True}
                     except ImportError:
-                        return {"valid": True, "note": "Anthropic SDK 未安装，跳过验证"}
+                        return {"valid": True, "verified": False, "note": "Anthropic SDK 未安装，跳过验证"}
                     except Exception as e:
                         return {"valid": False, "error": str(e)[:200]}
 
                 base_url = base_urls.get(provider)
                 if not base_url:
-                    return {"valid": True, "note": "无法验证此供应商，请直接使用"}
+                    return {"valid": True, "verified": False, "note": "无法验证此供应商，请直接使用"}
                 client = AsyncOpenAI(api_key=api_key, base_url=base_url)
                 await asyncio.wait_for(
                     client.models.list(),

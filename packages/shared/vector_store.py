@@ -9,8 +9,6 @@ VectorStore — 基于 sqlite-vec 的向量存储
 import asyncio
 import json
 import sqlite3
-from pathlib import Path
-from typing import Optional
 
 import sqlite_vec
 from loguru import logger

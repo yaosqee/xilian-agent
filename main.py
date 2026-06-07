@@ -41,7 +41,7 @@ from loguru import logger
 # 确保项目根目录在 sys.path
 sys.path.insert(0, str(_get_base_dir()))
 
-from packages.shared import ModelRouter, BackupManager
+from packages.shared import BackupManager
 from packages.shared.logging_config import setup_logging
 from packages.agent import (
     AgentCore, NudgeEngine, TokenBucket, AutonomyConfig,

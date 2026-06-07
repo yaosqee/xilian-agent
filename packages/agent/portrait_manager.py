@@ -9,10 +9,7 @@ Phase 1 改造（2026-05-31）：
   新增 MicroEventExtractor + CoarseGrainEngine，
   保留旧接口兼容性（consolidate/ensure_exists/mark_dirty）。
 """
-import asyncio
 import json
-import time
-from typing import Optional
 
 from loguru import logger
 

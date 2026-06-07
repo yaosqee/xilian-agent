@@ -25,7 +25,6 @@ Phase 3 (远期): P2-② 双通道衰减 / P3-③ Cardboard / P3-⑥ 情节记�
 import math
 import time
 import json
-import asyncio
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -475,7 +474,6 @@ class AppraisalExtractor:
     def __init__(self, model_router):
         self._router = model_router
         # ── P1-④B: 时间上下文缓存 ──
-        self._last_appraisal_time: float = 0.0
         self._last_appraisal_gap: float = 0.0
         self._last_appraisal_emotion: str = ""
 
@@ -496,7 +494,6 @@ class AppraisalExtractor:
             return AppraisalResult.neutral()
 
         # ── P1-④B: 更新时间上下文缓存 ──
-        self._last_appraisal_time = time.time()
         self._last_appraisal_gap = last_interaction_gap
         self._last_appraisal_emotion = last_emotion
 

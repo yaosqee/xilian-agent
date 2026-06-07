@@ -9,7 +9,7 @@ import importlib
 import os
 import pkgutil
 from enum import Enum
-from typing import Callable, Dict, Optional, Any
+from typing import Callable, Dict, Optional
 from loguru import logger
 
 # 模块级待注册队列：工具模块在 import 时调用 register_tool()，

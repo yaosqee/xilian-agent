@@ -10,10 +10,10 @@ ActorMind 推理链（阶段 7）：
 阶段 7a：ContextBuilder 模块化上下文（替换手工拼接）
 """
 import asyncio
+import json
 import math
 import re
 import time
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from loguru import logger
@@ -33,7 +33,12 @@ from .notebook_manager import NotebookManager
 from .portrait_manager import PortraitManager
 from .skills_loader import SkillsLoader
 
-# 阶段 7a: 模块化上下文
+# 阶段 7a: 模块化上下文 + Pipeline ServiceModule
+from .pipeline import ServiceModule
+from .pipeline.perception import PerceptionProcessor
+from .pipeline.multimodal import MultimodalProcessor
+from .pipeline.memory_retrieval import MemoryRetrievalProcessor
+
 from .context_builder import (
     ContextBuilder, estimate_tokens,
     DatetimeModule,
@@ -126,8 +131,13 @@ class AgentCore:
         self.context = AgentContext()
         self._personality: str = self._load_personality()
 
+        # ── Pipeline ServiceModule 实例（同步依赖，__init__ 中创建）──
+        self._perception = PerceptionProcessor(self.context)
+        self._multimodal = MultimodalProcessor(self.context, router=self.router)
+        self._mem_retrieval = MemoryRetrievalProcessor(self.context, router=self.router)
+
         # 打磨期: 自动发现并注册 tools/ 目录下所有工具
-        new_tools = self.tool_registry.autodiscover("packages.agent.tools")
+        self.tool_registry.autodiscover("packages.agent.tools")
         # 注册工具的结果模板（不需要 LLM 二次包装的）
         from .tools.search_memory import _register_template as _reg_sm
         from .tools.query_weather import _register_template as _reg_qw
@@ -259,6 +269,8 @@ class AgentCore:
                 db=self._db,
                 model_router=self.router,
             )
+            # 注入异步依赖到 Pipeline ServiceModule
+            self._mem_retrieval.set_managers(self.memory_manager, self.portrait_manager, db=self._db)
 
         # Phase 5: 注入 ModelRouter 引用供 PortraitGuidanceModule 使用
         self.context._router = self.router
@@ -511,10 +523,6 @@ class AgentCore:
         intent = self._perceive(event.payload)
         trace_log.debug("agent.perceive", intent=intent)
 
-        # ── 1. 感知 ──
-        intent = self._perceive(event.payload)
-        trace_log.debug("agent.perceive", intent=intent)
-
         # ── 1b. 工具确认回路检查 ──
         if self._pending_confirmation:
             confirmed = await self._handle_confirmation(event, trace_log)
@@ -528,16 +536,20 @@ class AgentCore:
 
         # ── 1c. 多模态：图片预处理 ──
         image_description = ""
+        memory_task = None  # Native 路径的后台 MiMo 任务（不阻塞回复）
         self._current_images = list(event.images) if event.images else []
         if self._current_images:
             provider, model = self.router.get_current_model_info()
             if self.router.supports_vision(provider, model):
+                # Native 路径：图片直入 multimodal，后台并行 MiMo 取描述（仅用于记忆）
                 trace_log.info("agent.multimodal.native", provider=provider, model=model)
+                memory_task = asyncio.create_task(
+                    self._describe_image(self._current_images[0])
+                )
             else:
-                # 视觉兜底：用 MiMo 描述图片
+                # Fallback 路径：先用 MiMo 描述再对话
                 trace_log.info("agent.multimodal.fallback", provider=provider)
-                image_url = self._current_images[0]  # 单图
-                image_description = await self._describe_image(image_url)
+                image_description = await self._describe_image(self._current_images[0])
                 if image_description:
                     trace_log.debug("agent.image_described", preview=image_description[:80])
 
@@ -717,7 +729,26 @@ class AgentCore:
                 await emotion_task
             except Exception:
                 pass
+
+        # ── 9b. 统一记忆管线：收集图片描述 + 压缩注入 payload ──
+        if memory_task:
+            try:
+                image_description = await memory_task  # 已完成的任务立即返回，不阻塞
+            except Exception:
+                pass  # 并行 MiMo 失败不影响主流程（模型已直接看了图）
+        if image_description and self._current_images:
+            short_desc = self._compress_image_desc(image_description)
+            suffix = f"[发来一张照片：{short_desc}]"
+            event.payload = f"{event.payload} {suffix}".strip() if event.payload.strip() else suffix
+            trace_log.debug("memory.image_injected", short=short_desc)
+
         await self._write_conversation_log(event, reply)
+
+        # ── 9c. 高价值图片记忆编码（后台异步，不阻塞）──
+        if image_description and self._current_images:
+            asyncio.create_task(
+                self._encode_image_memory(image_description, event, reply)
+            )
 
         # ── 10. 记录历史（编造数据先清洗再入上下文，防止下轮当事实）──
         self.context.add_message("user", event.payload)
@@ -753,107 +784,17 @@ class AgentCore:
         """
         感知阶段：提取情绪基调（工具选择交由 LLM function calling）。
         """
-        intent = {
-            "intent": "chat",
-            "emotion_hint": "",
-        }
-
-        positive = {"开心", "高兴", "好耶", "哈哈", "太棒了", "喜欢", "爱"}
-        negative = {"难过", "累", "烦", "焦虑", "害怕", "孤独", "不开心", "哭"}
-
-        for w in positive:
-            if w in payload:
-                intent["emotion_hint"] = "positive"
-                break
-        if not intent["emotion_hint"]:
-            for w in negative:
-                if w in payload:
-                    intent["emotion_hint"] = "negative"
-                    break
-
-        return intent
+        return self._perception.perceive(payload)
 
     # ============================================================
     # 阶段 3: 记忆检索
     # ============================================================
 
-    # 角色记忆触发关键词（用户消息中包含任一关键词时，额外检索昔涟的过去）
-    _CHARACTER_KEYWORDS: tuple[str, ...] = (
-        "你以前", "小时候", "轮回", "翁法罗斯", "白厄", "迷迷",
-        "哀丽秘榭", "黄金裔", "铁墓", "德谬歌", "逐火之旅",
-        "阿格莱雅", "万敌", "赛飞儿", "那刻夏", "风堇",
-        "遐蝶", "海瑟音", "刻律德菈", "缇宝", "缇安",
-        "浮黎", "记忆星神", "黑潮", "泰坦", "如我所书",
-        "你的过去", "你来自哪里", "你以前住", "你经历过",
-        "你等过", "三千万", "开拓者",
-    )
-
     async def _retrieve_memories(self, user_message: str) -> list[dict] | None:
         """
         检索与当前消息相关的历史记忆 + 角色情景记忆。
-
-        检索条件：
-        - 用户消息长度 ≥ 5 字符（太短不触发，节省资源）
-        - 结果按 session_id 分流：用户记忆 → memory_retrieval，角色记忆 → character_memory_retrieval
-        - 角色记忆仅在用户消息包含角色关键词时注入，避免日常对话中喧宾夺主
         """
-        if len(user_message.strip()) < 5:
-            return None
-
-        try:
-            if not self.memory_manager:
-                return None
-
-            # Phase 3: 获取画像加权配置（L1 版本号门控缓存，避免冗余 embedding 调用）
-            persona_boost = None
-            if self.portrait_manager:
-                cached = getattr(self.context, '_persona_boost_config', None)
-                cached_version = cached.get("_l1_version") if cached else None
-                current_l1 = self.context._current_l1_version
-                # L1 版本未变 → 复用缓存
-                if cached and cached_version == current_l1:
-                    persona_boost = cached
-                else:
-                    try:
-                        persona_boost = await self.portrait_manager.build_retrieval_config()
-                        self.context._persona_boost_config = persona_boost
-                    except Exception:
-                        persona_boost = {}
-                        self.context._persona_boost_config = {}
-
-            results = await self.memory_manager.retrieve_memories(
-                user_message, k=5, persona_boost=persona_boost,
-            )
-            if not results:
-                return None
-
-            # ── 分流：用户 vs 角色 ──
-            user_mems = []
-            char_mems = []
-            for r in results:
-                if r.get("session_id") == "character":
-                    char_mems.append(r)
-                else:
-                    user_mems.append(r)
-
-            # 角色记忆是否触发
-            triggered = any(kw in user_message for kw in self._CHARACTER_KEYWORDS)
-            if triggered and char_mems:
-                self.context.character_memory_retrieval = char_mems[:2]
-                logger.debug(
-                    "memory.character_triggered",
-                    keywords=[kw for kw in self._CHARACTER_KEYWORDS if kw in user_message],
-                    count=min(len(char_mems), 2),
-                )
-            else:
-                self.context.character_memory_retrieval = None
-
-            logger.debug("memory.retrieved", user=len(user_mems), char=len(char_mems), triggered=triggered)
-            return user_mems[:3] if user_mems else None
-
-        except Exception as e:
-            logger.warning("memory.retrieval_failed", error=str(e))
-            return None
+        return await self._mem_retrieval.retrieve_memories(user_message)
 
     # _schedule_portrait_cold_start / _portrait_cold_start_task 已废弃（Phase 1）。
     # 冷启动逻辑合并到 extract_then_check_coarse() + ensure_exists() 中。
@@ -1009,6 +950,41 @@ class AgentCore:
             )
         )
 
+    # 图片记忆高价值判断：实体关键词（描述含这些词时编码为视觉记忆）
+    _IMAGE_ENTITY_KEYWORDS: tuple[str, ...] = (
+        "人", "脸", "自拍", "朋友", "家", "猫", "狗", "宠物",
+        "书桌", "房间", "风景", "山", "海", "花", "孩子",
+        "合影", "照片", "桌面", "电脑", "窗外", "阳台",
+    )
+
+    async def _encode_image_memory(self, desc: str, event: InternalEvent, reply: str):
+        """高价值判断后编码图片记忆到 episodic_memories（后台异步）。"""
+        if not desc or not event.images:
+            return
+        # 启发式：描述含实体 OR 情绪强度 > 0.6
+        snap = self.context.emotion_snapshot
+        intensity = snap.get("primary_intensity", 0) if snap else 0
+        has_entity = any(kw in desc for kw in self._IMAGE_ENTITY_KEYWORDS)
+        if not (has_entity or intensity > 0.6):
+            return  # 低价值，不编码
+
+        try:
+            memory = {
+                "kind": "visual_memory",
+                "description": desc,
+                "images": event.images,
+                "user_message": event.payload,
+                "assistant_reply": reply[:200],
+            }
+            await self._db.insert_episodic_memory(
+                summary=f"[图片记忆] {desc[:100]}",
+                raw_conversation=json.dumps(memory, ensure_ascii=False),
+                importance=0.7 if has_entity else 0.5,
+            )
+            logger.debug("memory.image_encoded", preview=desc[:60])
+        except Exception as e:
+            logger.warning("memory.image_encode_failed", error=str(e))
+
     async def _write_conversation_log(self, event: InternalEvent, reply: str):
         """每次对话后实际写入 conversation_logs（阶段 2 建表，阶段 3 写入）"""
         try:
@@ -1022,9 +998,12 @@ class AgentCore:
                 emotion_intensity=snap.get("primary_intensity") if snap else None,
                 user_id=event.user_id,
                 source=event.source,
+                images=event.images if event.images else None,
             )
         except Exception as e:
-            logger.warning("database.log_write_failed", error=str(e))
+            logger.warning("database.log_write_failed",
+                          error_type=type(e).__name__,
+                          error=str(e)[:200])
 
     # ============================================================
     # 上下文注入（向后兼容）
@@ -1385,7 +1364,8 @@ class AgentCore:
     _sticker_cooldown: int = 0
 
     def _should_auto_sticker(self) -> bool:
-        """检查是否应该自动发送表情包（兜底）。"""
+        """检查是否应该自动发送表情包（兜底）。
+        同时缓存 compute_profile 结果供 _pick_sticker_by_emotion 复用。"""
         import random
         if self._sticker_cooldown > 0:
             return False
@@ -1395,13 +1375,14 @@ class AgentCore:
         intensity = max(abs(state.pad[1]), abs(state.pad[2]))
         if intensity < 0.65:
             return False
-        profile = state.compute_profile()
-        if profile.get("primary_emotion") in ("悲伤", "愤怒", "恐惧"):
+        self._cached_emotion_profile = state.compute_profile()  # 缓存，避免重复计算
+        if self._cached_emotion_profile.get("primary_emotion") in ("悲伤", "愤怒", "恐惧"):
             return False
         return random.random() < 0.6
 
     def _pick_sticker_by_emotion(self) -> dict | None:
-        """根据当前情绪从 catalog 中选择表情包（加权随机）。"""
+        """根据当前情绪从 catalog 中选择表情包（加权随机）。
+        优先使用 _should_auto_sticker 缓存的 profile，避免重复 compute_profile。"""
         import random
         if not hasattr(self, 'emotion_engine') or self.emotion_engine is None:
             return None
@@ -1409,8 +1390,9 @@ class AgentCore:
         if not catalog:
             return None
 
-        state = self.emotion_engine.state
-        profile = state.compute_profile()
+        profile = getattr(self, '_cached_emotion_profile', None)
+        if profile is None:
+            profile = self.emotion_engine.state.compute_profile()
         primary = profile.get("primary_emotion", "")
 
         candidates = []
@@ -1439,46 +1421,12 @@ class AgentCore:
             self._sticker_cooldown -= 1
 
     def _convert_to_multimodal(self, messages: list[dict], images: list[str], provider: str):
-        """将最后一条 user 消息的 content 从 str 转为 multimodal content array。
-
-        本地相对路径自动转为 base64 data URL（远程 API 无法访问本地文件）。
-        """
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i]["role"] == "user":
-                text = messages[i]["content"]
-                parts = [{"type": "text", "text": text}]
-                for img_url in images:
-                    resolved = self._resolve_image_url(img_url)
-                    parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": resolved},
-                    })
-                messages[i]["content"] = parts
-                break
+        """将最后一条 user 消息的 content 从 str 转为 multimodal content array。"""
+        self._multimodal.convert_to_multimodal(messages, images, provider)
 
     def _resolve_image_url(self, url: str) -> str:
         """将本地相对路径转为 base64 data URL，远程 URL 原样返回。"""
-        if url.startswith("/api/uploads/"):
-            try:
-                import base64
-                rel_path = url[len("/api/uploads/"):]
-                local_path = Path("data/uploads") / rel_path
-                if local_path.exists():
-                    image_data = local_path.read_bytes()
-                    ext = local_path.suffix.lower()
-                    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                                ".webp": "image/webp", ".gif": "image/gif"}
-                    mime = mime_map.get(ext, "image/webp")
-                    b64 = base64.b64encode(image_data).decode("ascii")
-                    logger.debug("image.to_base64", url=url[:50], path=str(local_path), size=len(image_data))
-                    return f"data:{mime};base64,{b64}"
-                else:
-                    logger.warning("image.file_not_found", path=str(local_path))
-            except Exception as e:
-                logger.warning("image.base64_failed", error=str(e))
-        return url
-
-    # ── 多模态：图片描述 ──────────────────────────────────────
+        return self._multimodal._resolve_image_url(url)
 
     async def _describe_image(self, image_url: str) -> str:
         """
@@ -1486,31 +1434,13 @@ class AgentCore:
 
         Phase 2: 当主模型不支持 vision 时调用。
         缓存：同一 URL 在单次会话中只调用一次。
-        本地相对路径自动转为 base64 data URL。
         """
-        if not hasattr(self, '_image_desc_cache'):
-            self._image_desc_cache: dict[str, str] = {}
+        return await self._multimodal.describe_image(image_url)
 
-        if image_url in self._image_desc_cache:
-            return self._image_desc_cache[image_url]
-
-        resolved_url = self._resolve_image_url(image_url)
-
-        try:
-            adapter = self.router._create_adapter("mimo")
-            if adapter is None:
-                logger.warning("agent.describe_image.no_adapter")
-                return ""
-
-            description = await adapter.describe_image(resolved_url)
-            if description:
-                self._image_desc_cache[image_url] = description
-                logger.debug("agent.describe_image.ok", preview=description[:80])
-                return description
-        except Exception as e:
-            logger.warning("agent.describe_image.failed", error=str(e))
-
-        return ""
+    @staticmethod
+    def _compress_image_desc(description: str, max_chars: int = 30) -> str:
+        """将 MiMo 描述压缩为短句，用于嵌入 user_message 存入历史。"""
+        return MultimodalProcessor.compress_image_desc(description, max_chars)
 
     def _enforce_speech_rule(self, text: str) -> str:
         """
@@ -1546,7 +1476,6 @@ class AgentCore:
 
     def _build_speech_fallback(self) -> str:
         """构建上下文感知的语音兜底。"""
-        import random
         last_user_msg = ""
         for m in reversed(self.context.history):
             if m["role"] == "user":
@@ -1777,7 +1706,11 @@ class AgentCore:
         except asyncio.CancelledError:
             logger.debug("emotion.analysis_cancelled")
         except Exception as e:
-            logger.warning("emotion.analysis_failed", error=str(e))
+            logger.warning(
+                "emotion.analysis_failed",
+                error_type=type(e).__name__,
+                error=str(e)[:200],
+            )
 
     # ============================================================
     # P1-③: 情绪反馈闭环 — 评价提示词

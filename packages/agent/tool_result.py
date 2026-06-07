@@ -3,7 +3,7 @@ ToolResult — 工具执行结果 + ToolContext 执行上下文
 
 打磨期：工具系统重设计，统一工具返回格式。
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 

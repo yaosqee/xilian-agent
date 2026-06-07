@@ -21,6 +21,7 @@ export function postChatStream(
   onError: (err: Error) => void,
 ): AbortController {
   const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new Error('SSE stream timeout')), 120_000); // 2min
   fetch(`${BASE}/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -33,39 +34,43 @@ export function postChatStream(
       if (!reader) { onDone(); return; }
       const decoder = new TextDecoder();
       let buffer = '';
-      let currentEvent = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        // Process complete SSE events
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // keep incomplete line
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (currentEvent === 'done' || data === '[DONE]') {
-              onDone();
-              return;
+        // Split by SSE message boundary (\n\n), keep incomplete message in buffer
+        const messages = buffer.split('\n\n');
+        buffer = messages.pop() || '';
+        for (const msg of messages) {
+          if (!msg.trim()) continue;
+          let eventType = '';
+          for (const line of msg.split('\n')) {
+            if (line.startsWith('event: ')) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (eventType === 'done' || data === '[DONE]') {
+                clearTimeout(timeoutId);
+                onDone();
+                return;
+              }
+              if (eventType === 'sticker') {
+                try {
+                  const sticker = JSON.parse(data);
+                  onSticker(sticker);
+                } catch { /* ignore malformed sticker data */ }
+              } else {
+                onToken(data.replace(/\\n/g, '\n'));
+              }
             }
-            if (currentEvent === 'sticker') {
-              try {
-                const sticker = JSON.parse(data);
-                onSticker(sticker);
-              } catch { /* ignore malformed sticker data */ }
-            } else {
-              // default: token (backward compat with old format)
-              onToken(data.replace(/\\n/g, '\n'));
-            }
-            currentEvent = '';
           }
         }
       }
+      clearTimeout(timeoutId);
       onDone();
     })
     .catch((err) => {
+      clearTimeout(timeoutId);
       if (err.name !== 'AbortError') onError(err);
     });
   return controller;
@@ -81,11 +86,8 @@ export async function fetchEmotionHistory(limit = 50): Promise<any> {
   return res.json();
 }
 
-/** 阶段4: 获取 PAD 轨迹历史 */
-export async function fetchPADHistory(limit = 100): Promise<any> {
-  const res = await fetch(`${BASE}/emotion/history?limit=${limit}`);
-  return res.json();
-}
+/** 阶段4: 获取 PAD 轨迹历史（fetchEmotionHistory 的语义别名） */
+export const fetchPADHistory = fetchEmotionHistory;
 
 /** 阶段4: 获取情绪统计 */
 export async function fetchEmotionStats(days = 7): Promise<any> {
@@ -133,6 +135,7 @@ export interface ConversationHistoryItem {
   timestamp: number;
   user_message: string;
   assistant_reply: string;
+  images: string[];
 }
 
 export async function fetchConversationHistory(

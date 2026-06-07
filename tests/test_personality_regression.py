@@ -60,18 +60,19 @@ class TestPersonalityRegression:
             payload=user_msg, is_owner=True,
         )
         reply = await agent.process(event)
-        reply_lower = reply.lower()
+        text = reply.reply
+        reply_lower = text.lower()
 
         if expected is None:
             # 只验证有回复
-            assert len(reply) > 0, f"[{desc}] 回复为空"
+            assert len(text) > 0, f"[{desc}] 回复为空"
         elif invert:
             # 验证不应该出现的内容
             assert expected.lower() not in reply_lower, \
-                f"[{desc}] 不应包含 '{expected}'，实际回复: {reply[:80]}"
+                f"[{desc}] 不应包含 '{expected}'，实际回复: {text[:80]}"
         else:
             # 验证应该出现的内容
-            assert expected in reply or expected in reply_lower, \
-                f"[{desc}] 应包含 '{expected}'，实际回复: {reply[:80]}"
+            assert expected in text or expected in reply_lower, \
+                f"[{desc}] 应包含 '{expected}'，实际回复: {text[:80]}"
 
         await agent.shutdown()

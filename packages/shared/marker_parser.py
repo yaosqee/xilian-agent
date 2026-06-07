@@ -16,7 +16,6 @@ SSML 接口 markers_to_ssml() 已定义（空实现），为语音管道预留�
 """
 import re
 from dataclasses import dataclass, field
-from typing import Iterator, Optional
 
 
 # ═══════════════════════════════════════════════════════════
@@ -201,5 +200,5 @@ def markers_to_ssml(
     Returns:
         SSML 字符串（完整 <speak> 包裹）
     """
-    # TODO(阶段 9): 实现完整 SSML 转换
-    raise NotImplementedError("SSML generation — 阶段 9 实现")
+    # NOTE: SSML 语音标记暂未纳入当前路线图。保留接口供后续迭代使用。
+    raise NotImplementedError("SSML generation — 待语音功能优先级确认后实现")

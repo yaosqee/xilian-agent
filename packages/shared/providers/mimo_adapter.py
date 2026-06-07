@@ -16,7 +16,7 @@ import httpx
 from loguru import logger
 from openai import AsyncOpenAI
 
-from .base import ModelInfo, ProviderAdapter
+from .base import ModelInfo
 from . import ProviderResponse
 
 

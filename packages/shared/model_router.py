@@ -11,19 +11,15 @@ V3.3 → V3.4 升级：硬编码 DeepSeek Pro/Flash 二分 → Tier 系统 + Pro
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import time as _time_module
-from typing import Literal
 
-import httpx
 from loguru import logger
 
 import importlib
 
 from .providers import (
-    TaskType, TierName,
-    TASK_TIER_MAP, TierConfig, ProviderResponse, TaskOverride,
+    TaskType, TASK_TIER_MAP, TierConfig, ProviderResponse, TaskOverride,
     DEFAULT_TIER_MODELS, DEFAULT_EMBED_MODELS, detect_configured_providers,
     PROVIDER_REGISTRY,
 )
@@ -101,32 +97,37 @@ class ModelRouter:
             if adapter:
                 self._adapters["deepseek"] = adapter
 
-            # Default tier configs (all tiers use DeepSeek)
-            self._tier_configs["powerful"] = TierConfig(
-                tier="powerful", provider="deepseek",
-                model_name="deepseek-v4-pro", temperature=0.65, max_tokens=800,
-            )
-            self._tier_configs["fast"] = TierConfig(
-                tier="fast", provider="deepseek",
-                model_name="deepseek-v4-flash", temperature=0.3, max_tokens=800,
-            )
-            self._tier_configs["reasoning"] = TierConfig(
-                tier="reasoning", provider="deepseek",
-                model_name="deepseek-reasoner", temperature=0.3, max_tokens=2000,
-            )
+                # Default tier configs (all tiers use DeepSeek)
+                self._tier_configs["powerful"] = TierConfig(
+                    tier="powerful", provider="deepseek",
+                    model_name="deepseek-v4-pro", temperature=0.65, max_tokens=800,
+                )
+                self._tier_configs["fast"] = TierConfig(
+                    tier="fast", provider="deepseek",
+                    model_name="deepseek-v4-flash", temperature=0.3, max_tokens=800,
+                )
+                self._tier_configs["reasoning"] = TierConfig(
+                    tier="reasoning", provider="deepseek",
+                    model_name="deepseek-reasoner", temperature=0.3, max_tokens=2000,
+                )
 
-            # Embed config (from env, may use SiliconFlow)
-            embed_key = os.getenv("EMBED_API_KEY") or os.getenv("DEEPSEEK_API_KEY_2") or ds_key
-            embed_base = os.getenv("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
-            embed_model = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
-            embed_provider = "siliconflow" if "siliconflow" in embed_base else "deepseek"
-            self._embed_config = {
-                "provider": embed_provider,
-                "model_name": embed_model,
-                "base_url": embed_base,
-                "api_key": embed_key,
-                "dimensions": 1024,
-            }
+                # Embed config (from env, may use SiliconFlow)
+                embed_key = os.getenv("EMBED_API_KEY") or os.getenv("DEEPSEEK_API_KEY_2") or ds_key
+                embed_base = os.getenv("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
+                embed_model = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
+                # EMBED_PROVIDER 显式指定优先，否则从 base_url 推断
+                embed_provider = os.getenv("EMBED_PROVIDER", "")
+                if not embed_provider:
+                    embed_provider = "siliconflow" if "siliconflow" in embed_base else "deepseek"
+                self._embed_config = {
+                    "provider": embed_provider,
+                    "model_name": embed_model,
+                    "base_url": embed_base,
+                    "api_key": embed_key,
+                    "dimensions": 1024,
+                }
+            else:
+                logger.error("ModelRouter: DeepSeek adapter 创建失败，请检查 deepseek SDK 是否安装")
         else:
             logger.warning("ModelRouter: 未检测到任何 API Key，需引导配置")
 
@@ -267,7 +268,11 @@ class ModelRouter:
                     self._adapters[provider] = adapter
 
     def _create_adapter(self, provider: str) -> ProviderAdapter | None:
-        """创建指定供应商的 adapter。从 PROVIDER_REGISTRY 懒导入。"""
+        """创建指定供应商的 adapter。从 PROVIDER_REGISTRY 懒导入。
+
+        创建后自动从 ModelInfo 预热 _tools_support_cache，
+        避免依赖运行时 tool error 检测（节省一次 API 往返）。
+        """
         entry = PROVIDER_REGISTRY.get(provider)
         if not entry:
             logger.warning("model_router.unknown_provider", provider=provider)
@@ -277,7 +282,17 @@ class ModelRouter:
         try:
             mod = importlib.import_module(module_path)
             cls = getattr(mod, class_name)
-            return cls()
+            adapter = cls()
+
+            # ── 预热 tool compatibility cache ──
+            try:
+                for m in adapter.get_available_models():
+                    if not m.supports_tools:
+                        self._tools_support_cache[f"{provider}:{m.id}"] = False
+            except Exception:
+                pass  # get_available_models 失败不影响 adapter 创建
+
+            return adapter
         except ImportError as e:
             if lazy_import:
                 logger.warning(f"{provider}_adapter.import_failed", error=str(e))
@@ -381,9 +396,12 @@ class ModelRouter:
                         raise RuntimeError(f"供应商 '{provider}' 不可用且无其他可用供应商。")
                     fallback_provider = next(iter(self._adapters.keys()))
                     adapter = self._adapters[fallback_provider]
+                    fallback_model = DEFAULT_TIER_MODELS.get(fallback_provider, {}).get(tier, tier_cfg.model_name)
                     logger.warning("model_router.provider_fallback",
-                                 requested=provider, fallback=fallback_provider)
+                                 requested=provider, fallback=fallback_provider,
+                                 requested_model=tier_cfg.model_name, fallback_model=fallback_model)
                     provider = fallback_provider
+                    model = fallback_model
 
             model = tier_cfg.model_name
             # Merge tier-level defaults with call-site kwargs
@@ -410,19 +428,28 @@ class ModelRouter:
             )
             return result
         except Exception as e:
-            # Tool error → mark incompatible and retry without tools
+            # Tool error → mark incompatible and retry once without tools
             if tools and _is_tool_error(e):
-                logger.warning("model_router.tool_error", model=model_key, error=str(e))
+                logger.warning("model_router.tool_error", model=model_key, error=str(e)[:200])
                 self._tools_support_cache[model_key] = False
-                return await adapter.chat(
-                    model=model,
-                    messages=messages,
-                    temperature=kwargs.get("temperature", 0.7),
-                    max_tokens=kwargs.get("max_tokens", 800),
-                    stream=kwargs.get("stream", False),
-                    tools=None,
-                    tool_choice=None,
-                )
+                try:
+                    return await adapter.chat(
+                        model=model,
+                        messages=messages,
+                        temperature=kwargs.get("temperature", 0.7),
+                        max_tokens=kwargs.get("max_tokens", 800),
+                        stream=kwargs.get("stream", False),
+                        tools=None,
+                        tool_choice=None,
+                    )
+                except Exception as retry_error:
+                    logger.error(
+                        "model_router.tool_retry_failed",
+                        model=model_key,
+                        original_error=str(e)[:200],
+                        retry_error=str(retry_error)[:200],
+                    )
+                    raise retry_error from e
             raise
 
     # ══════════════════════════════════════════════════════════
@@ -512,11 +539,22 @@ class ModelRouter:
         return False
 
     def get_current_model_info(self) -> tuple[str, str]:
-        """返回当前对话使用的 (provider, model_name)。"""
+        """返回当前对话使用的 (provider, model_name)。
+
+        优先检查 task_override（chat），因为 route() 也会先查 override。
+        否则返回 powerful tier 配置。
+        """
+        # ── 1. 检查 chat task override（与 route() 行为保持一致）──
+        override = self._task_overrides.get("chat")
+        if override:
+            return override.provider, override.model_name
+
+        # ── 2. Powerful tier 配置 ──
         tier = self._tier_configs.get("powerful")
         if tier:
             return tier.provider, tier.model_name
-        # Fallback
+
+        # ── 3. Fallback ──
         if self._adapters:
             provider = next(iter(self._adapters.keys()))
             return provider, DEFAULT_TIER_MODELS.get(provider, {}).get("powerful", "")

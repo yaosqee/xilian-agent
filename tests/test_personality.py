@@ -78,7 +78,7 @@ class TestRealPersonality:
             payload=msg,
             is_owner=True,
         )
-        return await self.agent.process(event)
+        return (await self.agent.process(event)).reply
 
     @pytest.mark.asyncio
     async def test_uses_renjia(self):
