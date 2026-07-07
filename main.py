@@ -115,9 +115,10 @@ async def main():
     logger.info("nudge_engine.ready", config=nudge_config.to_dict())
 
     # ── 2. 备份管理器 + 定时调度 ──
+    _env = _get_env_dir()
     backup = BackupManager(
-        db_path="data/xilian.db",
-        backup_root="backups",
+        db_path=str(_env / "data" / "xilian.db"),
+        backup_root=str(_env / "backups"),
         keep_days=7,
     )
     scheduler = AsyncIOScheduler()
@@ -160,7 +161,9 @@ async def main():
     async def weekly_reflection_job():
         await run_weekly_reflection(agent._db, agent.router)
 
-    asyncio.create_task(_cron_loop(23, 0, daily_autobiography_job, "daily_autobiography"))
+    _bg_tasks: list[asyncio.Task] = []  # 收集后台任务引用，供 shutdown_all 取消
+
+    _bg_tasks.append(asyncio.create_task(_cron_loop(23, 0, daily_autobiography_job, "daily_autobiography")))
 
     # 每周日 4:30
     async def _cron_weekly_loop(dow: int, hour: int, minute: int, job_func, job_name: str):
@@ -185,7 +188,7 @@ async def main():
             except Exception as e:
                 logger.error(f"cron.{job_name}_error", error=str(e))
 
-    asyncio.create_task(_cron_weekly_loop(6, 4, 30, weekly_reflection_job, "weekly_reflection"))
+    _bg_tasks.append(asyncio.create_task(_cron_weekly_loop(6, 4, 30, weekly_reflection_job, "weekly_reflection")))
     logger.info("自传体写作调度已启动 (每日 23:00 自传体, 每周日 4:30 反思)")
 
     # ── 阶段 6: 自主问候 + 令牌补充调度 ──
@@ -239,8 +242,8 @@ async def main():
             except Exception as e:
                 logger.error("token_refill.error", error=str(e))
 
-    asyncio.create_task(nudge_loop())
-    asyncio.create_task(token_refill_loop())
+    _bg_tasks.append(asyncio.create_task(nudge_loop()))
+    _bg_tasks.append(asyncio.create_task(token_refill_loop()))
     logger.info("自主生命节律已启动 (每15min 想念检查, 每20min 令牌补充)")
 
     # ── 阶段 7b: Notebook 定时任务 ──
@@ -266,7 +269,7 @@ async def main():
             except Exception as e:
                 logger.error("check_due_tasks.error", error=str(e))
 
-    asyncio.create_task(check_due_tasks())
+    _bg_tasks.append(asyncio.create_task(check_due_tasks()))
     logger.info("Notebook 调度已启动 (每15分钟任务检查)")
 
     # ── Phase 1: 用户画像粗粒化兜底（每日凌晨 5:00，周日 force 全量安全网）──
@@ -288,7 +291,7 @@ async def main():
                     force=is_sunday,
                 )
 
-    asyncio.create_task(_cron_loop(5, 0, consolidate_user_portrait, "portrait_consolidate"))
+    _bg_tasks.append(asyncio.create_task(_cron_loop(5, 0, consolidate_user_portrait, "portrait_consolidate")))
     logger.info("用户画像粗粒化调度已启动 (每日 5:00, 周日 force 全量安全网)")
 
     # ── 月度全量重建安全网（每月 1 日 5:30，在 portrait cron 之后）──
@@ -326,7 +329,7 @@ async def main():
             except Exception as e:
                 logger.error(f"cron.{job_name}_error", error=str(e))
 
-    asyncio.create_task(_cron_monthly_loop(1, 5, 30, monthly_rebuild_job, "monthly_portrait_rebuild"))
+    _bg_tasks.append(asyncio.create_task(_cron_monthly_loop(1, 5, 30, monthly_rebuild_job, "monthly_portrait_rebuild")))
     logger.info("月度画像全量重建安全网已启动 (每月 1 日 5:30)")
 
     # ── 启动补执行：检查是否有因关机错过的定时任务 ──
@@ -371,7 +374,7 @@ async def main():
                     logger.error("cron.catch_up_error", task=task_name, error=str(e))
 
     # 等 agent 完全就绪后再补执行（让 scheduler 先跑起来）
-    asyncio.create_task(_catch_up_cron())
+    _bg_tasks.append(asyncio.create_task(_catch_up_cron()))
 
     # ── 阶段 7c: AttentionScheduler 初始化 ──
     attention = AttentionScheduler()
@@ -380,7 +383,7 @@ async def main():
     attention._agent = agent
     attention._nudge_engine = nudge  # 桥接：notify → pending_greeting
     agent.attention_scheduler = attention
-    asyncio.create_task(attention.start())
+    _bg_tasks.append(asyncio.create_task(attention.start()))
     logger.info("AttentionScheduler 已启动 (5s tick)")
 
     # ── 3. 安全过滤层 ──
@@ -500,7 +503,22 @@ async def main():
         logger.warning("tray.init_failed", error=str(e))
 
     # ── 6. 启动 ──
+    _shutting_down = False
+
     async def shutdown_all():
+        nonlocal _shutting_down
+        if _shutting_down:
+            return
+        _shutting_down = True
+
+        # 1. 取消所有后台定时任务（cron loops / nudge / attention）
+        logger.info("shutdown.cancelling_bg_tasks", count=len(_bg_tasks))
+        for t in _bg_tasks:
+            t.cancel()
+        if _bg_tasks:
+            await asyncio.wait(_bg_tasks, timeout=5)
+
+        # 2. 停止调度器、网关、Agent
         scheduler.shutdown(wait=False)
         await gateway.stop()
         await agent.shutdown()
@@ -512,11 +530,7 @@ async def main():
     except KeyboardInterrupt:
         logger.info("收到中断信号，正在关闭...")
     finally:
-        scheduler.shutdown(wait=False)
-        await gateway.stop()
-        await agent.shutdown()
-        if tray_icon:
-            tray_icon.stop()
+        await shutdown_all()
         logger.info("昔涟已休眠。晚安，伙伴 ♪")
 
 

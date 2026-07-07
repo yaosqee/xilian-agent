@@ -95,8 +95,10 @@ class AutobiographyWriter:
         snapshots = await self._db.get_emotion_snapshots(limit=200)
         today_snapshots = self._filter_today_snapshots(snapshots, date_str)
 
-        # 3. 组装写作 prompt
-        prompt = self._build_writing_prompt(today_memories, today_snapshots, date_str)
+        # 3. 组装写作 prompt（计算真实天数）"""
+        existing = await self._db.get_autobiography_list(limit=500)
+        day_count = len(existing) + 1  # 今天这篇是第 N 天
+        prompt = self._build_writing_prompt(today_memories, today_snapshots, date_str, day_count)
 
         # 4. DS Flash 生成
         try:
@@ -249,10 +251,9 @@ class AutobiographyWriter:
         ]
 
     def _build_writing_prompt(
-        self, memories: list[dict], snapshots: list[dict], date_str: str
+        self, memories: list[dict], snapshots: list[dict], date_str: str, day_count: int = 1
     ) -> str:
         """组装写作提示"""
-        day_count = 1  # 可从 DB 获取已有天数
         lines = [f"今天是 {date_str}。这是昔涟的第 {day_count} 天日记。\n"]
 
         lines.append("今天和伙伴的对话片段：")

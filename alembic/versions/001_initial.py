@@ -33,6 +33,7 @@ def upgrade():
         sa.Column('emotion_intensity', sa.Float),
         sa.Column('user_id', sa.Text, server_default='hezi'),
         sa.Column('source', sa.Text, server_default='console'),
+        sa.Column('images', sa.Text, server_default='[]'),
     )
     op.create_index('idx_logs_timestamp', 'conversation_logs', ['timestamp'])
     op.create_index('idx_logs_session', 'conversation_logs', ['session_id'])

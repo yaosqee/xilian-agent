@@ -5,6 +5,7 @@ DatabaseManager — SQLite 数据库模块
 阶段 2：conversation_logs 表建表就位。
 阶段 3：新增 episodic_memories + message_queue 表 + CRUD，对话日志实际写入。
 """
+import asyncio
 import json
 import uuid
 import time
@@ -33,7 +34,8 @@ CREATE TABLE IF NOT EXISTS conversation_logs (
     emotion_primary TEXT,
     emotion_intensity REAL,
     user_id         TEXT    DEFAULT 'hezi',
-    source          TEXT    DEFAULT 'console'
+    source          TEXT    DEFAULT 'console',
+    images          TEXT    DEFAULT '[]'
 );
 """
 
@@ -409,6 +411,13 @@ class DatabaseManager:
             await self._conn.execute(_CREATE_PHASE_PROFILE)
             await self._conn.execute(_CREATE_TOOL_USAGE_LOG)
             await self._conn.execute(_CREATE_UPLOADED_IMAGES)
+            # 迁移：为已有 conversation_logs 表补加 images 列（V3.7+，Alembic 迁移暂未覆盖）
+            try:
+                await self._conn.execute(
+                    "ALTER TABLE conversation_logs ADD COLUMN images TEXT DEFAULT '[]'"
+                )
+            except Exception:
+                pass  # 列已存在
             for idx_sql in _CREATE_INDEXES_SQL:
                 if "user_portrait" in idx_sql or "portrait_version" in idx_sql:
                     await self._conn.execute(idx_sql)
@@ -425,20 +434,32 @@ class DatabaseManager:
     async def _try_alembic_migrate(self) -> bool:
         """尝试用 Alembic 迁移。成功返回 True，失败返回 False。"""
         try:
-            import subprocess, os as _os
+            import os as _os
             root = Path(__file__).resolve().parent.parent.parent
             env = {**_os.environ, "SQLALCHEMY_URL": f"sqlite:///{self.db_path}"}
-            result = subprocess.run(
-                ["uv", "run", "alembic", "upgrade", "head"],
+            proc = await asyncio.create_subprocess_exec(
+                "uv", "run", "alembic", "upgrade", "head",
                 cwd=str(root),
-                capture_output=True, text=True,
-                timeout=30,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-            if result.returncode == 0:
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=30,
+                )
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                logger.warning("database.alembic_timeout")
+                return False
+            if proc.returncode == 0:
                 logger.info("database.alembic_migrated")
                 return True
-            logger.warning("database.alembic_failed", stderr=result.stderr[:200])
+            stderr_text = stderr.decode() if stderr else ""
+            logger.warning("database.alembic_failed", stderr=stderr_text[:200])
             return False
         except Exception as e:
             logger.info("database.alembic_unavailable", reason=str(e))
@@ -447,6 +468,13 @@ class DatabaseManager:
     async def _manual_init(self):
         """降级：手动建表 + 建索引（幂等）。"""
         await self._conn.execute(_CREATE_CONVERSATION_LOGS)
+        # 迁移：为已有 conversation_logs 表补加 images 列（V3.7+）
+        try:
+            await self._conn.execute(
+                "ALTER TABLE conversation_logs ADD COLUMN images TEXT DEFAULT '[]'"
+            )
+        except Exception:
+            pass  # 列已存在
         await self._conn.execute(_CREATE_EPISODIC_MEMORIES)
         await self._conn.execute(_CREATE_MESSAGE_QUEUE)
         await self._conn.execute(_CREATE_EMOTION_SNAPSHOTS)

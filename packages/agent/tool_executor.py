@@ -90,7 +90,7 @@ class ToolExecutor:
                 success=result.success,
             )
         except Exception:
-            pass  # 日志失败不影响工具执行
+            logger.debug("tool_executor.usage_log_failed", tool=tool_name, trace_id=getattr(self, '_trace_id', 'unknown'))
 
         # 7. audit_log
         await self._write_audit_log(tool_name, arguments, result, user_id)

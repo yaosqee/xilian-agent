@@ -126,6 +126,10 @@ async def coding_delegate(
 
     except asyncio.TimeoutError:
         logger.error("coding_delegate.timeout")
+        try:
+            proc.kill()
+        except Exception:
+            pass
         return ToolResult.fail(
             "人家请 Claude Code 帮忙了……但它想了太久 (´•̥ω•̥̥`) 要不换个方式说说？"
         )
@@ -148,8 +152,14 @@ def _find_claude() -> str | None:
     home = os.path.expanduser("~")
     candidates = [
         f"{home}/.npm-global/bin/claude",
-        f"{home}/.nvm/versions/node/*/bin/claude",
     ]
+    # Expand nvm glob paths
+    nvm_glob = Path(home) / ".nvm" / "versions" / "node" / "*" / "bin" / "claude"
+    try:
+        for p in sorted(nvm_glob.parent.parent.parent.glob("**/bin/claude")):
+            candidates.append(str(p))
+    except Exception:
+        pass
     for c in candidates:
         p = Path(c)
         if p.exists():

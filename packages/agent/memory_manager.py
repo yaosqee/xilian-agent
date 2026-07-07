@@ -421,7 +421,7 @@ class MemoryManager:
     async def _embed_text(self, text: str) -> list[float] | None:
         """云端嵌入（ModelRouter.embed → 硅基流动 bge-m3）。无 Key 时返回 None。"""
         if not self._router:
-            return [0.0] * 1024  # 测试环境兜底
+            return None
         try:
             return await self._router.embed(text)
         except Exception as e:

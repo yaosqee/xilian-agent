@@ -142,9 +142,13 @@ class MarkerParser:
 
         if inner.startswith("emotion:"):
             parts = inner.split(":")
+            try:
+                intensity = float(parts[2])
+            except (ValueError, IndexError):
+                intensity = 0.5  # fallback on malformed marker
             return ParsedToken(
                 kind="special", text=raw, marker_type="emotion",
-                payload={"emotion": parts[1], "intensity": float(parts[2])},
+                payload={"emotion": parts[1], "intensity": intensity},
             )
         elif inner.startswith("action:"):
             return ParsedToken(
@@ -152,9 +156,13 @@ class MarkerParser:
                 payload={"action": inner[7:]},
             )
         elif inner.startswith("pause:"):
+            try:
+                seconds = float(inner[6:])
+            except ValueError:
+                seconds = 1.0  # fallback on malformed marker
             return ParsedToken(
                 kind="special", text=raw, marker_type="pause",
-                payload={"seconds": float(inner[6:])},
+                payload={"seconds": seconds},
             )
         elif inner.startswith("emph:"):
             return ParsedToken(

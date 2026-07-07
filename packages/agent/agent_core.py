@@ -148,6 +148,7 @@ class AgentCore:
 
         # 阶段 2+4: PAD 情感引擎（唯一情绪系统，已取代阶段2 EmotionAnalyzer）
         self._pending_analysis: asyncio.Task | None = None
+        self._bg_tasks: set[asyncio.Task] = set()  # 后台任务追踪（shutdown 时统一取消）
         self._emotion_generation: int = 0  # 代数计数器，确保只有最新分析的结果被采纳
 
         self.emotion_engine: EmotionEngine = EmotionEngine(
@@ -219,6 +220,21 @@ class AgentCore:
             db_path=str(self._db.db_path),
             context_modules=self._context_builder.module_names,
         )
+
+    def _launch_bg(self, coro, name: str = "") -> asyncio.Task:
+        """统一后台任务启动：存储弱引用 + done 回调自动清理，shutdown 时统一取消。
+
+        Args:
+            coro: 要调度的协程
+            name: 任务名（便于调试）
+
+        Returns:
+            创建的 Task 对象（通常调用方不需要存储返回值）
+        """
+        task = asyncio.create_task(coro, name=name)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
 
     # ============================================================
     # 生命周期
@@ -435,25 +451,38 @@ class AgentCore:
 
     async def shutdown(self) -> str:
         """
-        优雅关闭：编码待处理记忆 → 关闭 DB。
+        优雅关闭：取消所有后台任务 → 编码待处理记忆 → 关闭 DB。
 
         Returns:
             "done" / "empty" / "failed"
         """
-        # 取消清理任务
+        # 1. 取消清理任务（tracked separately）
         if hasattr(self, '_cleanup_task') and not self._cleanup_task.done():
             self._cleanup_task.cancel()
 
-        # 取消 pending 的情感分析
+        # 2. 取消 pending 的情感分析（tracked separately）
         if self._pending_analysis and not self._pending_analysis.done():
             self._pending_analysis.cancel()
 
-        # 记忆编码兜底
+        # 3. 取消所有后台任务（fire-and-forget tasks）
+        bg_tasks = list(self._bg_tasks)
+        if bg_tasks:
+            logger.info("agent.shutdown.cancelling_bg_tasks", count=len(bg_tasks))
+            for t in bg_tasks:
+                t.cancel()
+            # 等待取消完成（带超时，避免无限等待）
+            await asyncio.wait(bg_tasks, timeout=5)
+            remaining = [t for t in bg_tasks if not t.done()]
+            if remaining:
+                logger.warning("agent.shutdown.bg_tasks_timeout", remaining=len(remaining))
+            self._bg_tasks.clear()
+
+        # 4. 记忆编码兜底（此时 bg tasks 已全部取消，不会被新写入打断）
         result = "empty"
         if self.memory_manager:
             result = await self.memory_manager.shutdown()
 
-        # 关闭数据库
+        # 5. 关闭数据库
         await self._db.close()
 
         logger.info("agent.shutdown_complete", memory_result=result)
@@ -661,7 +690,7 @@ class AgentCore:
                 if sticker_id:
                     sticker = self._resolve_sticker(sticker_id)
                     if sticker:
-                        self._sticker_cooldown = 3  # LLM 主动发的也设冷却
+                        self._sticker_cooldown = 4  # LLM 主动发的也设冷却（4→tick后3，完整3轮冷却）
                     break  # 只取第一个 sticker
 
         # 兜底：LLM 没发 sticker 时，情绪引擎触发
@@ -690,10 +719,11 @@ class AgentCore:
 
         # ── 8b. Phase 1: 微事件提取 + 粗粒化检查（链式调用，消除竞态）──
         if self.portrait_manager:
-            asyncio.create_task(
+            self._launch_bg(
                 self.portrait_manager.extract_then_check_coarse(
                     event.payload, reply
-                )
+                ),
+                name="portrait_extract",
             )
 
         # ── 8c. 阶段 7b: 自动记笔记 ──
@@ -712,10 +742,11 @@ class AgentCore:
                 if parts:
                     portrait_ctx = "。".join(parts)
 
-            asyncio.create_task(
+            self._launch_bg(
                 self.notebook_manager.auto_note_after_message(
                     event.payload, reply, portrait_context=portrait_ctx
-                )
+                ),
+                name="auto_note",
             )
         else:
             logger.warning("notebook.manager_missing")
@@ -746,8 +777,9 @@ class AgentCore:
 
         # ── 9c. 高价值图片记忆编码（后台异步，不阻塞）──
         if image_description and self._current_images:
-            asyncio.create_task(
-                self._encode_image_memory(image_description, event, reply)
+            self._launch_bg(
+                self._encode_image_memory(image_description, event, reply),
+                name="image_memory_encode",
             )
 
         # ── 10. 记录历史（编造数据先清洗再入上下文，防止下轮当事实）──
@@ -769,9 +801,9 @@ class AgentCore:
         # 阶段 8: 每 5 轮触发人设一致性评分
         self._round_count += 1
         if self._round_count % 5 == 0:
-            asyncio.create_task(self._score_personality_consistency())
+            self._launch_bg(self._score_personality_consistency(), name="personality_score")
 
-        # 表情包冷却递减
+        # 表情包冷却递减（在 sticker 设置之后，确保 LLM 发的 sticker 冷却完整 3 轮）
         self._tick_sticker_cooldown()
 
         return AgentResponse(reply=reply, sticker=sticker)
@@ -851,10 +883,11 @@ class AgentCore:
             self.context.icebreaker_deferred = True
             # 持久化拒绝标记
             if self.notebook_manager:
-                asyncio.create_task(
+                self._launch_bg(
                     self._db.insert_notebook(
                         "focus", "icebreaker_deferred", importance=0.0,
-                    )
+                    ),
+                    name="icebreaker_deferred",
                 )
             return
 
@@ -876,7 +909,7 @@ class AgentCore:
                 "icebreaker.consolidate_triggered",
                 exchanges=self.context.icebreaker_exchanges,
             )
-            asyncio.create_task(self._icebreaker_consolidate())
+            self._launch_bg(self._icebreaker_consolidate(), name="icebreaker_consolidate")
 
     async def _icebreaker_consolidate(self) -> None:
         """
@@ -944,10 +977,11 @@ class AgentCore:
         # Phase 1: 微事件提取 + 粗粒化已在 process() 中独立调度
         # 此处仅负责记忆编码，不再调用 mark_dirty()
 
-        asyncio.create_task(
+        self._launch_bg(
             self.memory_manager.schedule_encoding(
                 conversation_context, persona_topics=persona_topics,
-            )
+            ),
+            name="memory_encode",
         )
 
     # 图片记忆高价值判断：实体关键词（描述含这些词时编码为视觉记忆）
@@ -1170,7 +1204,7 @@ class AgentCore:
                 ],
             }
             # 保留 thinking mode 字段（DeepSeek V4-Pro 要求回传）
-            reasoning = current_message.reasoning_content
+            reasoning = getattr(current_message, 'reasoning_content', None)
             if reasoning:
                 assistant_msg["reasoning_content"] = reasoning
             follow_up.append(assistant_msg)
@@ -1229,9 +1263,9 @@ class AgentCore:
             return None
 
         user_text = event.payload.strip()
-        confirm_words = {"确认", "好的", "好", "可以", "行", "ok", "yes", "嗯", "做吧", "去吧"}
+        confirm_words = {"确认", "好的", "好", "可以", "行", "ok", "yes", "嗯", "做吧", "去吧", "执行", "确认执行"}
 
-        if user_text in confirm_words or any(user_text.startswith(w) for w in confirm_words):
+        if user_text in confirm_words:
             self._pending_confirmation = None
             tool_name = pending["tool_name"]
             arguments = pending["arguments"]
@@ -1303,7 +1337,10 @@ class AgentCore:
         Returns:
             (cleaned_text, markers_list)
         """
-        parser = MarkerParser()
+        # 复用实例减少对象创建（MarkerParser 无状态，feed+flush 后重置）
+        if not hasattr(self, '_marker_parser'):
+            self._marker_parser = MarkerParser()
+        parser = self._marker_parser
         tokens = parser.feed(text)
         tokens += parser.flush()
 
@@ -1495,11 +1532,25 @@ class AgentCore:
         return "嗯…（轻轻翻开一页书）人家刚才走神了一下呢。伙伴再说一遍好吗？"
 
     async def reset_session(self) -> None:
-        """重置会话（取消 pending 分析 + 清空历史 + 上下文 + 清 DB 日志）"""
+        """重置会话（取消 pending 分析 + 清空历史 + 上下文 + 清 DB 日志 + 重置运行时状态）"""
         if self._pending_analysis and not self._pending_analysis.done():
             self._pending_analysis.cancel()
             self._pending_analysis = None
         self.context.clear()
+        # 重置会话级运行时状态（保留持久化状态如 affection_score）
+        self._pending_confirmation = None
+        self._round_count = 0
+        self._drift_counter = 0
+        self._sticker_cooldown = 0
+        self._emotion_flat_rounds = 0
+        self._last_modulated_params = None
+        self._last_eval_data = None
+        self._strategy_effectiveness = {}
+        self._current_images = []
+        self._user_sent_sticker = False
+        self._emotion_generation = 0
+        self._last_interaction_time = 0.0
+        self.is_safe_mode = False
         try:
             deleted = await self._db.clear_conversation_logs()
             logger.info("agent.session_reset", db_rows_cleared=deleted)

@@ -378,6 +378,9 @@ class ModelRouter:
                 model = DEFAULT_TIER_MODELS.get(provider, {}).get(tier, f"{provider}-default")
                 logger.warning("model_router.no_tier_config", tier=tier,
                              fallback_provider=provider, fallback_model=model)
+                # Set sensible defaults even in fallback path
+                kwargs.setdefault("temperature", 0.7)
+                kwargs.setdefault("max_tokens", 800)
             else:
                 raise RuntimeError(
                     "没有可用的模型供应商。请配置至少一个 API Key（如 DEEPSEEK_API_KEY）。"
@@ -385,11 +388,19 @@ class ModelRouter:
         else:
             provider = tier_cfg.provider
             adapter = self._adapters.get(provider)
-            if adapter is None:
+            if adapter is not None:
+                # Adapter found directly — use tier_cfg as-is
+                model = tier_cfg.model_name
+                kwargs.setdefault("temperature", tier_cfg.temperature)
+                kwargs.setdefault("max_tokens", tier_cfg.max_tokens)
+            else:
                 # Adapter 未加载 → 尝试创建
                 adapter = self._create_adapter(provider)
                 if adapter:
                     self._adapters[provider] = adapter
+                    model = tier_cfg.model_name
+                    kwargs.setdefault("temperature", tier_cfg.temperature)
+                    kwargs.setdefault("max_tokens", tier_cfg.max_tokens)
                 else:
                     # 回退到任意可用 adapter
                     if not self._adapters:
@@ -402,11 +413,9 @@ class ModelRouter:
                                  requested_model=tier_cfg.model_name, fallback_model=fallback_model)
                     provider = fallback_provider
                     model = fallback_model
-
-            model = tier_cfg.model_name
-            # Merge tier-level defaults with call-site kwargs
-            kwargs.setdefault("temperature", tier_cfg.temperature)
-            kwargs.setdefault("max_tokens", tier_cfg.max_tokens)
+                    # Use fallback defaults, not the unavailable tier_cfg's
+                    kwargs.setdefault("temperature", 0.7)
+                    kwargs.setdefault("max_tokens", 800)
 
         # ── 4. Tool compatibility check ──
         model_key = f"{provider}:{model}"

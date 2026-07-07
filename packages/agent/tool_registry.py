@@ -81,6 +81,8 @@ class ToolRegistry:
             trigger_portrait: True 时工具结果标记印象文档 dirty
         """
         def decorator(func: Callable) -> Callable:
+            if name in self._tools:
+                logger.warning("工具覆盖注册", name=name, existing_category=self._tools[name]["category"])
             self._tools[name] = {
                 "name": name,
                 "description": description,
