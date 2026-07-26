@@ -66,6 +66,7 @@ from ..tool_registry import register_tool, ToolPermission
     category="system",
     max_frequency=3,
     requires_confirmation=True,
+    check_available=lambda: _find_claude() is not None,
 )
 async def coding_delegate(
     task_description: str,

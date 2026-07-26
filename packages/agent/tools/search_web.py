@@ -39,6 +39,7 @@ SEARCH_URL = "https://open.bigmodel.cn/api/paas/v4/web_search"
     permission=ToolPermission.READ_ONLY,
     category="external",
     max_frequency=8,
+    check_available=lambda: bool(ZHIPU_KEY),
 )
 async def search_web(query: str, recency: str = "noLimit",
                      count: int = 5, ctx=None) -> ToolResult:

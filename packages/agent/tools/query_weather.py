@@ -40,6 +40,7 @@ INDICES_URL = f"{QWEATHER_HOST}/v7/indices/1d"
     permission=ToolPermission.READ_ONLY,
     category="external",
     max_frequency=6,
+    check_available=lambda: bool(os.getenv("QWEATHER_API_KEY")) or bool(os.getenv("ZHIPU_SEARCH_API_KEY")),
 )
 async def query_weather(city: str, type: str = "now", ctx=None) -> ToolResult:
     """

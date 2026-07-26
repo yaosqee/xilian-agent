@@ -23,10 +23,14 @@ def register_tool(name: str, description: str, schema: dict,
                   max_frequency: int = 10,
                   requires_confirmation: bool = False,
                   trigger_memory: bool = False,
-                  trigger_portrait: bool = False):
+                  trigger_portrait: bool = False,
+                  check_available: Callable[[], bool] | None = None):
     """
     模块级工具注册（供 autodiscover 使用）。
     工具文件在顶层调用此函数，autodiscover 导入后消费 _PENDING 队列。
+
+    Args:
+        check_available: 可选，返回 False 时跳过注册（依赖缺失时自动排除）。
     """
     if permission is None:
         permission = ToolPermission.READ_ONLY
@@ -43,6 +47,7 @@ def register_tool(name: str, description: str, schema: dict,
             "requires_confirmation": requires_confirmation,
             "trigger_memory": trigger_memory,
             "trigger_portrait": trigger_portrait,
+            "check_available": check_available,
         })
         return func
     return decorator
@@ -195,7 +200,14 @@ class ToolRegistry:
         seen = set(self._tools.keys())
         for meta in _PENDING:
             if meta["name"] not in seen:
-                self.register(**{k: v for k, v in meta.items() if k != "func"})(
+                # 检查依赖可用性
+                checker = meta.get("check_available")
+                if checker is not None and not checker():
+                    logger.info(
+                        f"tool.autodiscover_skip: {meta['name']} — 依赖不可用，跳过注册"
+                    )
+                    continue
+                self.register(**{k: v for k, v in meta.items() if k not in ("func", "check_available")})(
                     meta["func"]
                 )
                 seen.add(meta["name"])
