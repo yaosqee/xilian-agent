@@ -98,6 +98,34 @@ async def test_process_schedules_encoding(agent):
 
 
 @pytest.mark.asyncio
+async def test_encoding_reads_current_round_not_previous(agent):
+    """回归：修复「记忆编码落后一轮」。
+
+    编码调度必须发生在 add_message 之后，否则 get_last_n(6) 读到的是上一轮交换，
+    会话最后一条交换永不进入 pending，shutdown 兜底也救不回。
+    """
+    # 预置 2 轮历史，使 len(history) >= 4 通过 _schedule_memory_encoding 的早退门槛
+    agent.context.history = [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "你好呀~"},
+        {"role": "user", "content": "今天怎么样"},
+        {"role": "assistant", "content": "还不错呢"},
+    ]
+    payload = "这是本轮的新消息"
+    event = InternalEvent(source="test", user_id="hezi", payload=payload, is_owner=True)
+    await agent.process(event)
+
+    agent.memory_manager.schedule_encoding.assert_called()
+    ctx = agent.memory_manager.schedule_encoding.call_args.args[0]
+    exchanges = ctx["exchanges"]
+
+    # 最后两条必须是本轮 user + assistant（旧代码此处是上一轮的「今天怎么样/还不错呢」）
+    assert exchanges[-2]["role"] == "user"
+    assert payload in exchanges[-2]["content"]
+    assert exchanges[-1]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
 async def test_process_model_error_degraded(agent):
     agent.router.route.side_effect = Exception("API down")
     event = InternalEvent(source="test", user_id="hezi", payload="测试错误处理", is_owner=True)

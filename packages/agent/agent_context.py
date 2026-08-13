@@ -6,6 +6,8 @@ AgentContext — Agent 上下文容器
 from dataclasses import dataclass, field
 from typing import Optional, Callable
 
+from loguru import logger
+
 # ═══════════════════════════════════════════════════════════
 # 工具函数
 # ═══════════════════════════════════════════════════════════
@@ -166,12 +168,18 @@ class AgentContext:
         # fire-and-forget 压缩
         import asyncio
         async def _compress():
+            summary = None
             try:
                 summary = await self._compress_callback(oldest_msgs)
-                if summary:
-                    self._inject_summary(summary)
-            except Exception:
-                pass  # 压缩失败静默，不影响对话
+            except Exception as e:
+                logger.warning("context.compress_failed", error=str(e))
+
+            if not summary:
+                # 压缩失败或返回 None → 回插原始消息，避免「先删后压」导致对话永久丢失
+                self._restore_oldest(oldest_msgs)
+                return
+
+            self._inject_summary(summary)
 
         try:
             loop = asyncio.get_event_loop()
@@ -179,6 +187,12 @@ class AgentContext:
                 loop.create_task(_compress())
         except RuntimeError:
             pass
+
+    def _restore_oldest(self, msgs: list[dict]) -> None:
+        """压缩失败回插：把被移除的最老消息放回 history 顶部并恢复 token 计数。"""
+        from .context_builder import estimate_tokens as _et
+        self.history[0:0] = msgs
+        self._total_history_tokens += sum(_et(m["content"]) for m in msgs)
 
     def _inject_summary(self, summary: str) -> None:
         """将压缩摘要插入 history 顶部（在所有原始消息之前）。

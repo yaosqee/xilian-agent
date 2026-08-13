@@ -109,7 +109,7 @@ class EpisodicMemoryRepository(BaseRepository):
         """获取所有记忆记录（容量管理用）"""
         conn = self._ensure_conn()
         cursor = await conn.execute(
-            "SELECT id, timestamp, importance FROM episodic_memories "
+            "SELECT id, timestamp, importance, summary FROM episodic_memories "
             "WHERE session_id != 'character'"
         )
         rows = await cursor.fetchall()

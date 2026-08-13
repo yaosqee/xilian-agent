@@ -826,7 +826,7 @@ class DatabaseManager:
             raise RuntimeError("DatabaseManager.init() 未调用")
 
         cursor = await self._conn.execute(
-            "SELECT id, timestamp, importance FROM episodic_memories "
+            "SELECT id, timestamp, importance, summary FROM episodic_memories "
             "WHERE session_id != 'character'"
         )
         rows = await cursor.fetchall()

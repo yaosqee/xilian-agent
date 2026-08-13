@@ -714,9 +714,6 @@ class AgentCore:
         # ── 7. 情感分析（启动后台任务，稍后等待完成再写日志）──
         emotion_task = self._schedule_emotion_analysis(event.payload)
 
-        # ── 8. 后台记忆编码 (NEW) ──
-        self._schedule_memory_encoding()
-
         # ── 8b. Phase 1: 微事件提取 + 粗粒化检查（链式调用，消除竞态）──
         if self.portrait_manager:
             self._launch_bg(
@@ -786,6 +783,10 @@ class AgentCore:
         self.context.add_message("user", event.payload)
         clean_for_ctx = self._sanitize_fabrication(reply, tools_called)
         self.context.add_message("assistant", clean_for_ctx)
+
+        # ── 10b. 后台记忆编码（必须在 add_message 之后调度：
+        #         get_last_n(6) 才含本轮交换，emotion_snapshot 也是本轮已 await 完成的）──
+        self._schedule_memory_encoding()
 
         trace_log.info(
             "agent.process.done",

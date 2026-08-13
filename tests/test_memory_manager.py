@@ -187,6 +187,24 @@ async def test_manage_capacity_under_limit(memory_mgr, db):
     assert evicted == 0
 
 
+@pytest.mark.asyncio
+async def test_capacity_eviction_archives_remote_memory(memory_mgr, db, mock_router):
+    """回归：超容量淘汰应把被淘汰记忆压缩为「遥远记忆」归档，而非静默丢弃。
+
+    修复前 get_all_episodic 只取 id/timestamp/importance 三列（缺 summary），
+    _compress_evicted 拿不到 summary 直接 return，归档从不发生、被淘汰记忆被永久 delete。
+    """
+    for i in range(10):
+        await db.insert_episodic_memory(f"重要记忆 {i}", "[]", importance=0.8)
+
+    evicted = await memory_mgr.manage_capacity(max_records=5)
+    assert evicted > 0
+
+    all_memories = await db.get_all_episodic()
+    remote = [m for m in all_memories if m.get("summary", "").startswith("[遥远记忆]")]
+    assert len(remote) >= 1
+
+
 def test_repair_pending_empty(memory_mgr):
     loop = asyncio.get_event_loop()
     repaired = loop.run_until_complete(memory_mgr.repair_pending())
