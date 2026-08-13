@@ -28,6 +28,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional
 
+from ..shared.json_utils import robust_json_parse
+
 
 # ═══════════════════════════════════════════════════════════
 # PAD 情绪参考中心（11 个基本情绪 × (P, A, D)）
@@ -597,17 +599,9 @@ class AppraisalExtractor:
 
     def _parse_response(self, raw: str) -> Optional[AppraisalResult]:
         """解析 LLM 返回的 JSON"""
-        try:
-            # 尝试直接解析
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            # 尝试提取 ```json ... ``` 代码块
-            try:
-                start = raw.index("{")
-                end = raw.rindex("}") + 1
-                data = json.loads(raw[start:end])
-            except (ValueError, json.JSONDecodeError):
-                return None
+        data = robust_json_parse(raw)
+        if data is None:
+            return None
 
         rel = data.get("relevance", 0.5)
         fac = data.get("facilitation", 0.0)

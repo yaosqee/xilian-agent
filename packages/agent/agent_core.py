@@ -23,6 +23,7 @@ from ..shared.events import InternalEvent
 from ..shared.database import DatabaseManager
 from ..shared.vector_store import VectorStore
 from ..shared.marker_parser import MarkerParser
+from ..shared.json_utils import robust_json_parse
 from .agent_context import AgentContext
 from .tool_registry import ToolRegistry
 from .tool_executor import ToolExecutor
@@ -233,8 +234,22 @@ class AgentCore:
         """
         task = asyncio.create_task(coro, name=name)
         self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_tasks.discard)
+        task.add_done_callback(self._bg_done)
         return task
+
+    def _bg_done(self, task: asyncio.Task) -> None:
+        """后台任务完成回调：清理弱引用 + 统一记录未捕获异常（6.3 修复）。"""
+        self._bg_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "bg_task_failed",
+                name=task.get_name(),
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
 
     # ============================================================
     # 生命周期
@@ -1941,19 +1956,7 @@ class AgentCore:
             raw_text = raw.content if hasattr(raw, 'content') else str(raw)
 
             # 解析 JSON
-            import json as _json
-            data = None
-            try:
-                data = _json.loads(raw_text)
-            except _json.JSONDecodeError:
-                # 尝试提取 {...}
-                try:
-                    start = raw_text.index("{")
-                    end = raw_text.rindex("}") + 1
-                    data = _json.loads(raw_text[start:end])
-                except (ValueError, _json.JSONDecodeError):
-                    pass
-
+            data = robust_json_parse(raw_text)
             if data is None:
                 return
 

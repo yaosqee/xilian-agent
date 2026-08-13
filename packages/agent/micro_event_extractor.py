@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from ..shared.json_utils import robust_json_parse
+
 
 # ── 提取 prompt ──────────────────────────────────────
 
@@ -134,19 +136,13 @@ class MicroEventExtractor:
             return []
 
         # 4. 解析 JSON
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            try:
-                start = raw_text.index("{")
-                end = raw_text.rindex("}") + 1
-                data = json.loads(raw_text[start:end])
-            except (ValueError, json.JSONDecodeError):
-                logger.warning(
-                    "micro_event.json_parse_failed",
-                    preview=raw_text[:100],
-                )
-                return []
+        data = robust_json_parse(raw_text)
+        if data is None:
+            logger.warning(
+                "micro_event.json_parse_failed",
+                preview=raw_text[:100],
+            )
+            return []
 
         events = data.get("events", [])
         if not isinstance(events, list):

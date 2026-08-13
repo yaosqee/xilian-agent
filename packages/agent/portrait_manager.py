@@ -13,6 +13,7 @@ import json
 
 from loguru import logger
 
+from ..shared.json_utils import robust_json_parse
 from .micro_event_extractor import MicroEventExtractor
 from .coarse_grain_engine import CoarseGrainEngine
 
@@ -343,16 +344,10 @@ class PortraitManager:
         raw_text = raw.content if hasattr(raw, 'content') else raw
         if not raw_text:
             return None
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            try:
-                start = raw_text.index("{")
-                end = raw_text.rindex("}") + 1
-                data = json.loads(raw_text[start:end])
-            except (ValueError, json.JSONDecodeError):
-                logger.warning("portrait.json_parse_failed", preview=raw_text[:100])
-                return None
+        data = robust_json_parse(raw_text)
+        if data is None:
+            logger.warning("portrait.json_parse_failed", preview=raw_text[:100])
+            return None
 
         portrait_text = data.get("portrait", "").strip()
         changes = data.get("changes", "").strip()
@@ -412,8 +407,8 @@ class PortraitManager:
                     source_ids="",
                     change_log="Phase 1 冷启动",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("portrait.cold_start_db_write_failed", error=str(e))
             logger.info("portrait.cold_start_phase1", length=len(result))
             return result
 

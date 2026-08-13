@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from ..shared.json_utils import robust_json_parse
+
 
 # ── 阈值配置（可调）──────────────────────────────────
 
@@ -258,16 +260,10 @@ class CoarseGrainEngine:
         if not raw_text:
             return None
 
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            try:
-                start = raw_text.index("{")
-                end = raw_text.rindex("}") + 1
-                data = json.loads(raw_text[start:end])
-            except (ValueError, json.JSONDecodeError):
-                logger.warning("coarse.l2_json_parse_failed", preview=raw_text[:100])
-                return None
+        data = robust_json_parse(raw_text)
+        if data is None:
+            logger.warning("coarse.l2_json_parse_failed", preview=raw_text[:100])
+            return None
 
         summary_text = (data.get("summary") or "").strip()
         if not summary_text or len(summary_text) < 20:
@@ -378,16 +374,10 @@ class CoarseGrainEngine:
         if not raw_text:
             return None
 
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            try:
-                start = raw_text.index("{")
-                end = raw_text.rindex("}") + 1
-                data = json.loads(raw_text[start:end])
-            except (ValueError, json.JSONDecodeError):
-                logger.warning("coarse.l1_json_parse_failed", preview=raw_text[:100])
-                return None
+        data = robust_json_parse(raw_text)
+        if data is None:
+            logger.warning("coarse.l1_json_parse_failed", preview=raw_text[:100])
+            return None
 
         portrait_text = (data.get("portrait") or "").strip()
         if not portrait_text or len(portrait_text) < 50:
@@ -484,16 +474,10 @@ class CoarseGrainEngine:
         if not raw_text:
             return None
 
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            try:
-                start = raw_text.index("{")
-                end = raw_text.rindex("}") + 1
-                data = json.loads(raw_text[start:end])
-            except (ValueError, json.JSONDecodeError):
-                logger.warning("coarse.l0_json_parse_failed", preview=raw_text[:100])
-                return None
+        data = robust_json_parse(raw_text)
+        if data is None:
+            logger.warning("coarse.l0_json_parse_failed", preview=raw_text[:100])
+            return None
 
         portrait_text = (data.get("portrait") or "").strip()
         if not portrait_text or len(portrait_text) < 50:

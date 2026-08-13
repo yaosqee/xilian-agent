@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Optional
 
 from .agent_context import COMPRESS_SUMMARY_PREFIX
+from ..shared.json_utils import robust_json_parse
 
 
 # ═══════════════════════════════════════════════════════════
@@ -582,7 +583,6 @@ class PortraitGuidanceModule(ContextModule):
             return ""
 
         try:
-            import json
             prompt = self.EXTRACT_GUIDANCE_PROMPT.replace("{l0_content}", l0)
             raw = await router.route(
                 "memory_encoding",
@@ -594,14 +594,8 @@ class PortraitGuidanceModule(ContextModule):
             if not raw_text:
                 return ""
 
-            try:
-                data = json.loads(raw_text)
-            except json.JSONDecodeError:
-                start = raw_text.index("{")
-                end = raw_text.rindex("}") + 1
-                data = json.loads(raw_text[start:end])
-
-            guidances = data.get("guidances", [])
+            data = robust_json_parse(raw_text)
+            guidances = data.get("guidances", []) if data else []
             if guidances:
                 self._cached_version = current_version
                 self._cached_guidance = (

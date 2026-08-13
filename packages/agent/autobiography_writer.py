@@ -11,6 +11,8 @@ from typing import Optional
 
 from loguru import logger
 
+from ..shared.json_utils import robust_json_parse
+
 
 # ═══════════════════════════════════════════════════════════
 # 系统提示
@@ -292,28 +294,16 @@ class AutobiographyWriter:
 
     def _parse_reflection_json(self, raw: str) -> Optional[dict]:
         """解析反思 JSON"""
-        try:
-            data = json.loads(raw)
-            return {
-                "learned": data.get("learned", ""),
-                "surprised": data.get("surprised", ""),
-                "grateful": data.get("grateful", ""),
-                "remember": data.get("remember", ""),
-            }
-        except json.JSONDecodeError:
-            try:
-                start = raw.index("{")
-                end = raw.rindex("}") + 1
-                data = json.loads(raw[start:end])
-                return {
-                    "learned": data.get("learned", ""),
-                    "surprised": data.get("surprised", ""),
-                    "grateful": data.get("grateful", ""),
-                    "remember": data.get("remember", ""),
-                }
-            except (ValueError, json.JSONDecodeError):
-                logger.warning("reflection.json_parse_failed", preview=raw[:100])
-                return None
+        data = robust_json_parse(raw)
+        if data is None:
+            logger.warning("reflection.json_parse_failed", preview=raw[:100])
+            return None
+        return {
+            "learned": data.get("learned", ""),
+            "surprised": data.get("surprised", ""),
+            "grateful": data.get("grateful", ""),
+            "remember": data.get("remember", ""),
+        }
 
 
 # ═══════════════════════════════════════════════════════════
