@@ -287,6 +287,8 @@ class AgentCore:
             )
             # 注入异步依赖到 Pipeline ServiceModule
             self._mem_retrieval.set_managers(self.memory_manager, self.portrait_manager, db=self._db)
+            # 2.1: L1/L0 更新后回调刷新内存分层画像（会话内生效）
+            self.portrait_manager.set_layered_updated_callback(self._reload_layered_portraits)
 
         # Phase 5: 注入 ModelRouter 引用供 PortraitGuidanceModule 使用
         self.context._router = self.router

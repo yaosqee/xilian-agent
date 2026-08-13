@@ -413,3 +413,52 @@ class TestEndToEndPipeline:
         assert pm._text_difference_ratio("伙伴喜欢编程", "伙伴讨厌早起") > 0.5
         assert pm._text_difference_ratio("", "") == 0.0
         assert pm._text_difference_ratio("有内容", "") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_extract_triggers_reload_callback_on_l1_update(db, mock_router):
+    """回归 2.1：L1/L0 粗粒化更新后，必须触发回调刷新会话内分层画像。"""
+    pm = PortraitManager(db=db, model_router=mock_router)
+    callback = AsyncMock()
+    pm.set_layered_updated_callback(callback)
+
+    pm._extractor.extract = AsyncMock(return_value=None)
+    pm._coarse_engine.check_and_coarse = AsyncMock(
+        return_value={"l1_updated": True, "l0_updated": False, "l2_updated": False}
+    )
+
+    await pm.extract_then_check_coarse("测试消息", "回复内容")
+
+    callback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_extract_no_callback_when_only_l2_updated(db, mock_router):
+    """回归 2.1：仅 L2 更新（无 L1/L0）不应触发会话内刷新回调。"""
+    pm = PortraitManager(db=db, model_router=mock_router)
+    callback = AsyncMock()
+    pm.set_layered_updated_callback(callback)
+
+    pm._extractor.extract = AsyncMock(return_value=None)
+    pm._coarse_engine.check_and_coarse = AsyncMock(
+        return_value={"l1_updated": False, "l0_updated": False, "l2_updated": True}
+    )
+
+    await pm.extract_then_check_coarse("测试消息", "回复内容")
+
+    callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consolidate_force_skips_legacy(db, mock_router):
+    """回归 2.2：consolidate(force=True) 只走新管道，不再双写旧 user_portrait 表。"""
+    pm = PortraitManager(db=db, model_router=mock_router)
+
+    pm._coarse_engine.force_coarse_all = AsyncMock(return_value="L0 核心画像内容")
+    pm._legacy_consolidate = AsyncMock(return_value="旧画像")
+
+    result = await pm.consolidate(force=True)
+
+    assert result == "L0 核心画像内容"
+    pm._coarse_engine.force_coarse_all.assert_awaited_once()
+    pm._legacy_consolidate.assert_not_awaited()

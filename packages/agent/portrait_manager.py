@@ -75,6 +75,13 @@ class PortraitManager:
         self._extractor = MicroEventExtractor(db, model_router)
         self._coarse_engine = CoarseGrainEngine(db, model_router)
 
+        # 2.1: L1/L0 更新后回调（由 AgentCore 注入，触发会话内画像刷新）
+        self._on_layered_updated = None
+
+    def set_layered_updated_callback(self, cb) -> None:
+        """注入回调：粗粒化产生新 L1/L0 后调用，触发 AgentCore 刷新内存分层画像。"""
+        self._on_layered_updated = cb
+
     # ============================================================
     # 查询
     # ============================================================
@@ -210,6 +217,14 @@ class PortraitManager:
                     logger.info("portrait.l1_coarse_grained")
                 if result.get("l0_updated"):
                     logger.info("portrait.l0_coarse_grained")
+
+                # 2.1 修复：L1/L0 更新后通知 AgentCore 刷新内存分层画像，
+                # 否则本会话继续用旧画像（PortraitModule / persona_boost 都读 context 字段）。
+                if (result.get("l1_updated") or result.get("l0_updated")) and self._on_layered_updated:
+                    try:
+                        await self._on_layered_updated()
+                    except Exception as e:
+                        logger.warning("portrait.reload_callback_failed", error=str(e))
         except Exception as e:
             logger.warning("portrait.extract_or_coarse_failed", error=str(e))
 
@@ -226,22 +241,16 @@ class PortraitManager:
           用于每日 cron 兜底。
 
         force=True：
-          双管道执行：
-            1. 新管道 force_coarse_all() → 生成 L2 摘要，写入 session_summaries
-            2. 旧管道 _legacy_consolidate() → 从 episodic 记忆全量重写，
-               写入 user_portrait（兼容过渡期消费方）
-          优先返回旧管道结果（完整画像 300-600 字），
-          新管道材料不足时回退 L2 摘要。
+          只走新管道 force_coarse_all()（级联 L2→L1→L0），返回 L0>L1>L2 首个成功内容。
+          旧管道 _legacy_consolidate() 已从 force 主路径移除，仅保留为
+          monthly_full_rebuild 的安全网，避免双写两套画像表。
 
           用于破冰路径（_icebreaker_consolidate）、
           每周日 cron 安全网、以及手动触发。
         """
         if force:
-            # 双管道：新管道（session_summaries）+ 旧管道（user_portrait）
-            l2_result = await self._coarse_engine.force_coarse_all()
-            legacy_result = await self._legacy_consolidate()
-            # 优先返回完整画像，回退到 L2 摘要
-            result = legacy_result or l2_result
+            # 2.2 修复：只走新管道，不再双写旧 user_portrait 表
+            result = await self._coarse_engine.force_coarse_all()
             if result:
                 self._dirty = False
             return result
