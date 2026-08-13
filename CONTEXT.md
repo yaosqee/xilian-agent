@@ -239,7 +239,8 @@ agent.process(event) 内部（阶段 7 + 打磨期）：
   _perceive() → 情绪基调检测
   _retrieve_memories() → sqlite-vec 向量化 → top-3 + 艾宾浩斯衰减权重
   _build_messages() → ContextBuilder 自然语言上下文组装（7模块：DateTime/Portrait/Emotion/Memory/Notebook/NotebookTask）
-  router.route("chat", tools=[...]) → LLM function calling 工具选择 →
+  _route_intent() → 意图路由（天气/搜索/记忆规则分类，命中时 tool_choice 强制指定工具，防幻觉 Layer 1）
+  router.route("chat", tools=[...], tool_choice=...) → LLM function calling 工具选择 →
     ├─ 文本回复 → MarkerParser 后处理 → 返回
     └─ tool_calls → ToolExecutor.execute() → ResultWrapper.wrap() → 回传 LLM → 最终回复
        └─ _process_tool_side_effects() → trigger_memory/trigger_portrait
@@ -275,8 +276,8 @@ AttentionScheduler 任务提醒流程：
 | `database.py` | SQLite 11张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
 | `vector_store.py` | sqlite-vec 向量插入 + 精确检索 | `insert(row_id, embedding)`, `search(query_vec, top_k)` |
 | `backup.py` | 每日备份+清理+恢复 | `run_backup()`, `cleanup_old()`, `verify_backup()`, `restore()` |
-| `agent_core.py` | 昔涟的"大脑"，ActorMind + 全管线调度 + 破冰追踪 + 印象冷启动 | `process(event)`, `_retrieve_memories()`, `_inject_empathy_pad()`, `consume_icebreaker_greeting()`, `_tick_icebreaker()`, `get_time_greeting()`, `shutdown()` |
-| `agent_context.py` | 对话历史容器 + 情绪快照 + 记忆注入 | `add_message()`, `inject_emotion_context()`, `inject_memory_context()` |
+| `agent_core.py` | 昔涟的"大脑"，ActorMind + 全管线调度 + 破冰追踪 + 印象冷启动 + 意图路由 | `process(event)`, `_retrieve_memories()`, `_route_intent()`, `_mark_unverified()`, `_handle_tool_calls()`, `consume_icebreaker_greeting()`, `shutdown()` |
+| `agent_context.py` | 对话历史容器 + 情绪快照 + 记忆注入（source 字段溯源工具/LLM 来源） | `add_message(role, content, source)`, `inject_emotion_context()`, `inject_memory_context()` |
 | `emotion_core.py` | PAD 情感引擎：评价→PAD→惯性衰减→情绪标签 | `AppraisalExtractor.analyze()`, `EmotionState.update()`, `PersonalityModulator.modulate()`, `pad_to_emotion_profile()` |
 | `memory_manager.py` | 情景记忆全管线：编码/检索/艾宾浩斯衰减/调度/容量 | `encode_memory()`, `retrieve_memories()`, `schedule_encoding()`, `manage_capacity()` |
 | `autobiography_writer.py` | 每日自传体 + 每周反思结晶 | `write_daily()`, `reflect_weekly()` |
