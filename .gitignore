@@ -16,3 +16,10 @@ packages/frontend/dist/
 build/
 dist/
 .codegraph/daemon.pid
+
+# 本地设置
+.claude/settings.local.json
+
+# 个人材料（不提交开源仓库）
+面试准备.md
+项目审查报告.md
