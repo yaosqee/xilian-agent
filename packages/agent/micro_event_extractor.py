@@ -7,7 +7,6 @@ Phase 1 核心交付。每条消息后用 Flash LLM 提取关于伙伴的新信�
 参考：Mem0 ADD-Only 策略 — 只增不删不改，新旧事实共存，
 粗粒化时由 LLM 推演当前状态。
 """
-import json
 from dataclasses import dataclass
 
 from loguru import logger

@@ -24,7 +24,6 @@ Phase 3 (远期): P2-② 双通道衰减 / P3-③ Cardboard / P3-⑥ 情节记�
 """
 import math
 import time
-import json
 from dataclasses import dataclass, field
 from typing import Optional
 

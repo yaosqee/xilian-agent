@@ -31,6 +31,9 @@ def agent():
         agent = AgentCore(db_path=":memory:")
         agent.router = mock_router
         agent.memory_manager = mock_mm
+        # V3.7 后记忆检索走 MemoryRetrievalProcessor，需把 mock 注入管线，
+        # 否则 _mem_retrieval._memory_manager 为 None，检索被静默跳过
+        agent._mem_retrieval.set_managers(mock_mm, None)
         agent._db.init = AsyncMock()
         agent._db._conn = None  # mock DB 未初始化状态
         agent._db.insert_log = AsyncMock()
