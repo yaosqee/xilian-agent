@@ -108,11 +108,18 @@ class AgentContext:
         """注入压缩回调（memory_manager.compress_history）。"""
         self._compress_callback = cb
 
-    def add_message(self, role: str, content: str) -> None:
-        """添加一条消息到历史，触发压缩检查。"""
+    def add_message(self, role: str, content: str, source: str | None = None) -> None:
+        """添加一条消息到历史，触发压缩检查。
+
+        source: 工具溯源标记（如 "tool_query_weather" / "llm_generated"），
+                用于区分「工具返回」与「LLM 生成」，杜绝上下文污染。
+        """
         from .context_builder import estimate_tokens
 
-        self.history.append({"role": role, "content": content})
+        msg = {"role": role, "content": content}
+        if source:
+            msg["source"] = source
+        self.history.append(msg)
         self._total_history_tokens += estimate_tokens(content)
 
         # 硬上限保护：最近 MAX_RAW_ROUNDS 轮绝不可压缩

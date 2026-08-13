@@ -651,7 +651,17 @@ class AgentCore:
         if self.tool_executor and len(self.tool_registry) > 0:
             tools = self.tool_registry.to_openai_tools()
 
+        # ── 4a. 意图路由：确定性查询强制指定工具（Layer 1 治幻觉）──
+        forced_tool = self._route_intent(event.payload)
+        if forced_tool and tools and any(
+            t.get("function", {}).get("name") == forced_tool for t in tools
+        ):
+            tool_choice = {"type": "function", "function": {"name": forced_tool}}
+        else:
+            tool_choice = "auto" if tools else None
+
         tools_called = False
+        tool_results: list = []
         try:
             # ── P1-②: 情绪调制 LLM 参数 ──
             emo_params = self._emotion_modulated_params()
@@ -663,7 +673,7 @@ class AgentCore:
                 max_tokens=emo_params["max_tokens"],
                 stream=stream,
                 tools=tools,
-                tool_choice="auto" if tools else None,
+                tool_choice=tool_choice,
             )
             if stream:
                 reply = "[stream]"
@@ -781,10 +791,14 @@ class AgentCore:
                 name="image_memory_encode",
             )
 
-        # ── 10. 记录历史（编造数据先清洗再入上下文，防止下轮当事实）──
+        # ── 10. 记录历史（工具溯源 + 推测标记 + 正则清洗兜底）──
         self.context.add_message("user", event.payload)
-        clean_for_ctx = self._sanitize_fabrication(reply, tools_called)
-        self.context.add_message("assistant", clean_for_ctx)
+        # 推测标记先作用于原始回复，再走正则清洗兜底
+        marked = self._mark_unverified(reply, forced_tool, tools_called)
+        clean_for_ctx = self._sanitize_fabrication(marked, tools_called)
+        # 工具溯源：区分「工具返回」与「LLM 生成」
+        source = f"tool_{tool_results[0][0]}" if tool_results else "llm_generated"
+        self.context.add_message("assistant", clean_for_ctx, source=source)
 
         # ── 10b. 后台记忆编码（必须在 add_message 之后调度：
         #         get_last_n(6) 才含本轮交换，emotion_snapshot 也是本轮已 await 完成的）──
@@ -1176,14 +1190,22 @@ class AgentCore:
                 # 收集工具结果供记忆/印象更新
                 all_tool_results.append((tool_name, result))
 
-                wrapped = await self.result_wrapper.wrap(
-                    tool_name, result, event.payload,
-                )
-                tool_msgs.append({
-                    "role": "tool",
-                    "tool_call_id": _tc_id(tc),
-                    "content": wrapped,
-                })
+                # 结果验证：工具失败/空结果 → 明确告知 LLM 不要编造
+                if not result.success or not result.data:
+                    tool_msgs.append({
+                        "role": "tool",
+                        "tool_call_id": _tc_id(tc),
+                        "content": "（工具未返回有效数据，请如实告知伙伴没查到，不要编造）",
+                    })
+                else:
+                    wrapped = await self.result_wrapper.wrap(
+                        tool_name, result, event.payload,
+                    )
+                    tool_msgs.append({
+                        "role": "tool",
+                        "tool_call_id": _tc_id(tc),
+                        "content": wrapped,
+                    })
                 trace_log.info("tool.result", tool=tool_name,
                               success=result.success)
 
@@ -1317,8 +1339,12 @@ class AgentCore:
     )
 
     def _sanitize_fabrication(self, reply: str, tools_called: bool) -> str:
-        """如果本轮没调工具但回复含编造的天气数据，替换具体数值为占位符。
-        这样后续对话上下文不会把编造数据当事实。"""
+        """正则清洗兜底（最后保险，非主力防线）。
+
+        主力是意图路由（_route_intent 强制调工具）+ 推测标记（_mark_unverified）。
+        这里只兜住「意图路由漏判 + 模型仍编造」的残余情况：
+        本轮没调工具但回复含编造的天气数据 → 替换具体数值为占位符。
+        """
         if tools_called:
             return reply
         # 只影响存入 context 的版本，不影响用户看到的原始回复
@@ -1326,6 +1352,57 @@ class AgentCore:
         if sanitized != reply:
             logger.debug("fabrication.sanitized", preview=reply[:60])
         return sanitized
+
+    # ── 意图路由（Layer 1 规则路由）＋ 工具溯源 ──
+
+    _WEATHER_TRIGGERS: tuple[str, ...] = (
+        "天气", "气温", "温度", "几度", "多少度",
+        "下雨", "晴", "阴天", "下雪", "刮风",
+        "预报", "湿度", "空气质量", "雾霾", "冷吗", "热吗",
+        "带伞", "穿什么",
+    )
+    _CITY_PATTERN = re.compile(
+        r"(北京|上海|广州|深圳|杭州|成都|武汉|西安|南京|重庆|"
+        r"长沙|郑州|青岛|大连|厦门|苏州|天津|宁波|昆明|哈尔滨|"
+        r"沈阳|济南|合肥|福州|南昌|石家庄|太原|乌鲁木齐|兰州|"
+        r"西宁|银川|呼和浩特|南宁|贵阳|海口|拉萨)"
+    )
+
+    def _route_intent(self, payload: str) -> str | None:
+        """确定性意图路由。返回 tool_name 或 None（None = 交给 LLM auto）。
+
+        天气/搜索/记忆这类确定性查询用规则强制指定工具，
+        模型物理上不可能不调，从根上杜绝「偷懒编造」。
+        """
+        # 天气意图：天气触发词 +（城市名 或 泛指时间/位置）
+        if any(t in payload for t in self._WEATHER_TRIGGERS):
+            if self._CITY_PATTERN.search(payload) or any(
+                t in payload for t in ("今天", "明天", "后天", "现在", "外面")
+            ):
+                return "query_weather"
+        # 搜索意图：明确的「帮我查/搜索」
+        if any(t in payload for t in ("帮我查", "搜一下", "搜索", "查一下")):
+            return "search_web"
+        # 记忆意图：回溯过去的对话
+        if any(t in payload for t in ("你还记得", "上次", "之前说过", "我们聊过")):
+            return "search_memory"
+        return None
+
+    def _looks_like_factual(self, reply: str) -> bool:
+        """粗略判断回复是否在断言天气/温度类事实（用于未查证标记）。"""
+        return bool(self._FABRICATED_WEATHER_RE.search(reply)) or bool(
+            re.search(r"\d+\s*度", reply)
+        )
+
+    def _mark_unverified(self, reply: str, forced_tool: str | None,
+                         tools_called: bool) -> str:
+        """未走强制工具且未调任何工具，却断言了天气类事实 → 注入「推测」标记。
+
+        标记只作用于存入 context.history 的版本，不影响用户看到的原始回复。
+        """
+        if not tools_called and forced_tool is None and self._looks_like_factual(reply):
+            return "[注意：以下为昔涟的推测，非实际查询结果]\n" + reply
+        return reply
 
     def _extract_markers(self, text: str) -> tuple[str, list]:
         """
