@@ -80,6 +80,7 @@ class ProviderResponse:
         tool_calls: standardized tool calls list (OpenAI format), or None
         model: the model that generated this response
         usage: token usage dict {prompt_tokens, completion_tokens, total_tokens}
+        finish_reason: "stop" / "length" / "tool_calls"（供应商未提供时为 None）
         raw_stream: raw streaming response object (when stream=True)
     """
     content: str | None = None
@@ -87,6 +88,7 @@ class ProviderResponse:
     reasoning_content: str | None = None  # DeepSeek thinking mode / Anthropic extended thinking
     model: str = ""
     usage: dict | None = None
+    finish_reason: str | None = None
     raw_stream: object | None = None  # raw async generator for streaming
 
     @property
@@ -141,7 +143,7 @@ class TaskOverride:
 DEFAULT_TIER_MODELS: dict[str, dict[str, str]] = {
     "deepseek": {
         "powerful": "deepseek-v4-pro",
-        "fast": "deepseek-v4-flash",
+        "fast": "deepseek-flash",
         "reasoning": "deepseek-reasoner",
     },
     "openai": {

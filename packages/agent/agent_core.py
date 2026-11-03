@@ -543,6 +543,8 @@ class AgentCore:
 
         # ── 0. 输入清洗：修复 WSL/终端传入的 lone surrogate 字符 ──
         event.payload = _sanitize_surrogates(event.payload)
+        # 语音兜底必须引用「这一句」，而不是 context.history 里的旧消息
+        self._current_user_msg = event.payload
 
         # ── 0b. 用户表情包消息转换 ──
         # 检查 payload 是否仅为 sticker 标记
@@ -677,6 +679,7 @@ class AgentCore:
 
         tools_called = False
         tool_results: list = []
+        result = None
         try:
             # ── P1-②: 情绪调制 LLM 参数 ──
             emo_params = self._emotion_modulated_params()
@@ -705,6 +708,16 @@ class AgentCore:
                 reply = self._clean_reply(result.content or "")
         except Exception as e:
             trace_log.error(f"agent.process.model_error: {type(e).__name__}: {e}"[:300])
+            reply = DEGRADED_REPLY
+
+        # ── 4b. 空回复兜底：不伪装成正常台词，显式降级 + 打点 ──
+        if not (reply or "").strip():
+            trace_log.warning(
+                "agent.empty_reply",
+                model=getattr(result, "model", ""),
+                finish_reason=getattr(result, "finish_reason", None),
+                usage=str(getattr(result, "usage", None))[:160],
+            )
             reply = DEGRADED_REPLY
 
         # ── 6b. 阶段 7c: 标记后处理 ──
@@ -1336,10 +1349,13 @@ class AgentCore:
     # ============================================================
 
     def _clean_reply(self, raw: str) -> str:
-        """清洗模型输出：去首尾空白 + 兜底语音检测"""
+        """清洗模型输出：去首尾空白 + 兜底语音检测。
+
+        空内容不再返回「……♪」伪装成正常台词 —— 返回空串，由调用方显式降级。
+        """
         cleaned = raw.strip()
         if not cleaned:
-            return "……♪"
+            return ""
         # 第一层语音兜底：如果清洗后只有动作描述没有实际对话，立即补
         return self._enforce_speech_rule(cleaned)
 
@@ -1607,12 +1623,18 @@ class AgentCore:
         return f"{prefix} {text}" if text.strip() else prefix
 
     def _build_speech_fallback(self) -> str:
-        """构建上下文感知的语音兜底。"""
-        last_user_msg = ""
-        for m in reversed(self.context.history):
-            if m["role"] == "user":
-                last_user_msg = m["content"]
-                break
+        """构建上下文感知的语音兜底。
+
+        优先用「这一轮」的伙伴消息（process() 开头写入 _current_user_msg），
+        否则才回退到 context.history —— 历史上这里读 history 会引用上一轮的旧消息，
+        表现为答非所问地把旧话题拎出来。
+        """
+        last_user_msg = (getattr(self, "_current_user_msg", "") or "").strip()
+        if not last_user_msg:
+            for m in reversed(self.context.history):
+                if m["role"] == "user":
+                    last_user_msg = m["content"]
+                    break
 
         if last_user_msg:
             if "?" in last_user_msg or "？" in last_user_msg:

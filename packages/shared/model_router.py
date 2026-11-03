@@ -104,7 +104,7 @@ class ModelRouter:
                 )
                 self._tier_configs["fast"] = TierConfig(
                     tier="fast", provider="deepseek",
-                    model_name="deepseek-v4-flash", temperature=0.3, max_tokens=800,
+                    model_name="deepseek-flash", temperature=0.3, max_tokens=800,
                 )
                 self._tier_configs["reasoning"] = TierConfig(
                     tier="reasoning", provider="deepseek",
@@ -435,7 +435,12 @@ class ModelRouter:
                 tools=tools,
                 tool_choice=tool_choice,
             )
-            return result
+            # ── 5b. 空回复 / 截断重试 ──
+            # thinking 模型可能把 max_tokens 预算烧在 reasoning_content 上，
+            # 导致 content 为空、finish_reason="length"。裸的「……♪」兜底会掩盖这次失败。
+            return await self._retry_if_empty(
+                result, adapter, model, messages, tools, tool_choice, kwargs,
+            )
         except Exception as e:
             # Tool error → mark incompatible and retry once without tools
             if tools and _is_tool_error(e):
@@ -460,6 +465,75 @@ class ModelRouter:
                     )
                     raise retry_error from e
             raise
+
+    async def _retry_if_empty(
+        self, result, adapter, model, messages, tools, tool_choice, kwargs,
+    ):
+        """空回复或截断时，提高预算重试一次。
+
+        触发条件（任一）：
+          - content 为空且没有 tool_calls（模型什么都没说）
+          - finish_reason == "length"（输出被 max_tokens 截断）
+
+        重试仍失败时原样返回，由上层（AgentCore）走显式降级，不再伪装成正常台词。
+        流式响应（raw stream）不重试。
+        """
+        if not hasattr(result, "content"):
+            return result  # raw stream，交给上层处理
+
+        content = (result.content or "").strip()
+        finish_reason = getattr(result, "finish_reason", None)
+        empty = not content and not getattr(result, "tool_calls", None)
+        truncated = finish_reason == "length"
+
+        if not (empty or truncated):
+            return result
+
+        base_max = int(kwargs.get("max_tokens") or 800)
+        retry_max = max(base_max * 2, 1500)
+        logger.warning(
+            "model_router.empty_retry",
+            model=model,
+            reason="empty" if empty else "truncated",
+            finish_reason=finish_reason,
+            max_tokens=retry_max,
+            content_len=len(content),
+        )
+
+        try:
+            retry = await adapter.chat(
+                model=model,
+                messages=messages,
+                temperature=kwargs.get("temperature", 0.7),
+                max_tokens=retry_max,
+                stream=False,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+        except Exception as e:
+            logger.error("model_router.empty_retry_failed", model=model, error=str(e)[:200])
+            return result
+
+        if not hasattr(retry, "content"):
+            return retry
+
+        retry_content = (retry.content or "").strip()
+        if retry_content or getattr(retry, "tool_calls", None):
+            logger.info(
+                "model_router.empty_retry_ok",
+                model=model,
+                content_len=len(retry_content),
+                finish_reason=getattr(retry, "finish_reason", None),
+            )
+            return retry
+
+        logger.error(
+            "model_router.empty_retry_still_empty",
+            model=model,
+            max_tokens=retry_max,
+            finish_reason=getattr(retry, "finish_reason", None),
+        )
+        return retry
 
     # ══════════════════════════════════════════════════════════
     # Embedding
@@ -588,7 +662,7 @@ class ModelRouter:
         if model_override in ("ds_pro", "ds"):
             model_override = "deepseek:deepseek-v4-pro"
         elif model_override == "ds_flash":
-            model_override = "deepseek:deepseek-v4-flash"
+            model_override = "deepseek:deepseek-flash"
         elif model_override == "qwen":
             model_override = "qwen:qwen3.6-plus"
 

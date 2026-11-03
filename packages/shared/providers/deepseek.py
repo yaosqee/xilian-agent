@@ -32,8 +32,8 @@ DEEPSEEK_MODELS = [
         supports_prefix_cache=True,
     ),
     ModelInfo(
-        id="deepseek-v4-flash",
-        name="V4 Flash",
+        id="deepseek-flash",
+        name="Flash",
         provider="deepseek",
         cost_per_1k_in=0.00014,
         cost_per_1k_out=0.00028,
@@ -133,14 +133,15 @@ class DeepSeekAdapter:
         if model == "deepseek-v4-pro":
             return await self._call_pro(messages, temperature, max_tokens,
                                         stream, tools, tool_choice, has_tools)
-        elif model == "deepseek-v4-flash":
+        elif model in ("deepseek-flash", "deepseek-v4-flash"):
+            # deepseek-v4-flash 是历史别名，API 侧统一为 deepseek-flash
             return await self._call_flash(messages, temperature, max_tokens,
                                           stream, tools, tool_choice, has_tools)
         else:
-            # Unknown model → try Pro
-            logger.warning("deepseek.unknown_model", model=model)
-            return await self._call_pro(messages, temperature, max_tokens,
-                                        stream, tools, tool_choice, has_tools)
+            # 未知模型 → 默认走 Flash（Pro 成本高，不默认兜底）
+            logger.warning("deepseek.unknown_model_fallback_flash", model=model)
+            return await self._call_flash(messages, temperature, max_tokens,
+                                          stream, tools, tool_choice, has_tools)
 
     async def _call_pro(
         self, messages, temperature, max_tokens,
@@ -193,6 +194,7 @@ class DeepSeekAdapter:
                     reasoning_content=getattr(msg, 'reasoning_content', None),
                     model="deepseek-v4-pro",
                     usage=extract_usage(response),
+                    finish_reason=choice.finish_reason,
                 )
             except Exception as e:
                 elapsed = (_time_module.time() - t0) * 1000
@@ -217,7 +219,7 @@ class DeepSeekAdapter:
 
         t0 = _time_module.time()
         api_kwargs = dict(
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             messages=messages,
             temperature=temperature,
             stream=stream,
@@ -254,7 +256,7 @@ class DeepSeekAdapter:
         choice = response.choices[0]
         if choice.finish_reason == "length":
             logger.warning(
-                "deepseek-v4-flash output truncated (max_tokens reached)",
+                "deepseek-flash output truncated (max_tokens reached)",
                 usage=str(response.usage),
             )
 
@@ -263,8 +265,9 @@ class DeepSeekAdapter:
             content=msg.content,
             tool_calls=extract_tool_calls(msg),
             reasoning_content=getattr(msg, 'reasoning_content', None),
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             usage=extract_usage(response),
+            finish_reason=choice.finish_reason,
         )
 
     # ── Embed ────────────────────────────────────────────────

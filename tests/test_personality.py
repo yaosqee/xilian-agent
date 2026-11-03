@@ -174,11 +174,12 @@ class TestHeuristicPersonality:
         assert "伙伴" in DEGRADED_REPLY
 
     def test_clean_reply_handles_empty(self):
-        """空回复清理后应有内容"""
+        """空回复不再伪装成台词：返回空串，由 process() 走显式降级。"""
         from packages.agent import AgentCore
         ag = AgentCore()
-        result = ag._clean_reply("")
-        assert len(result) > 0
+        assert ag._clean_reply("") == ""
+        # 只有动作描述 → 仍应补一句真话
+        assert len(ag._clean_reply("（轻轻合上书）")) > 0
 
     def test_perceive_emotion_positive(self):
         from packages.agent import AgentCore

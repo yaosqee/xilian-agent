@@ -186,7 +186,8 @@ async def test_build_messages_no_injections(agent):
 @pytest.mark.asyncio
 async def test_clean_reply(agent):
     assert agent._clean_reply("  你好  ") == "你好"
-    assert agent._clean_reply("") == "……♪"
+    # 2026-11-03: 空内容不再伪造「……♪」，返回空串由 process() 显式降级
+    assert agent._clean_reply("") == ""
 
 
 def test_personality_preview(agent):

@@ -106,7 +106,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
           anthropic: 'claude-haiku-4-6',
           google: 'gemini-2.5-flash',
         };
-        const model = defaultModels[provider] || 'deepseek-v4-flash';
+        const model = defaultModels[provider] || 'deepseek-flash';
 
         const patch: any = {
           api_keys: { [provider]: apiKey },
