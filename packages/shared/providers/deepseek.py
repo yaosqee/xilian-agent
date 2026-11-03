@@ -96,6 +96,15 @@ class DeepSeekAdapter:
             timeout=_api_timeout, max_retries=1,
         ) if flash_key else None
 
+        # === Thinking 开关（2026-11-03）===
+        # thinking 模式会先消耗 reasoning token 再写正文：小 max_tokens 下正文为空，
+        # 且短回复成本高约 30×。DEEPSEEK_DISABLE_THINKING=1 可整体关闭。
+        self._disable_thinking = os.getenv(
+            "DEEPSEEK_DISABLE_THINKING", "0"
+        ).strip().lower() in ("1", "true", "yes", "on")
+        if self._disable_thinking:
+            logger.info("deepseek.thinking_disabled")
+
         # === Embed client (optional — shared for DeepSeek embed tier) ===
         embed_key = os.getenv("EMBED_API_KEY") or flash_key
         embed_base = os.getenv("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
@@ -166,6 +175,8 @@ class DeepSeekAdapter:
                 if has_tools:
                     api_kwargs["tools"] = tools
                     api_kwargs["tool_choice"] = tool_choice or "auto"
+                if self._disable_thinking:
+                    api_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
                 response = await asyncio.wait_for(
                     client.chat.completions.create(**api_kwargs),
@@ -229,6 +240,8 @@ class DeepSeekAdapter:
         if has_tools:
             api_kwargs["tools"] = tools
             api_kwargs["tool_choice"] = tool_choice or "auto"
+        if self._disable_thinking:
+            api_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
         try:
             response = await asyncio.wait_for(
