@@ -5,9 +5,18 @@
 ## 启动
 
 ```bash
-uv run python main.py          # 全栈启动
+uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 581 passed / 35s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
+
+环境要点（2026-11-03 起）：
+
+- 唯一工作目录是 `D:\xilian-v3`（WSL 副本已退役）；打包也在同一目录，不再需要复制。
+- PyPI 直连超时：`UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。
+- 对话模型 `deepseek-flash`（存在 DB `model_configs`，设置面板可切）；`DEEPSEEK_DISABLE_THINKING=1` 可关 thinking。
+- codegraph 用 CLI（`codegraph query/explore`）；当前工具链未接 MCP。
+- `tests/test_personality_regression.py` 是**真模型**用例：会写真库、跑 5 分钟、结果不确定，默认排除。
 
 ## 关键文件
 
@@ -35,7 +44,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 ## 技术约定
 
 - Python 3.12+ async/await，uv 包管理
-- DeepSeek V4-Pro + V4-Flash 纯云端路由（ModelRouter）
+- DeepSeek 纯云端路由：对话 `deepseek-flash`，`tier:reasoning` 保留 `deepseek-v4-pro`（ModelRouter）
 - SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
 - loguru 结构化日志：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`

@@ -1,8 +1,56 @@
-# 昔涟 V3.4 · 项目仪表盘
+# 昔涟 V3.7 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 🔖 当前阶段：打磨期（V3.7 审查修复完成，仅 6.2 拆大文件暂缓）
-> 📅 最后更新：2026-08-13
+> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 待开工）
+> 📅 最后更新：2026-11-03
+
+---
+
+## Windows 原生开发环境 + 空回复修复（2026-11-03）
+
+工作副本合并：`D:\xilian-v3` 现在是唯一「开发 + 打包」目录。原先 WSL2 `~/xilian-v3`（开发）与 D 盘副本（打包）双轨，已合并为一份。
+
+| 项 | 状态 |
+|---|---|
+| 代码基线 | `a9e1d04`（2026-08-13）起，工作区干净 |
+| 运行环境 | Windows 原生：Python 3.12.13（`.venv`）+ Node 24.15 + PyInstaller 6.20 |
+| 依赖源 | PyPI 直连超时，统一走清华镜像 `UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **581 passed / 8 skipped / 35s** |
+| 打包 | `npm run build` + `pyinstaller xilian.spec --noconfirm` → `dist\昔涟.exe`（57MB，已冒烟：冷启动进引导页） |
+| codegraph | Windows 上 CLI 可用（`status / query / explore / callers / impact`）；MCP 未接入当前工具链 |
+| 备份 | `D:\xilian-v3-backup-20261103`（.env / data / logs / backups / 本地文档） |
+
+### 修复 1：空回复/截断不再被伪装（`a40b060`）
+
+根因链：thinking 模式把 `max_tokens` 烧在 `reasoning_content` 上 → `content` 为空 → `_clean_reply` 返回「……♪」→ 语音兜底 `_build_speech_fallback()` 读 `context.history` 的**上一轮**消息 → 表现为答非所问地回忆旧对话。
+
+- `ProviderResponse` 增 `finish_reason`；DeepSeek pro/flash 回传。
+- `ModelRouter._retry_if_empty()`：空 content 或 `finish_reason=length` → 提高预算重试一次；仍空则交上层显式降级。
+- `AgentCore.process()`：空回复 → `agent.empty_reply` 警告 + `DEGRADED_REPLY`。
+- `_clean_reply("")` 返回空串；兜底改引用当轮 `_current_user_msg`。
+
+### 修复 2：对话模型统一 `deepseek-flash`（`a40b060`）
+
+- 供应商推荐名是 `deepseek-flash`，`deepseek-v4-flash` 是历史别名，适配器两个都认；**未知模型名不再兜底 Pro**（改兜底 Flash，避免误烧钱）。
+- DB `model_configs`：`tier:powerful` / `tier:fast` → `deepseek-flash`；`tier:reasoning` 仍 `deepseek-v4-pro`（留给模型路由阶段）。
+- `max_tokens` 保持 **800**：回复过长是已知问题，截断/空回复交给重试兜底，不靠放宽预算换成功率。
+
+### 开关：thinking 可关（`6621c60`）
+
+`DEEPSEEK_DISABLE_THINKING=1` → `extra_body={"thinking":{"type":"disabled"}}`（默认关）。20 条人格用例 A/B：
+
+| | thinking 开 | 关 |
+|---|---|---|
+| 每轮耗时 | 8.13s | **4.24s** |
+| chat 输出 token | 2,524 | **1,113** |
+| 全部输出 token | 25,336 | **4,188** |
+| 平均回复长度 | 87.1 字 | 89.3 字 |
+
+结论：关掉更快更省，且**不会让回复变短**——"小散文"成因另找（候选：人格模板长示例 + `ctx_notes` 文学体注入）。
+
+### 下一步
+
+Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2.md`（本地文档，不入库）。P0 = 新建 `packages/agent/loop/` 骨架 + 假 adapter 单测，不切换现有调用路径。
 
 ---
 
