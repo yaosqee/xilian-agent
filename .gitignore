@@ -23,3 +23,14 @@ dist/
 # 个人材料（不提交开源仓库）
 面试准备.md
 项目审查报告.md
+
+# Internal docs — execution plans, audits, optimization notes
+OPTIMIZATION_NOTES.md
+docs/plans/
+docs/code-audit-evaluation.md
+docs/code-audit-report.md
+docs/code-review-findings.md
+docs/design/emotion-system-audit-and-optimization.md
+
+# Claude Code agent skill definitions (toolchain, not project docs)
+.agents/
