@@ -1,7 +1,7 @@
 """
-Agent 循环 v2（P0 骨架）。
+Agent 循环 v2（P0–P1.5）。
 
-只新增模块，不切换 `AgentCore.process()` 的现有调用路径。
+`LOOP_V2=1` 时由 `AgentCore.process()` 调用；默认仍走老路径。
 对外入口：
 
     from packages.agent.loop import AgentLoopRunner, LoopBudget, LoopToolExecutor

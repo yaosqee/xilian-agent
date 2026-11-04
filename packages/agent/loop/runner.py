@@ -1,14 +1,14 @@
 """
-AgentLoopRunner — 预算式 Agent 循环（P0 骨架）。
+AgentLoopRunner — 预算式 Agent 循环（P0–P1.5）。
 
 与旧 `AgentCore._handle_tool_calls` 的区别：
 1. **每一步都带 tools**，`tool_choice="auto"`，不再「回传时不带工具」；
 2. **结构化回填**：工具结果以 `{"ok": true, "data": ...}` 形式进入 tool 消息，
    不再经过 ResultWrapper 的 LLM 改写；
 3. **预算**：步数 / 总 token / 总耗时，任一触顶就优雅收尾；
-4. **事件流**：tool_call / tool_result / done 可被传输层消费（P1 接 SSE）。
+4. **事件流**：tool_call / tool_result / token / done 可被传输层消费（P1/P1.5 接 SSE）。
 
-本模块只新增能力，`AgentCore.process()` 保持原样；等验证通过后再由上层切换。
+本模块只新增能力，`AgentCore.process()` 保持原样；由 `LOOP_V2` 开关决定是否启用。
 """
 from __future__ import annotations
 

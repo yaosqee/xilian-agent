@@ -182,7 +182,7 @@ class ToolResultEvent(LoopEvent):
 
 @dataclass
 class TokenEvent(LoopEvent):
-    """增量文本。P0 的 runner 是非流式，暂不产出；P1 真流式接管。"""
+    """增量文本。runner 在 stream=True 时实时产出。"""
 
     type: ClassVar[str] = "token"
     text: str = ""
