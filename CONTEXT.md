@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > 📅 最后更新：2026-11-04
-> 🔖 当前：P0–P3 + X + M 第一阶段完成；`LOOP_V2` 默认 0；测试基线 **644 passed / 8 skipped**。
+> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；`LOOP_V2` 默认 0；测试基线 **656 passed / 8 skipped**。
 
 ## 📚 文档导航
 
@@ -11,7 +11,7 @@
 |------|------|
 | **[现状导读](docs/PROJECT-TOUR.md)** | 🔰 30 分钟 / 2 小时两条路线，先读这个 |
 | **[架构总览](docs/architecture-overview.md)** | 系统全景 + 端到端请求追踪 |
-| [Agent 循环 v2 方案/验收](docs/plans/agent-loop-v2.md) | 本地文档（gitignore）：P0–P3、M、X |
+| [Agent 循环 v2 方案/验收](docs/plans/agent-loop-v2.md) | 本地文档（gitignore）：P0–P3、M、X、P1.5 |
 | [P3 评测基线](docs/evals/agent-loop-v2-baseline-2026-11-04.md) | loop 97.5% / legacy 82.5% 等数字 |
 | [记忆系统架构](docs/design/memory-system-architecture.md) | 情景记忆 / Portrait / 笔记本 / 角色记忆 / 自传体 |
 | [情感系统架构](docs/design/emotion-system-architecture.md) | PAD引擎 / EmotionModule / 好感度 |
@@ -93,10 +93,11 @@ xilian-v3/
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
 │   ├── agent_core.py                # AgentCore：感知/上下文/模型/工具副作用；LOOP_V2 分支 + 会话级确认
-│   ├── loop/                         # 🆕 预算式 Agent 循环（P0–P3）
+│   ├── loop/                         # 🆕 预算式 Agent 循环（P0–P3 + P1.5）
 │   │   ├── events.py                 #   ToolCallEvent / ToolResultEvent / TokenEvent / DoneEvent
 │   │   ├── executor.py               #   并行 + 单工具超时 + 幂等缓存 + confirmed 透传
-│   │   ├── runner.py                 #   每步带 tools、结构化回填、步数/token/耗时预算
+│   │   ├── runner.py                 #   每步带 tools、结构化回填、预算、真 token 流
+│   │   ├── streaming.py              #   raw stream → 文本增量 + ProviderResponse（OpenAI/Anthropic/Google）
 │   │   └── confirmation.py           #   ConfirmationStore：按 (user_id, session_id) 挂起确认
 │   ├── agent_context.py             # AgentContext：对话历史 + 滑动窗口压缩 + 跨会话感知
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器 + autodiscover + to_openai_tools()
@@ -283,7 +284,8 @@ agent.process(event) 内部（2026-11 当前）：
 
 SSE（/api/chat/stream）：
   event_sink 队列 → 先发 tool_call / tool_result
-  → 正文目前仍是「完整回复按 3 字符/50ms 切片」的假流式（真 token 流 = P1.5，未做）
+  → LOOP_V2：模型边生成边发 token（真实流式；MarkerParser 过滤 [sticker:…] 等标记）
+  → LOOP_V2=0：老路径仍为「完整回复按 3 字符/50ms 切片」的假流式
   → sticker / done 协议不变
 
 NudgeEngine 自主问候流程（阶段 6，2026-05-19 全面修复）：
@@ -315,9 +317,10 @@ AttentionScheduler 任务提醒流程：
 | `vector_store.py` | sqlite-vec 向量插入 + 精确检索 | `insert(row_id, embedding)`, `search(query_vec, top_k)` |
 | `backup.py` | 每日备份+清理+恢复 | `run_backup()`, `cleanup_old()`, `verify_backup()`, `restore()` |
 | `agent_core.py` | 昔涟的"大脑"；LOOP_V2 分支 + 会话级确认 + 多意图提示 | `process(event, event_sink=...)`, `_run_loop_v2()`, `_handle_loop_confirmation()`, `_handle_tool_calls()`, `shutdown()` |
-| `loop/runner.py` | 预算式循环：每步带 tools、结构化回填、确认暂停 | `run()`, `run_to_result()` |
+| `loop/runner.py` | 预算式循环：每步带 tools、结构化回填、确认暂停、真 token 流 | `run()`, `run_to_result()` |
 | `loop/executor.py` | 工具批执行：并行/超时/幂等/confirmed 透传 | `execute_batch()` |
-| `loop/events.py` | 循环事件 + 结构化 ToolOutcome | `ToolCallEvent`, `ToolResultEvent`, `DoneEvent` |
+| `loop/events.py` | 循环事件 + 结构化 ToolOutcome | `ToolCallEvent`, `ToolResultEvent`, `TokenEvent`, `DoneEvent` |
+| `loop/streaming.py` | 供应商 raw stream 归一化与聚合 | `StreamAccumulator.consume()`, `to_response()` |
 | `loop/confirmation.py` | 会话级确认存储 | `ConfirmationStore.put/get/discard` |
 | `agent_context.py` | 对话历史容器 + 情绪快照 + 记忆注入（source 字段溯源工具/LLM 来源） | `add_message(role, content, source)`, `inject_emotion_context()`, `inject_memory_context()` |
 | `emotion_core.py` | PAD 情感引擎：评价→PAD→惯性衰减→情绪标签 | `AppraisalExtractor.analyze()`, `EmotionState.update()`, `PersonalityModulator.modulate()`, `pad_to_emotion_profile()` |
@@ -353,7 +356,7 @@ AttentionScheduler 任务提醒流程：
 4. **日志标准**：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`，用 `.` 分隔日志层级
 5. **错误处理**：模型不可用不崩溃，返回 `DEGRADED_REPLY` 友好提示
 6. **循环开关**：`LOOP_V2=0` 默认走老 `_handle_tool_calls`；`LOOP_V2=1` 走 `packages/agent/loop/`。切换后不要同时改两条路径
-7. **流式响应**：SSE 目前 = 工具事件真流 + 正文假切片（3 字符/50ms）；模型侧真 token 流是 P1.5，尚未实现
+7. **流式响应**：SSE = 工具事件真流 + LOOP_V2 正文真 token 流（老路径仍为 3 字符/50ms 假切片）；标记在服务端过滤，前端协议不变
 8. **测试**：`pytest` + `pytest-asyncio`，`asyncio_mode = "strict"`，测试文件放 `tests/`
 9. **部署**：`uv run python main.py` 一键启动，生产模式单进程 serve API + 前端
 
@@ -363,7 +366,6 @@ AttentionScheduler 任务提醒流程：
 
 | 位置 | 说明 |
 |------|------|
-| P1.5 | 真 token 流未做：HTTP 仍是「完整回复 → 3 字符/50ms 切片」 |
 | M2 | 模型配置仍是 env + `model_configs` tier/override；DSH 风格声明式配置后移 |
 | `model_stats` | 内存统计，重启清零，未持久化 |
 | `evals` | search_web 当前 HTTP 错误；只评「是否调用工具」，没有 `tool_success_rate` |
@@ -376,6 +378,6 @@ AttentionScheduler 任务提醒流程：
 
 ## 下一步
 
-进入 **P1.5 真 token 流** 或 **M2 DSH 风格路由配置**；P3 剩余项是搜索工具 HTTP 错误与关键词判定过严。
-当前基线：`uv run pytest -q --ignore=tests/test_personality_regression.py` → **644 passed / 8 skipped**。
+进入 **M2 DSH 风格路由配置**；P3 剩余项是搜索工具 HTTP 错误、关键词判定过严和 `tool_success_rate`。
+当前基线：`uv run pytest -q --ignore=tests/test_personality_regression.py` → **656 passed / 8 skipped**。
 

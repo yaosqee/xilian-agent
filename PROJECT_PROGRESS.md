@@ -1,7 +1,7 @@
 # 昔涟 V3.7 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P3 + X + M 第一阶段完成**：loop 97.5% / legacy 82.5%，ModelPolicy/重试降级/stats 已落地，下一步 P1.5 真 token 流或 DSH 风格路由配置二阶段）
+> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P3 + X + M1 + P1.5 完成**：loop 97.5% / legacy 82.5%，真 token 流已接通，下一步 M2 DSH 风格路由配置或 P3 评测收尾）
 > 📅 最后更新：2026-11-04
 
 ## 📌 当前状态速查（压缩上下文前先看这里）
@@ -9,12 +9,13 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区仅未跟踪 `scripts/ab_thinking.py` |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **644 passed / 8 skipped / ~36s** |
-| 阶段 | P0–P3 + X + M 第一阶段已完成；下一步 **P1.5 真 token 流** 或 **M2 DSH 风格路由配置** |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **656 passed / 8 skipped / ~34s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 已完成；下一步 **M2 DSH 风格路由配置** 或 **P3 评测收尾** |
 | 运行默认 | `LOOP_V2=0` 走老工具路径；`LOOP_V2=1` 才启用新循环（`.env` 重启生效） |
 | P3 基线 | 40 条：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100% |
+| 流式 | SSE 工具事件真流；LOOP_V2 下正文也已是真 token 流（P1.5），老路径仍为 3 字符/50ms 假切片 |
 | 关键本地文档 | `docs/PROJECT-TOUR.md`、`docs/evals/agent-loop-v2-baseline-2026-11-04.md`、`docs/plans/HANDOFF-2026-11-04.md`（`docs/plans/` 被 gitignore） |
-| 关键风险 | 真 token 流未做；模型配置仍是 env + DB tier/override；`model_stats` 内存不持久；`search_web` 当前 HTTP 错误；确认 pending 重启丢失 |
+| 关键风险 | 模型配置仍是 env + DB tier/override；`model_stats` 内存不持久；`search_web` 当前 HTTP 错误；确认 pending 重启丢失 |
 
 ---
 
@@ -103,7 +104,7 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 
 配置（`.env`，重启生效）：`LOOP_V2=1`；预算 `LOOP_V2_MAX_STEPS`(6) / `LOOP_V2_MAX_TOKENS`(20000) / `LOOP_V2_MAX_SECONDS`(90) / `LOOP_V2_TOOL_TIMEOUT`(60)。
 
-未做：真 token 流仍为 3 字符/50ms 假流式；确认状态机留给 P2（当前 `confirmation` 只回话术，不保存 pending）。
+未做（当时）：真 token 流仍为 3 字符/50ms 假流式；确认状态机留给 P2。**两者后续均已补齐**：P2 见下节，真 token 流见 P1.5。
 
 ---
 
@@ -121,6 +122,24 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 限制：内存版，重启丢 pending；跨重启恢复等有真实需求再落 DB。
 
 **核查补丁（2026-11-04，`6a015f3`）**：审计发现 `ToolExecutor.execute()` 对 `requires_confirmation` 工具无条件返回 `PENDING_CONFIRMATION`——用户说「确认」后仍然拿到 PENDING。旧路径被 `ResultWrapper` 包成一句失败话术（不易察觉），新路径则重新挂起、永远执行不到。已加 `confirmed=True` 旁路，旧/新两条确认路径都传通；测试基线 → **624 passed / 8 skipped**。
+
+---
+
+## P1.5：真 token 流（2026-11-04，`b58ea94`）
+
+目标：模型边生成边推送，不再「等完整回复 → 3 字符/50ms 假切片」。
+
+| 项 | 实现 |
+|---|---|
+| 归一化 | 新增 `packages/agent/loop/streaming.py`：`StreamAccumulator` 消费 raw stream，边产出文本边聚合 content / reasoning / tool_calls / usage / finish_reason |
+| 供应商 | 支持 OpenAI/DeepSeek（delta + tool_calls 按 index 拼接）、Anthropic（text/thinking/input_json）、Google（parts/function_call） |
+| runner | `run(..., stream=True)` 每步请求 `stream=True`，实时 `yield TokenEvent`；流打不开退回非流式，中途断流保留已输出文本收尾 |
+| AgentCore | 有 `event_sink`（SSE）时自动开流；确认恢复路径同样支持 |
+| SSE | `TokenEvent` 即时转 `event: token`；`MarkerParser` 过滤 `[sticker:…]` 等标记；收到过可见 token 就不再假切片 |
+| 前端 | 协议不变，`token` 事件照旧追加，无需改动 |
+| 测试 | **656 passed / 8 skipped / 34s**；新增 4 条 runner 流式、5 条归一化、2 条 SSE 用例 |
+
+已知边界：流式 usage 依赖供应商返回（DeepSeek 实测带 usage）；适配器忽略 `stream=True` 时自动退回完整响应；中途断流不重试（避免重复）；正文被 `_enforce_speech_rule` 追加前缀时，已流出的部分无法回滚。
 
 ---
 
@@ -538,7 +557,7 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 数据库 | SQLite（aiosqlite, WAL 模式），单文件 xilian.db |
 | 前端 | React + TypeScript + Vite（全功能面板集成） |
 | 日志 | loguru（结构化 JSON + trace_id） |
-| 测试 | pytest + pytest-asyncio（644 passed / 8 skipped 离线基线） |
+| 测试 | pytest + pytest-asyncio（656 passed / 8 skipped 离线基线） |
 | 迁移 | Alembic（SQLite schema 版本化） |
 | 部署 | `uv run python main.py` 一键启动，单进程 serve API + 前端 |
 

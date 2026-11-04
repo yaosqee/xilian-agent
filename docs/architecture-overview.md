@@ -30,7 +30,7 @@
 │  1. _perceive()      → 安全过滤 + Intent 感知                      │
 │  2. _retrieve_memories() → 语义检索 + 角色记忆分流                  │
 │  3. ContextBuilder   → 7 个 Module 组装上下文（含完整日期/时间）     │
-│  4. ModelRouter      → LLM 调用（LOOP_V2=0 老路径 / =1 新循环）      │
+│  4. ModelRouter      → LLM 调用（LOOP_V2=0 老路径 / =1 新循环 + 真 token 流）      │
 │  5. 工具              → 老：_handle_tool_calls；新：AgentLoopRunner  │
 │  6. EmotionEngine    → PAD 情绪更新                                 │
 │  7. MemoryManager    → 情景记忆编码                                 │

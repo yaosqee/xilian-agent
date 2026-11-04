@@ -317,7 +317,7 @@ xilian-v3/
 ├── packages/
 │   ├── agent/                    # 🧠 Agent 核心引擎
 │   │   ├── agent_core.py         #   核心大脑 (ActorMind + LOOP_V2 分支)
-│   │   ├── loop/                 #   预算式 Agent 循环 (P0–P3)
+│   │   ├── loop/                 #   预算式 Agent 循环 (P0–P3 + 真 token 流)
 │   │   ├── emotion_core.py       #   PAD 情感引擎
 │   │   ├── memory_manager.py     #   情景记忆全管线
 │   │   ├── micro_event_extractor.py # 微事件提取器 (ADD-Only)
@@ -346,7 +346,7 @@ xilian-v3/
 ├── photo/                        # 🖼️ 背景图片 + 风格参考
 ├── alembic/                      # 🗄️ 数据库迁移
 ├── skills/manual/                # 🛠️ 4 个技能文件
-└── tests/                        # 🧪 644+ 条测试
+└── tests/                        # 🧪 656+ 条测试
 ```
 
 ---
@@ -376,7 +376,7 @@ xilian-v3/
 | `DEEPSEEK_API_KEY` | DeepSeek API Key（必需） | - |
 | `DEEPSEEK_API_KEY_2` | 备用 Key（可选） | - |
 | `EMBED_API_KEY` | 嵌入 API Key | 复用 DEEPSEEK_API_KEY_2 |
-| `LOOP_V2` | 1 = 启用新 Agent 循环（含 SSE 工具事件/确认状态机） | 0 |
+| `LOOP_V2` | 1 = 启用新 Agent 循环（含 SSE 工具事件/确认状态机/真 token 流） | 0 |
 | `HTTP_PORT` | HTTP 服务端口 | 8000 |
 | `BIND_HOST` | 绑定地址 | 127.0.0.1 |
 | `NO_HTTP` | 设为 1 禁用 HTTP | - |

@@ -15,7 +15,7 @@
 
 ```bash
 cd D:\xilian-v3
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 644 passed / 8 skipped
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 656 passed / 8 skipped
 uv run python main.py                                            # 打开 http://127.0.0.1:8000
 ```
 
@@ -34,10 +34,10 @@ uv run python main.py                                            # 打开 http:/
 
 ### 1.3 知道现在在哪（10 分钟）
 
-- 测试基线：**644 passed / 8 skipped / ~35s**（真模型人格测试默认排除）。
+- 测试基线：**656 passed / 8 skipped / ~34s**（真模型人格测试默认排除）。
 - 老工具路径（`_handle_tool_calls`）仍在服役；新循环 `LOOP_V2` **默认关闭**，`.env` 里 `LOOP_V2=1` 才启用。
-- P0–P3 + X + M 第一阶段已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机、40 条评测基线、时间保真 + 多步提示、ModelPolicy/重试降级/stats。
-- 下一步：P1.5 真 token 流，或 M 二阶段 DSH 风格声明式路由配置。
+- P0–P3 + X + M1 + P1.5 已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机、40 条评测基线、时间保真 + 多步提示、ModelPolicy/重试降级/stats、真 token 流。
+- 下一步：M 二阶段 DSH 风格声明式路由配置；P3 剩余是搜索工具与评测收尾。
 
 ## 2. 2 小时版（能动手改）
 
@@ -76,7 +76,7 @@ codegraph impact ToolExecutor.execute
 ### 2.4 改一个小东西验证理解（20 分钟）
 
 例：给 `DatetimeModule` 加上完整日期（现在只有"星期X 晚上 10 点多"，没有年月日）。
-改完跑测试 → 启动 → 问"今天几号"，看她是否答对。这就是 X 阶段（已完成）；下一步是 P1.5 真 token 流或 M 二阶段配置。
+改完跑测试 → 启动 → 问"今天几号"，看她是否答对。这就是 X 阶段（已完成）；下一步是 M2 DSH 风格声明式路由配置。
 
 ## 3. 我们最近改了什么、为什么（对照表）
 
@@ -95,12 +95,13 @@ codegraph impact ToolExecutor.execute
 | 时间保真 X | 日期/时间没有 ground truth，模型编造 | `DatetimeModule` 完整日期 + HH:MM；事实 100% | `3cf4069` |
 | 多步提示 | loop 只调天气、不调第二类工具 | 多意图 system 提示 + P3 用例校准；多步 100% | `9450d4f` |
 | 模型路由 M1 | tool 错误静默禁用 24h；无能力矩阵/统计 | `ModelPolicy` + 重试/15m 降级 + stats | `7879eb3` |
+| 真 token 流 P1.5 | 正文要等完整回复再按 3 字符/50ms 切片 | `StreamAccumulator` 接 raw stream；SSE 即时转发 + 标记过滤 | `b58ea94` |
 | 多 AgentCore 工具丢失 | 第二个实例 autodiscover 拿到空 registry | `_AVAILABLE` 缓存重放 | `7f76d1f` |
 
 ## 4. 快速自检（确认项目没坏）
 
 ```bash
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 644 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 656 passed
 uv run python -c "import main"                                    # 导入无副作用
 LOOP_V2=1 uv run python main.py                                   # 新循环模式跑一条"今天杭州天气"
 ```
@@ -110,7 +111,7 @@ LOOP_V2=1 uv run python main.py                                   # 新循环模
 | 困惑 | 答案 |
 |---|---|
 | "为什么有 `_handle_tool_calls` 又有 `loop/`？" | 旧的单轮逻辑仍在线（`LOOP_V2=0`），新的在开关后面；验证完再删旧的 |
-| "为什么回复是 3 字 50ms 跳出来的？" | SSE 是**假流式**（先算完再切片），真流式在 P1 未完成 |
+| "为什么回复是 3 字 50ms 跳出来的？" | `LOOP_V2=0` 老路径仍是**假流式**（先算完再切片）；`LOOP_V2=1` 已接真 token 流（P1.5） |
 | "为什么确认后还是没执行？" | 已修（`6a015f3`）。若在旧 exe 上看到，需要重新打包 |
 | "为什么测试有 8 个 skip？" | 需要外部条件（API Key / 平台）的用例 |
 | "为什么记忆好像没长？" | 工具调用触发记忆依赖 `trigger_memory`，新路径已透传；老路径不变 |

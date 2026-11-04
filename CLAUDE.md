@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 644 passed / 36s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 656 passed / 34s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -26,7 +26,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `docs/design/tool-system-audit-and-redesign.md` — 工具系统设计文档
 - `main.py` — 启动入口
 - `packages/agent/agent_core.py` — AgentCore 核心大脑（LOOP_V2 分支 + 会话级确认 + 多意图提示 + 记忆联动）
-- `packages/agent/loop/` — 预算式 Agent 循环（events/executor/runner/confirmation；P0–P3）
+- `packages/agent/loop/` — 预算式 Agent 循环（events/executor/runner/streaming/confirmation；P0–P3 + P1.5）
 - `packages/agent/tool_registry.py` — 工具注册表（autodiscover 多实例重放 + OpenAI格式）
 - `packages/agent/tool_executor.py` — 工具执行器（校验→权限→频率→确认→审计；`confirmed` 旁路）
 - `packages/agent/result_wrapper.py` — 结果包装器（规则模板 + LLM双轨；仅老路径）
@@ -34,7 +34,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/shared/providers/` — 多供应商适配器 + ProviderAdapter Protocol + `model_policy.py`（ModelPolicy 能力矩阵）
 - `packages/shared/model_router.py` — 路由 + tool 重试/15m 降级 + `model_stats` 观测 + `tool_decision` 任务
 - `packages/shared/events.py` — InternalEvent（含 `user_id` / `session_id`）
-- `gateway/channels/http_channel.py` — FastAPI 所有 API 端点 + SSE 工具事件
+- `gateway/channels/http_channel.py` — FastAPI 所有 API 端点 + SSE（工具事件 + 真 token 流转发）
 - `evals/` — P3 评测集（40 条 JSONL + runner/metrics）；报告在 `docs/evals/`
 - `packages/shared/database/` — DatabaseManager 拆分为 6 个领域 Repository（V3.7）
 - `packages/shared/database/_manager.py` — DatabaseManager 主类（生命周期 + 跨表操作）
@@ -49,7 +49,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 
 - Python 3.12+ async/await，uv 包管理
 - DeepSeek 纯云端路由：对话 `deepseek-flash`，`tier:reasoning` 保留 `deepseek-v4-pro`（ModelRouter）
-- Agent 循环：`LOOP_V2=0` 默认老路径；`LOOP_V2=1` 走 `packages/agent/loop/`（预算/结构化回填/会话确认）
+- Agent 循环：`LOOP_V2=0` 默认老路径；`LOOP_V2=1` 走 `packages/agent/loop/`（预算/结构化回填/会话确认/真 token 流）
 - 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；配置仍是 env + DB tier/override
 - SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
