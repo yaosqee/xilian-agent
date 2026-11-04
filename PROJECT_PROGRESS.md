@@ -108,6 +108,8 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 
 限制：内存版，重启丢 pending；跨重启恢复等有真实需求再落 DB。
 
+**核查补丁（2026-11-04，`6a015f3`）**：审计发现 `ToolExecutor.execute()` 对 `requires_confirmation` 工具无条件返回 `PENDING_CONFIRMATION`——用户说「确认」后仍然拿到 PENDING。旧路径被 `ResultWrapper` 包成一句失败话术（不易察觉），新路径则重新挂起、永远执行不到。已加 `confirmed=True` 旁路，旧/新两条确认路径都传通；测试基线 → **624 passed / 8 skipped**。
+
 ---
 
 ## 深度审查修复（2026-08-13 · 3 agent 并行审查）

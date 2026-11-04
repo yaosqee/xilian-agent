@@ -21,6 +21,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 ## 关键文件
 
 - `PROJECT_PROGRESS.md` — 项目仪表盘（进度/决策/环境）
+- `docs/PROJECT-TOUR.md` — 现状导读（30 分钟 / 2 小时两条路线，先读这个）
 - `CONTEXT.md` — 代码导航（目录树/数据流/模块职责）
 - `docs/design/tool-system-audit-and-redesign.md` — 工具系统设计文档
 - `main.py` — 启动入口
