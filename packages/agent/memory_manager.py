@@ -94,6 +94,8 @@ class MemoryManager:
         self._pending_context: Optional[dict] = None
         self._encoding_state: str = "idle"  # idle / waiting / encoding / done
         self._shutdown_requested: bool = False
+        # shutdown 兜底编码的最长等待（LLM + embedding），避免进程退出被网络卡死
+        self._shutdown_encode_timeout: float = 30.0
         self._encoding_task: Optional[asyncio.Task] = None
 
     # ============================================================
@@ -137,12 +139,24 @@ class MemoryManager:
         self._encoding_state = "encoding"
 
         try:
-            await self.encode_memory(self._pending_context)
+            # 编码会调用 LLM + embedding；网络卡住时不能把进程退出也拖死
+            await asyncio.wait_for(
+                self.encode_memory(self._pending_context),
+                timeout=self._shutdown_encode_timeout,
+            )
             self._pending_context = None
             self._exchanges_since_last_encoding = 0
             self._encoding_state = "done"
             logger.info("memory.shutdown_complete")
             return "done"
+        except asyncio.TimeoutError:
+            logger.warning(
+                "memory.shutdown_timeout",
+                timeout=self._shutdown_encode_timeout,
+                exchanges=self._exchanges_since_last_encoding,
+            )
+            self._encoding_state = "done"
+            return "failed"
         except Exception as e:
             logger.error("memory.shutdown_failed", error=str(e))
             self._encoding_state = "done"
