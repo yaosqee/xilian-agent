@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > 📅 最后更新：2026-11-04
-> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；`LOOP_V2` 默认 0；测试基线 **656 passed / 8 skipped**。
+> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **676 passed / 8 skipped**。
 
 ## 📚 文档导航
 
@@ -355,7 +355,7 @@ AttentionScheduler 任务提醒流程：
 3. **InternalEvent 解耦**：Gateway 产出 `InternalEvent`（含 `user_id` + `session_id`），Agent 消费
 4. **日志标准**：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`，用 `.` 分隔日志层级
 5. **错误处理**：模型不可用不崩溃，返回 `DEGRADED_REPLY` 友好提示
-6. **循环开关**：`LOOP_V2=0` 默认走老 `_handle_tool_calls`；`LOOP_V2=1` 走 `packages/agent/loop/`。切换后不要同时改两条路径
+6. **循环开关**：代码默认 `LOOP_V2=0`（老 `_handle_tool_calls`）；**本机 `.env` 已设 1**，走 `packages/agent/loop/`。切换后不要同时改两条路径
 7. **流式响应**：SSE = 工具事件真流 + LOOP_V2 正文真 token 流（老路径仍为 3 字符/50ms 假切片）；标记在服务端过滤，前端协议不变
 8. **测试**：`pytest` + `pytest-asyncio`，`asyncio_mode = "strict"`，测试文件放 `tests/`
 9. **部署**：`uv run python main.py` 一键启动，生产模式单进程 serve API + 前端
@@ -378,5 +378,5 @@ AttentionScheduler 任务提醒流程：
 ## 下一步
 
 进入 **M2 DSH 风格路由配置**；P3 剩余项是搜索工具 HTTP 错误、关键词判定过严和 `tool_success_rate`。
-当前基线：`uv run pytest -q --ignore=tests/test_personality_regression.py` → **656 passed / 8 skipped**。
+当前基线：`uv run pytest -q --ignore=tests/test_personality_regression.py` → **676 passed / 8 skipped**。
 

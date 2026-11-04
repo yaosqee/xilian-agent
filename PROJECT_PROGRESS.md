@@ -9,15 +9,16 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **675 passed / 8 skipped / ~28s** |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **676 passed / 8 skipped / ~32s** |
 | 阶段 | P0–P3 + X + M1 + P1.5 完成；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2 或评测扩类 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
 | 搜索 | `SEARCH_PROVIDER=deepseek` → `POST https://api.deepseek.com/v1/tools/search`，复用 DeepSeek Key，5 元/1000 次成功请求 |
+| thinking 口径 | 评测固定 `--thinking off`；生产 `.env` **未设** `DEEPSEEK_DISABLE_THINKING`（即 thinking 开）→ **两者尚未对齐**，需二选一（见下） |
 | 流式 | SSE 工具事件真流；LOOP_V2 下正文也已是真 token 流（P1.5），老路径仍为 3 字符/50ms 假切片 |
 | 关键本地文档 | `docs/PROJECT-TOUR.md`、`docs/evals/agent-loop-v2-baseline-2026-11-04.md`、`docs/plans/HANDOFF-2026-11-04.md`（`docs/plans/` 被 gitignore） |
-| 关键风险 | 老路径在 Flash 下会漏出 DSML 工具协议文本（multi 类 0%）；`model_stats` 内存不持久；确认 pending 重启丢失；`memory-02` 类"该调记忆不调"仍存在 |
+| 关键风险 | thinking 口径未对齐；老路径在 Flash 下会漏出 DSML 工具协议文本（multi 类 0%）；`model_stats` 内存不持久；确认 pending 重启丢失；memory 词表已补（`906a49a`，6 条单次 100%）但长尾口语变体仍待观察 |
 
 ---
 
@@ -125,7 +126,7 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 
 | 项 | 状态 |
 |---|---|
-| `LOOP_V2` 开关 | 默认 0（老路径不变）；=1 时 `AgentCore.process()` 走 `AgentLoopRunner`，首步保留 `_route_intent` 快路径 |
+| `LOOP_V2` 开关 | 当时默认 0（老路径不变）；=1 时走 `AgentLoopRunner`，首步保留 `_route_intent` 快路径。**2026-11-04 本机已转正为 1，以顶部速查为准** |
 | 工具副作用 | `ToolOutcome` 透传 `trigger_memory` / `trigger_portrait_update`，旧 `_process_tool_side_effects` 直接复用 |
 | SSE 工具事件 | `/api/chat/stream` 新增 `tool_call` / `tool_result`；`sticker` / `token` / `done` 协议不变 |
 | 前端 | ChatView 工具状态行（「她在查天气……」/「查到了：…」），未知事件忽略 |
@@ -586,7 +587,7 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 数据库 | SQLite（aiosqlite, WAL 模式），单文件 xilian.db |
 | 前端 | React + TypeScript + Vite（全功能面板集成） |
 | 日志 | loguru（结构化 JSON + trace_id） |
-| 测试 | pytest + pytest-asyncio（656 passed / 8 skipped 离线基线） |
+| 测试 | pytest + pytest-asyncio（676 passed / 8 skipped 离线基线） |
 | 迁移 | Alembic（SQLite schema 版本化） |
 | 部署 | `uv run python main.py` 一键启动，单进程 serve API + 前端 |
 

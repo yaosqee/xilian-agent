@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 660 passed / 36s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 676 passed / 32s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -14,7 +14,8 @@ cd packages/frontend && npm run dev  # 前端开发模式
 
 - 唯一工作目录是 `D:\xilian-v3`（WSL 副本已退役）；打包也在同一目录，不再需要复制。
 - PyPI 直连超时：`UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。
-- 对话模型 `deepseek-flash`（存在 DB `model_configs`，设置面板可切）；`DEEPSEEK_DISABLE_THINKING=1` 可关 thinking。
+- 对话模型 `deepseek-flash`（存在 DB `model_configs`，设置面板可切）。
+- thinking：**评测固定 `--thinking off`；生产 `.env` 未设 `DEEPSEEK_DISABLE_THINKING`（即开启）**，两者尚未对齐；要用关闭版就加 `DEEPSEEK_DISABLE_THINKING=1`。
 - codegraph 用 CLI（`codegraph query/explore`）；当前工具链未接 MCP。
 - `tests/test_personality_regression.py` 是**真模型**用例：会写真库、跑 5 分钟、结果不确定，默认排除。
 
@@ -49,7 +50,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 
 - Python 3.12+ async/await，uv 包管理
 - DeepSeek 纯云端路由：对话 `deepseek-flash`，`tier:reasoning` 保留 `deepseek-v4-pro`（ModelRouter）
-- Agent 循环：`LOOP_V2=0` 默认老路径；`LOOP_V2=1` 走 `packages/agent/loop/`（预算/结构化回填/会话确认/真 token 流）
+- Agent 循环：**本机 `.env` 已设 `LOOP_V2=1`**（走 `packages/agent/loop/`：预算/结构化回填/会话确认/真 token 流）；代码默认 0，回滚删掉该项即可
 - 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；配置仍是 env + DB tier/override
 - SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
