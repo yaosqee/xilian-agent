@@ -15,6 +15,9 @@ from loguru import logger
 # 模块级待注册队列：工具模块在 import 时调用 register_tool()，
 # autodiscover() 消费此队列，将工具注册到 ToolRegistry 实例。
 _PENDING: list[dict] = []
+# 已导入工具的元数据缓存：模块只会 import 一次，但 AgentCore / 测试可能
+# 创建多个 ToolRegistry；autodiscover 需要能从缓存重放，而不是依赖 _PENDING。
+_AVAILABLE: dict[str, dict] = {}
 
 
 def register_tool(name: str, description: str, schema: dict,
@@ -36,7 +39,7 @@ def register_tool(name: str, description: str, schema: dict,
         permission = ToolPermission.READ_ONLY
 
     def decorator(func):
-        _PENDING.append({
+        meta = {
             "name": name,
             "description": description,
             "schema": schema,
@@ -48,7 +51,9 @@ def register_tool(name: str, description: str, schema: dict,
             "trigger_memory": trigger_memory,
             "trigger_portrait": trigger_portrait,
             "check_available": check_available,
-        })
+        }
+        _PENDING.append(meta)
+        _AVAILABLE[name] = meta
         return func
     return decorator
 
@@ -196,9 +201,15 @@ class ToolRegistry:
             logger.error("tool.autodiscover_failed", error=str(e))
             return 0
 
-        # 消费 _PENDING 队列（去重：同名工具只注册一次）
-        seen = set(self._tools.keys())
+        # 消费 _PENDING 队列，同时把元数据合并进全局缓存。
+        # 模块只 import 一次；第二个 ToolRegistry 需要从 _AVAILABLE 重放。
         for meta in _PENDING:
+            _AVAILABLE[meta["name"]] = meta
+        _PENDING = []
+
+        # 从全局缓存重放（去重：同名工具只注册一次）
+        seen = set(self._tools.keys())
+        for meta in _AVAILABLE.values():
             if meta["name"] not in seen:
                 # 检查依赖可用性
                 checker = meta.get("check_available")
@@ -211,7 +222,6 @@ class ToolRegistry:
                     meta["func"]
                 )
                 seen.add(meta["name"])
-        _PENDING = []
 
         count = len(self._tools) - before
         if count > 0:
