@@ -1,14 +1,18 @@
-# 昔涟 V3.3 · 代码导航
+# 昔涟 V3.7 · 代码导航
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
-> 📅 最后更新：2026-05-30
+> 📅 最后更新：2026-11-04
+> 🔖 当前：P0–P3 + X + M 第一阶段完成；`LOOP_V2` 默认 0；测试基线 **644 passed / 8 skipped**。
 
 ## 📚 文档导航
 
 ### 系统架构（先读这些）
 | 文档 | 说明 |
 |------|------|
-| **[架构总览](docs/architecture-overview.md)** | 🔰 从这里开始 — 系统全景 + 端到端请求追踪 |
+| **[现状导读](docs/PROJECT-TOUR.md)** | 🔰 30 分钟 / 2 小时两条路线，先读这个 |
+| **[架构总览](docs/architecture-overview.md)** | 系统全景 + 端到端请求追踪 |
+| [Agent 循环 v2 方案/验收](docs/plans/agent-loop-v2.md) | 本地文档（gitignore）：P0–P3、M、X |
+| [P3 评测基线](docs/evals/agent-loop-v2-baseline-2026-11-04.md) | loop 97.5% / legacy 82.5% 等数字 |
 | [记忆系统架构](docs/design/memory-system-architecture.md) | 情景记忆 / Portrait / 笔记本 / 角色记忆 / 自传体 |
 | [情感系统架构](docs/design/emotion-system-architecture.md) | PAD引擎 / EmotionModule / 好感度 |
 | [工具系统架构](docs/design/tool-system-architecture.md) | ToolExecutor / ResultWrapper / 4 工具 |
@@ -52,16 +56,26 @@ xilian-v3/
 │   ├── database-schema.md             # 13 张表完整 Schema
 │   ├── prompts-overview.md            # 14 个提示词索引（温度/模型/用途）
 │   ├── deployment.md                  # 部署与运维指南
+│   ├── evals/                         # P3 评测基线报告（agent-loop-v2-*.md）
 │   ├── design/
 │   │   ├── memory-system-architecture.md   # 记忆系统全景
 │   │   ├── emotion-system-architecture.md  # 情感系统全景
 │   │   └── tool-system-architecture.md     # 工具系统全景
 │   └── agents/                        # Agent skills 配置
 │
+├── evals/                           # 🧪 P3 评测集
+│   ├── cases/agent_loop_v2.jsonl     #   40 条（train/holdout 各 20，六类）
+│   ├── metrics.py                    #   指标 + 时间/日期事实校验（纯函数）
+│   ├── runner.py                     #   fake / legacy / loop / all；split/category/limit
+│   └── reports/                      #   本地报告（gitignore）
+│
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
-│   ├── model_router.py              # ModelRouter：多供应商 Tier 路由（task→tier→provider+model，支持 DeepSeek/OpenAI/Anthropic + 热切换）
-│   ├── providers/                    # 供应商适配器（deepseek.py / openai_adapter.py / anthropic.py + base.py）
+│   ├── model_router.py              # ModelRouter：多供应商 Tier 路由 + ModelPolicy + tool 重试降级 + stats
+│   ├── model_stats.py               # ModelStats：按模型 calls/errors/timeout/p50/p95（内存）
+│   ├── providers/                    # 供应商适配器（deepseek / openai / anthropic / google / mimo）
+│   │   ├── model_policy.py           # ModelPolicy 能力矩阵（tools/vision/context/cost）
+│   │   └── base.py                   # ModelInfo + ProviderAdapter Protocol
 │   ├── database.py → database/      # DatabaseManager 拆分为领域 Repository（V3.7）
 │   │   ├── __init__.py               #   重导出 DatabaseManager（兼容旧 import）
 │   │   ├── _base.py                  #   BaseRepository（共享连接 + _ensure_conn）
@@ -78,7 +92,12 @@ xilian-v3/
 │   └── logging_config.py            # loguru 结构化日志配置
 │
 ├── packages/agent/                  # 🧠 Agent 核心引擎
-│   ├── agent_core.py                # AgentCore：ActorMind + ContextBuilder + Marker管道 + LLM function calling + 确认回路 + 记忆联动 + 笔记本自动记录
+│   ├── agent_core.py                # AgentCore：感知/上下文/模型/工具副作用；LOOP_V2 分支 + 会话级确认
+│   ├── loop/                         # 🆕 预算式 Agent 循环（P0–P3）
+│   │   ├── events.py                 #   ToolCallEvent / ToolResultEvent / TokenEvent / DoneEvent
+│   │   ├── executor.py               #   并行 + 单工具超时 + 幂等缓存 + confirmed 透传
+│   │   ├── runner.py                 #   每步带 tools、结构化回填、步数/token/耗时预算
+│   │   └── confirmation.py           #   ConfirmationStore：按 (user_id, session_id) 挂起确认
 │   ├── agent_context.py             # AgentContext：对话历史 + 滑动窗口压缩 + 跨会话感知
 │   ├── tool_registry.py             # ToolRegistry：@register_tool 装饰器 + autodiscover + to_openai_tools()
 │   ├── tool_executor.py             # ToolExecutor：校验→权限→频率→确认→执行→审计（打磨期）
@@ -108,7 +127,6 @@ xilian-v3/
 │       ├── search_memory.py         # 记忆检索（利用 MemoryManager.retrieve_memories）
 │       ├── query_weather.py         # 天气查询（和风天气 + Zhipu搜索fallback）
 │       └── search_web.py            # 网络搜索（智谱 Web Search API）
-│       └── coding_delegate.py       # Claude Code 编码委托（阶段7d）
 │
 ├── gateway/                         # 🚪 消息网关
 │   ├── gateway.py                   # Gateway：通道管理 + Agent 路由
@@ -190,7 +208,12 @@ xilian-v3/
 │   ├── test_database_expansion.py       # 阶段3
 │   ├── test_biography.py                # 阶段5：自传体+反思
 │   ├── test_forgetting.py               # 阶段5：艾宾浩斯衰减
-│   └── test_nudge_engine.py             # 阶段6：自主问候
+│   ├── test_nudge_engine.py             # 阶段6：自主问候
+│   ├── test_loop_runner.py              # Agent 循环：多步/预算/幂等/超时
+│   ├── test_agent_core_loop_v2.py       # LOOP_V2 接线 + 多意图提示
+│   ├── test_loop_confirmation.py        # 会话级确认 + confirmed 旁路
+│   ├── test_tool_registry.py            # autodiscover 多实例重放
+│   └── test_evals.py                    # P3 用例/指标/runner
 │
 └── logs/                            # 📋 运行时日志（JSON 格式）
 ```
@@ -235,20 +258,33 @@ main.py 启动
              ├─ ConsoleChannel: stdin 读一行 → InternalEvent → agent.process() → rich 打印
              └─ HTTPChannel: POST /api/chat → InternalEvent → agent.process() → JSON/SSE
 
-agent.process(event) 内部（阶段 7 + 打磨期）：
+agent.process(event) 内部（2026-11 当前）：
   _perceive() → 情绪基调检测
-  _retrieve_memories() → sqlite-vec 向量化 → top-3 + 艾宾浩斯衰减权重
-  _build_messages() → ContextBuilder 自然语言上下文组装（7模块：DateTime/Portrait/Emotion/Memory/Notebook/NotebookTask）
-  _route_intent() → 意图路由（天气/搜索/记忆规则分类，命中时 tool_choice 强制指定工具，防幻觉 Layer 1）
-  router.route("chat", tools=[...], tool_choice=...) → LLM function calling 工具选择 →
-    ├─ 文本回复 → MarkerParser 后处理 → 返回
-    └─ tool_calls → ToolExecutor.execute() → ResultWrapper.wrap() → 回传 LLM → 最终回复
-       └─ _process_tool_side_effects() → trigger_memory/trigger_portrait
+  if LOOP_V2=1:
+    _handle_loop_confirmation() → 按 (user_id, session_id) 查确认 pending；
+      确认 → 执行 pending → 补 tool 消息 → runner 续跑
+    _retrieve_memories() / _build_messages()（7 模块上下文）
+    多意图检测（连接词 + ≥2 类工具意图）→ 最后一条 user 前插 system 规划提示
+    AgentLoopRunner.run_to_result():
+      router.route("tool_decision", tools=[...], tool_choice="auto")
+        → tool_calls → LoopToolExecutor（并行/超时/幂等）→ 结构化 tool 消息 → 下一步
+        → 文本 → done；步数/token/耗时任一触顶 → 预算兜底
+      → ToolCallEvent/ToolResultEvent 可经 event_sink 实时转发 SSE
+  else（默认，老路径）:
+    _route_intent() 命中时强制 tool_choice
+    router.route("chat", tools=[...]) → _handle_tool_calls()
+      → ToolExecutor.execute() → ResultWrapper.wrap() → 回传 LLM
+  _process_tool_side_effects() → trigger_memory / trigger_portrait
   _schedule_emotion_analysis() → fire-and-forget 后台 PAD 更新
   _schedule_memory_encoding() → 三层调度
   _write_conversation_log() → SQLite 写入
   auto_note_after_message() → Flash 自动判断是否记笔记
   add_message() → 对话历史
+
+SSE（/api/chat/stream）：
+  event_sink 队列 → 先发 tool_call / tool_result
+  → 正文目前仍是「完整回复按 3 字符/50ms 切片」的假流式（真 token 流 = P1.5，未做）
+  → sticker / done 协议不变
 
 NudgeEngine 自主问候流程（阶段 6，2026-05-19 全面修复）：
   启动时立即 tick() → asyncio 每15分钟 → nudge.tick()
@@ -271,25 +307,31 @@ AttentionScheduler 任务提醒流程：
 
 | 模块 | 单句职责 | 关键方法 |
 |------|---------|---------|
-| `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, payload, is_owner)` |
-| `model_router.py` | 多供应商 Tier 路由（DeepSeek/OpenAI/Anthropic，task→tier→adapter，热切换） | `route(task_type, messages, tools, tool_choice)` + `reload_config()` |
-| `database.py` | SQLite 11张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
+| `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, session_id, payload, is_owner)` |
+| `model_router.py` | Tier 路由 + 显式能力矩阵 + tool 重试/降级 + 观测 | `route()` / `get_model_policy()` / `stats` / `reload_config()` |
+| `providers/model_policy.py` | ModelPolicy 能力矩阵（tools/vision/context/cost） | `ModelPolicy.from_model_info()`, `policy_from_adapter()` |
+| `model_stats.py` | 按模型内存统计（calls/errors/p50/p95/degraded） | `ModelStats.record_*()`, `ModelStatsRegistry.snapshot()` |
+| `database.py` | SQLite 13 张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
 | `vector_store.py` | sqlite-vec 向量插入 + 精确检索 | `insert(row_id, embedding)`, `search(query_vec, top_k)` |
 | `backup.py` | 每日备份+清理+恢复 | `run_backup()`, `cleanup_old()`, `verify_backup()`, `restore()` |
-| `agent_core.py` | 昔涟的"大脑"，ActorMind + 全管线调度 + 破冰追踪 + 印象冷启动 + 意图路由 | `process(event)`, `_retrieve_memories()`, `_route_intent()`, `_mark_unverified()`, `_handle_tool_calls()`, `consume_icebreaker_greeting()`, `shutdown()` |
+| `agent_core.py` | 昔涟的"大脑"；LOOP_V2 分支 + 会话级确认 + 多意图提示 | `process(event, event_sink=...)`, `_run_loop_v2()`, `_handle_loop_confirmation()`, `_handle_tool_calls()`, `shutdown()` |
+| `loop/runner.py` | 预算式循环：每步带 tools、结构化回填、确认暂停 | `run()`, `run_to_result()` |
+| `loop/executor.py` | 工具批执行：并行/超时/幂等/confirmed 透传 | `execute_batch()` |
+| `loop/events.py` | 循环事件 + 结构化 ToolOutcome | `ToolCallEvent`, `ToolResultEvent`, `DoneEvent` |
+| `loop/confirmation.py` | 会话级确认存储 | `ConfirmationStore.put/get/discard` |
 | `agent_context.py` | 对话历史容器 + 情绪快照 + 记忆注入（source 字段溯源工具/LLM 来源） | `add_message(role, content, source)`, `inject_emotion_context()`, `inject_memory_context()` |
 | `emotion_core.py` | PAD 情感引擎：评价→PAD→惯性衰减→情绪标签 | `AppraisalExtractor.analyze()`, `EmotionState.update()`, `PersonalityModulator.modulate()`, `pad_to_emotion_profile()` |
 | `memory_manager.py` | 情景记忆全管线：编码/检索/艾宾浩斯衰减/调度/容量 | `encode_memory()`, `retrieve_memories()`, `schedule_encoding()`, `manage_capacity()` |
 | `autobiography_writer.py` | 每日自传体 + 每周反思结晶 | `write_daily()`, `reflect_weekly()` |
 | `portrait_manager.py` | 用户印象文档定期重写 + 破冰主动问候 + 冷启动 | `consolidate()`, `ensure_exists()` |
-| `context_builder.py` | 模块化上下文组装（7模块 自然语言段落 + 优先级+预算，build() async） | `ContextBuilder.register()`, `build()` |
+| `context_builder.py` | 模块化上下文组装（7模块 + 优先级/预算；Datetime 含完整日期+HH:MM） | `ContextBuilder.register()`, `build()` |
 | `notebook_manager.py` | 笔记/关注/任务 + 自动记笔记（日记已并入自传体） | `add_note()`, `auto_note_after_message()`, `get_pending_tasks_summary()` |
 | `skills_loader.py` | Agent Skills 加载 + 质量双门控 | `load_all()`, `match()` |
 | `marker_parser.py` | 5种标记流式解析 + SSML接口 | `MarkerParser.feed()`, `flush()` |
-| `tool_registry.py` | 装饰器注册 + autodiscover + OpenAI tools 格式 | `register_tool()`, `autodiscover()`, `to_openai_tools()` |
-| `tool_executor.py` | 工具执行调度：校验→权限→频率→确认→审计 | `execute()`, `_check_rate_limit()` |
+| `tool_registry.py` | 装饰器注册 + autodiscover（多实例重放）+ OpenAI tools 格式 | `register_tool()`, `autodiscover()`, `to_openai_tools()` |
+| `tool_executor.py` | 工具执行调度：校验→权限→频率→确认→审计 | `execute(..., confirmed=False)`, `_check_rate_limit()` |
 | `tool_result.py` | 统一工具返回格式 + 副作用标记 | `ToolResult.ok()`, `ToolResult.fail()` |
-| `result_wrapper.py` | 工具结果→昔涟语言（规则模板+LLM包装双轨） | `wrap()`, `_llm_wrap()` |
+| `result_wrapper.py` | 工具结果→昔涟语言（规则模板+LLM包装双轨；仅老路径） | `wrap()`, `_llm_wrap()` |
 | `tools/coding_delegate.py` | 编码委托（Claude Code CLI，EXECUTE，需确认） | `coding_delegate()` |
 | `tools/search_memory.py` | 记忆检索（MemoryManager） | `search_memory()` |
 | `tools/query_weather.py` | 天气查询（和风天气 + 搜索fallback） | `query_weather()` |
@@ -297,7 +339,9 @@ AttentionScheduler 任务提醒流程：
 | `nudge_engine.py` | 自主问候 + 注意力调度（AttentionScheduler）| `TokenBucket.consume()`, `NudgeEngine.tick()`, `NudgeEngine.poke()`, `GreetingGenerator.generate()`, `AutonomyConfig` |
 | `gateway.py` | 通道生命周期管理 | `register()`, `start()`, `stop()` |
 | `security.py` | 白名单 + 紧急熔断 + 频率限制 | `filter(event)`, `emergency_stop()` |
-| `http_channel.py` | FastAPI 应用, ~26个端点 + SSE | `/api/chat`, `/api/emotion`, `/api/notebook/*` 等 |
+| `http_channel.py` | FastAPI 应用, ~26个端点 + SSE（tool_call/tool_result + 假 token 切片） | `/api/chat`, `/api/chat/stream`, `/api/status` 等 |
+| `evals/runner.py` | P3 评测 runner（fake/legacy/loop/all） | `python -m evals.runner --mode all` |
+| `evals/metrics.py` | 工具调用率/正确工具率/多步/事实/延迟指标 | `evaluate()`, `check_fact()` |
 
 ---
 
@@ -305,24 +349,33 @@ AttentionScheduler 任务提醒流程：
 
 1. **全异步**：所有 I/O 用 `async/await`，Gateway 和 Channel 都继承 `asyncio` 模式
 2. **进程内调用**：不是微服务架构。Gateway → Agent → ModelRouter 都是 Python 函数调用，不走网络
-3. **InternalEvent 解耦**：Gateway 产出 `InternalEvent`，Agent 消费 `InternalEvent`，两者通过 Gateway 桥接
+3. **InternalEvent 解耦**：Gateway 产出 `InternalEvent`（含 `user_id` + `session_id`），Agent 消费
 4. **日志标准**：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`，用 `.` 分隔日志层级
 5. **错误处理**：模型不可用不崩溃，返回 `DEGRADED_REPLY` 友好提示
-6. **流式响应**：`agent.process(event, stream=True)` 返回原始 stream 对象，调用方（HTTPChannel）负责 SSE 格式化
-7. **测试**：`pytest` + `pytest-asyncio`，`asyncio_mode = "strict"`，测试文件放 `tests/`
-8. **部署**：`uv run python main.py` 一键启动，生产模式单进程 serve API + 前端
+6. **循环开关**：`LOOP_V2=0` 默认走老 `_handle_tool_calls`；`LOOP_V2=1` 走 `packages/agent/loop/`。切换后不要同时改两条路径
+7. **流式响应**：SSE 目前 = 工具事件真流 + 正文假切片（3 字符/50ms）；模型侧真 token 流是 P1.5，尚未实现
+8. **测试**：`pytest` + `pytest-asyncio`，`asyncio_mode = "strict"`，测试文件放 `tests/`
+9. **部署**：`uv run python main.py` 一键启动，生产模式单进程 serve API + 前端
 
 ---
 
-## 当前已知 TODO
+## 当前已知 TODO / 风险
 
 | 位置 | 说明 |
 |------|------|
+| P1.5 | 真 token 流未做：HTTP 仍是「完整回复 → 3 字符/50ms 切片」 |
+| M2 | 模型配置仍是 env + `model_configs` tier/override；DSH 风格声明式配置后移 |
+| `model_stats` | 内存统计，重启清零，未持久化 |
+| `evals` | search_web 当前 HTTP 错误；只评「是否调用工具」，没有 `tool_success_rate` |
+| `ConfirmationStore` | 进程内内存，重启丢 pending；跨会话隔离已做 |
+| `.env.example` | `LOOP_V2` / 预算项因 DSH 凭据策略暂未写入模板，见 HANDOFF §5 |
+| `scripts/ab_thinking.py` | 本地未跟踪，P3 runner 已独立 |
 | `packages/voice/` | 语音管道接口占位，阶段 9 完整实现 |
 | `gateway/mcp/adapter.py` | MCP 适配器接口签名预埋 |
 | `markers_to_ssml()` | SSML 转换完整实现 |
 
 ## 下一步
 
-打磨期继续 — 工具系统运行观察与调优 + 前端体验打磨 + 记忆/情感精度持续提升。
-工具系统已交付（LLM function calling 驱动 4 工具 + 确认回路 + 记忆/印象联动）。
+进入 **P1.5 真 token 流** 或 **M2 DSH 风格路由配置**；P3 剩余项是搜索工具 HTTP 错误与关键词判定过严。
+当前基线：`uv run pytest -q --ignore=tests/test_personality_regression.py` → **644 passed / 8 skipped**。
+

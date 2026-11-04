@@ -4,6 +4,18 @@
 > 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P3 + X + M 第一阶段完成**：loop 97.5% / legacy 82.5%，ModelPolicy/重试降级/stats 已落地，下一步 P1.5 真 token 流或 DSH 风格路由配置二阶段）
 > 📅 最后更新：2026-11-04
 
+## 📌 当前状态速查（压缩上下文前先看这里）
+
+| 项 | 当前值 |
+|---|---|
+| 仓库 | `D:\xilian-v3`，`main` 与 `origin/main` 同步（当前提交见 `git log -1`）；工作区仅未跟踪 `scripts/ab_thinking.py` |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **644 passed / 8 skipped / ~36s** |
+| 阶段 | P0–P3 + X + M 第一阶段已完成；下一步 **P1.5 真 token 流** 或 **M2 DSH 风格路由配置** |
+| 运行默认 | `LOOP_V2=0` 走老工具路径；`LOOP_V2=1` 才启用新循环（`.env` 重启生效） |
+| P3 基线 | 40 条：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100% |
+| 关键本地文档 | `docs/PROJECT-TOUR.md`、`docs/evals/agent-loop-v2-baseline-2026-11-04.md`、`docs/plans/HANDOFF-2026-11-04.md`（`docs/plans/` 被 gitignore） |
+| 关键风险 | 真 token 流未做；模型配置仍是 env + DB tier/override；`model_stats` 内存不持久；`search_web` 当前 HTTP 错误；确认 pending 重启丢失 |
+
 ---
 
 ## Windows 原生开发环境 + 空回复修复（2026-11-03）
@@ -116,7 +128,7 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 
 新增 `evals/`：40 条 JSONL（train 20 / holdout 20，六类）、指标纯函数、fake/live runner、报告生成；`tests/test_evals.py` 7 条离线测试。完整报告：[docs/evals/agent-loop-v2-baseline-2026-11-04.md](docs/evals/agent-loop-v2-baseline-2026-11-04.md)。
 
-真实模型基线（deepseek-flash / thinking off / 4 工具可用）：
+真实模型基线（deepseek-flash / thinking off / 4 工具可用；**X 阶段前的初始基线**，X 后数字见下方 X 节）：
 
 | 指标 | legacy `LOOP_V2=0` | loop `LOOP_V2=1` |
 |---|---:|---:|

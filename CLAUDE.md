@@ -25,19 +25,22 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `CONTEXT.md` — 代码导航（目录树/数据流/模块职责）
 - `docs/design/tool-system-audit-and-redesign.md` — 工具系统设计文档
 - `main.py` — 启动入口
-- `packages/agent/agent_core.py` — AgentCore 核心大脑（含 LLM工具调用 + 确认回路 + 记忆联动）
-- `packages/agent/tool_registry.py` — 工具注册表（autodiscover + OpenAI格式）
-- `packages/agent/tool_executor.py` — 工具执行器（校验→权限→频率→确认→审计）
-- `packages/agent/result_wrapper.py` — 结果包装器（规则模板 + LLM双轨）
+- `packages/agent/agent_core.py` — AgentCore 核心大脑（LOOP_V2 分支 + 会话级确认 + 多意图提示 + 记忆联动）
+- `packages/agent/loop/` — 预算式 Agent 循环（events/executor/runner/confirmation；P0–P3）
+- `packages/agent/tool_registry.py` — 工具注册表（autodiscover 多实例重放 + OpenAI格式）
+- `packages/agent/tool_executor.py` — 工具执行器（校验→权限→频率→确认→审计；`confirmed` 旁路）
+- `packages/agent/result_wrapper.py` — 结果包装器（规则模板 + LLM双轨；仅老路径）
 - `packages/agent/tools/` — 4 个工具：search_memory / query_weather / search_web / coding_delegate
-- `packages/shared/providers/` — 多供应商适配器（DeepSeek/OpenAI/Anthropic/Google）+ ProviderAdapter Protocol + PROVIDER_REGISTRY
-- `packages/shared/events.py` — InternalEvent 统一消息结构
-- `gateway/channels/http_channel.py` — FastAPI 所有 API 端点
+- `packages/shared/providers/` — 多供应商适配器 + ProviderAdapter Protocol + `model_policy.py`（ModelPolicy 能力矩阵）
+- `packages/shared/model_router.py` — 路由 + tool 重试/15m 降级 + `model_stats` 观测 + `tool_decision` 任务
+- `packages/shared/events.py` — InternalEvent（含 `user_id` / `session_id`）
+- `gateway/channels/http_channel.py` — FastAPI 所有 API 端点 + SSE 工具事件
+- `evals/` — P3 评测集（40 条 JSONL + runner/metrics）；报告在 `docs/evals/`
 - `packages/shared/database/` — DatabaseManager 拆分为 6 个领域 Repository（V3.7）
 - `packages/shared/database/_manager.py` — DatabaseManager 主类（生命周期 + 跨表操作）
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器
 - `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值 + TokenBucket + GreetingBanner）
-- `packages/agent/context_builder.py` — 模块化上下文注入（7模块: Datetime精密1-2h/Portrait/Emotion阈值门控/Memory/Notebook/Affection/NotebookTask + 会话边界感知 + 历史时间标签）
+- `packages/agent/context_builder.py` — 模块化上下文注入（7模块；Datetime 含完整日期 + HH:MM）
 - `packages/agent/notebook_manager.py` — 笔记本管理器（笔记/关注/任务，日记已并入自传体）
 - `data/character_memories.json` — 昔涟角色情景记忆（25条，session_id='character'）
 - `scripts/seed_character_memories.py` — 角色记忆导入脚本（幂等，bge-m3向量化）
@@ -46,6 +49,8 @@ cd packages/frontend && npm run dev  # 前端开发模式
 
 - Python 3.12+ async/await，uv 包管理
 - DeepSeek 纯云端路由：对话 `deepseek-flash`，`tier:reasoning` 保留 `deepseek-v4-pro`（ModelRouter）
+- Agent 循环：`LOOP_V2=0` 默认老路径；`LOOP_V2=1` 走 `packages/agent/loop/`（预算/结构化回填/会话确认）
+- 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；配置仍是 env + DB tier/override
 - SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
 - loguru 结构化日志：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`

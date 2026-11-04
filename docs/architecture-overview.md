@@ -29,9 +29,9 @@
 │                                                                     │
 │  1. _perceive()      → 安全过滤 + Intent 感知                      │
 │  2. _retrieve_memories() → 语义检索 + 角色记忆分流                  │
-│  3. ContextBuilder   → 8 个 Module 组装上下文                       │
-│  4. ModelRouter      → LLM 调用 (Pro/Flash)                        │
-│  5. _handle_tool_calls() → 工具执行 + 结果包装                      │
+│  3. ContextBuilder   → 7 个 Module 组装上下文（含完整日期/时间）     │
+│  4. ModelRouter      → LLM 调用（LOOP_V2=0 老路径 / =1 新循环）      │
+│  5. 工具              → 老：_handle_tool_calls；新：AgentLoopRunner  │
 │  6. EmotionEngine    → PAD 情绪更新                                 │
 │  7. MemoryManager    → 情景记忆编码                                 │
 │  8. NotebookManager  → 自动笔记                                     │
@@ -72,7 +72,7 @@
    │       └── 关键词检查: 无角色关键词 → character_memory_retrieval=None
    │
    ├─ ContextBuilder.build() (按 priority):
-   │   ├── DatetimeModule (1) → "现在是星期二的晚上。"
+   │   ├── DatetimeModule (1) → "现在是 2026-11-04 星期三 18:33（傍晚）"
    │   ├── PortraitModule (3) → 版本号未变 → 跳过 (缓存命中)
    │   ├── EmotionModule (4) → snap为None(首条消息) → ""
    │   ├── MemoryModule (5) → "上一次你们聊到了「...」"
@@ -85,7 +85,8 @@
    │   [history...]
    │   [user: "（昔涟翻到书里几页——...）（昔涟感觉到——...）\n\n---\n\n今天好累啊……"]
    │
-   ├─ ModelRouter.route("chat", messages, tools=[search_memory, query_weather, search_web, coding_delegate])
+   ├─ ModelRouter.route("tool_decision" if LOOP_V2 else "chat", messages, tools=[search_memory, query_weather, search_web, coding_delegate])
+   │   └→ LOOP_V2=0：DS V4-Pro 单轮；=1：AgentLoopRunner 可多步工具调用
    │   └→ DS V4-Pro → "嗯……人家听到了。就在这里陪你一会儿吧。"
    │
    ├─ _clean_reply() → "嗯……人家听到了。就在这里陪你一会儿吧。"

@@ -40,7 +40,7 @@
 - 🛠️ **4 个工具** — 记忆检索 / 天气查询 / 网络搜索 / 编码委托（LLM function calling 驱动）
 - 🖥️ **9 个前端面板** — 情绪雷达 / 记忆时间线 / 笔记本 / 自传体 / 审计日志 / 技能管理 / 伙伴印象 / 设置 / PAD 轨迹
 - 🎨 **浅色梦幻风** — 毛玻璃卡片 + SVG 侧栏图标 + 樱花粉色系 + 可定制全页背景
-- 🔀 **多模型供应商** — 支持 DeepSeek / OpenAI / Anthropic，按任务难度自动分工（强力模型对话 + 廉价模型后台），设置面板热切换无需重启
+- 🔀 **多模型供应商** — 支持 DeepSeek / OpenAI / Anthropic，按任务难度自动分工（强力模型对话 + 廉价模型后台），设置面板热切换无需重启；带 ModelPolicy 能力矩阵与失败观测
 
 ---
 
@@ -316,7 +316,8 @@ xilian-v3/
 │
 ├── packages/
 │   ├── agent/                    # 🧠 Agent 核心引擎
-│   │   ├── agent_core.py         #   核心大脑 (ActorMind 推理链)
+│   │   ├── agent_core.py         #   核心大脑 (ActorMind + LOOP_V2 分支)
+│   │   ├── loop/                 #   预算式 Agent 循环 (P0–P3)
 │   │   ├── emotion_core.py       #   PAD 情感引擎
 │   │   ├── memory_manager.py     #   情景记忆全管线
 │   │   ├── micro_event_extractor.py # 微事件提取器 (ADD-Only)
@@ -329,8 +330,9 @@ xilian-v3/
 │   │   ├── skills_loader.py      #   Agent Skills 加载器
 │   │   └── tools/                #   4 个工具实现
 │   ├── shared/                   # 🔗 共享层
-│   │   ├── model_router.py       #   模型路由 (多供应商)
-│   │   ├── database.py           #   数据库 (17 表)
+│   │   ├── model_router.py       #   模型路由 + ModelPolicy + 重试/降级 + stats
+│   │   ├── model_stats.py        #   按模型观测 (内存)
+│   │   ├── database.py           #   数据库 (13 表)
 │   │   ├── marker_parser.py      #   标记解析器
 │   │   └── vector_store.py       #   向量存储
 │   └── frontend/                 # 🎨 React 前端
@@ -339,11 +341,12 @@ xilian-v3/
 │   ├── security.py               #   安全过滤（注入检测/熔断）
 │   └── channels/                 #   通道（HTTP/Console）
 │
+├── evals/                        # 🧪 P3 评测集 (40 条 + runner/metrics)
 ├── prompts/                      # 📝 人格提示词
 ├── photo/                        # 🖼️ 背景图片 + 风格参考
 ├── alembic/                      # 🗄️ 数据库迁移
 ├── skills/manual/                # 🛠️ 4 个技能文件
-└── tests/                        # 🧪 534+ 条测试
+└── tests/                        # 🧪 644+ 条测试
 ```
 
 ---
@@ -373,6 +376,7 @@ xilian-v3/
 | `DEEPSEEK_API_KEY` | DeepSeek API Key（必需） | - |
 | `DEEPSEEK_API_KEY_2` | 备用 Key（可选） | - |
 | `EMBED_API_KEY` | 嵌入 API Key | 复用 DEEPSEEK_API_KEY_2 |
+| `LOOP_V2` | 1 = 启用新 Agent 循环（含 SSE 工具事件/确认状态机） | 0 |
 | `HTTP_PORT` | HTTP 服务端口 | 8000 |
 | `BIND_HOST` | 绑定地址 | 127.0.0.1 |
 | `NO_HTTP` | 设为 1 禁用 HTTP | - |
