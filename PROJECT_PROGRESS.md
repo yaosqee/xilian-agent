@@ -1,7 +1,7 @@
 # 昔涟 V3.7 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P0 完成**，下一步 P1 接线）
+> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P1 工具链路已通**，下一步 P2 确认状态机）
 > 📅 最后更新：2026-11-04
 
 ---
@@ -73,9 +73,25 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 1. **不做工具级自动重试**——EXECUTE 工具重试会重复副作用；改为失败结构化回传、由模型决定是否重调。
 2. 确认暂停时 `DoneEvent` 不带 pending 调用，assistant/tool 消息也未入会话 → P2 状态机要补。
 3. 时间预算只在步间检查（单次模型调用有 90s 超时兜底）。
-4. 接线未做 → P1 第一步加 `LOOP_V2` 开关。
+4. 接线未做 → P1-1 已补：`LOOP_V2` 开关（默认 0）。
 
 流程提醒：P0 完成后忘了提交，核查时补交 `5d106c2`。后续每阶段完成即 commit。
+
+---
+
+## P1：LOOP_V2 接线 + 工具事件（2026-11-04，`add88d5` / `e90f256`）
+
+| 项 | 状态 |
+|---|---|
+| `LOOP_V2` 开关 | 默认 0（老路径不变）；=1 时 `AgentCore.process()` 走 `AgentLoopRunner`，首步保留 `_route_intent` 快路径 |
+| 工具副作用 | `ToolOutcome` 透传 `trigger_memory` / `trigger_portrait_update`，旧 `_process_tool_side_effects` 直接复用 |
+| SSE 工具事件 | `/api/chat/stream` 新增 `tool_call` / `tool_result`；`sticker` / `token` / `done` 协议不变 |
+| 前端 | ChatView 工具状态行（「她在查天气……」/「查到了：…」），未知事件忽略 |
+| 测试 | **612 passed / 8 skipped / 32s**；loop 单测 29 条 + HTTP SSE 2 条 |
+
+配置（`.env`，重启生效）：`LOOP_V2=1`；预算 `LOOP_V2_MAX_STEPS`(6) / `LOOP_V2_MAX_TOKENS`(20000) / `LOOP_V2_MAX_SECONDS`(90) / `LOOP_V2_TOOL_TIMEOUT`(60)。
+
+未做：真 token 流仍为 3 字符/50ms 假流式；确认状态机留给 P2（当前 `confirmation` 只回话术，不保存 pending）。
 
 ---
 
