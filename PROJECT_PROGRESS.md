@@ -15,10 +15,10 @@
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
 | 搜索 | `SEARCH_PROVIDER=deepseek` → `POST https://api.deepseek.com/v1/tools/search`，复用 DeepSeek Key，5 元/1000 次成功请求 |
-| thinking 口径 | 评测固定 `--thinking off`；生产 `.env` **未设** `DEEPSEEK_DISABLE_THINKING`（即 thinking 开）→ **两者尚未对齐**，需二选一（见下） |
+| thinking | 生产与评测**已对齐**：`.env` 设 `DEEPSEEK_DISABLE_THINKING=1`（关闭）；快 ~1.9×、省 2–6×，人设 A/B 无差异 |
 | 流式 | SSE 工具事件真流；LOOP_V2 下正文也已是真 token 流（P1.5），老路径仍为 3 字符/50ms 假切片 |
 | 关键本地文档 | `docs/PROJECT-TOUR.md`、`docs/evals/agent-loop-v2-baseline-2026-11-04.md`、`docs/plans/HANDOFF-2026-11-04.md`（`docs/plans/` 被 gitignore） |
-| 关键风险 | thinking 口径未对齐；老路径在 Flash 下会漏出 DSML 工具协议文本（multi 类 0%）；`model_stats` 内存不持久；确认 pending 重启丢失；memory 词表已补（`906a49a`，6 条单次 100%）但长尾口语变体仍待观察 |
+| 关键风险 | 老路径在 Flash 下会漏出 DSML 工具协议文本（multi 类 0%）；`model_stats` 内存不持久；确认 pending 重启丢失；memory 词表已补（`906a49a`，6 条单次 100%）但长尾口语变体仍待观察 |
 
 ---
 

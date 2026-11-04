@@ -15,7 +15,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - 唯一工作目录是 `D:\xilian-v3`（WSL 副本已退役）；打包也在同一目录，不再需要复制。
 - PyPI 直连超时：`UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。
 - 对话模型 `deepseek-flash`（存在 DB `model_configs`，设置面板可切）。
-- thinking：**评测固定 `--thinking off`；生产 `.env` 未设 `DEEPSEEK_DISABLE_THINKING`（即开启）**，两者尚未对齐；要用关闭版就加 `DEEPSEEK_DISABLE_THINKING=1`。
+- thinking：**生产与评测一致：`.env` 已设 `DEEPSEEK_DISABLE_THINKING=1`（关闭）**；A/B 数据见 `docs/plans/agent-loop-v2.md` §7.3.1。
 - codegraph 用 CLI（`codegraph query/explore`）；当前工具链未接 MCP。
 - `tests/test_personality_regression.py` 是**真模型**用例：会写真库、跑 5 分钟、结果不确定，默认排除。
 
