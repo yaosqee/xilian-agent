@@ -8,7 +8,7 @@
 
 | 项 | 当前值 |
 |---|---|
-| 仓库 | `D:\xilian-v3`，`main` 与 `origin/main` 同步（当前提交见 `git log -1`）；工作区仅未跟踪 `scripts/ab_thinking.py` |
+| 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区仅未跟踪 `scripts/ab_thinking.py` |
 | 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **644 passed / 8 skipped / ~36s** |
 | 阶段 | P0–P3 + X + M 第一阶段已完成；下一步 **P1.5 真 token 流** 或 **M2 DSH 风格路由配置** |
 | 运行默认 | `LOOP_V2=0` 走老工具路径；`LOOP_V2=1` 才启用新循环（`.env` 重启生效） |
