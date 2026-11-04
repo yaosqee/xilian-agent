@@ -137,7 +137,7 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 | AgentCore | 有 `event_sink`（SSE）时自动开流；确认恢复路径同样支持 |
 | SSE | `TokenEvent` 即时转 `event: token`；`MarkerParser` 过滤 `[sticker:…]` 等标记；收到过可见 token 就不再假切片 |
 | 前端 | 协议不变，`token` 事件照旧追加，无需改动 |
-| 测试 | **656 passed / 8 skipped / 34s**；新增 4 条 runner 流式、5 条归一化、2 条 SSE 用例 |
+| 测试 | **656 passed / 8 skipped / 36s**；新增 4 条 runner 流式、5 条归一化、2 条 SSE、1 条接线用例 |
 
 已知边界：流式 usage 依赖供应商返回（DeepSeek 实测带 usage）；适配器忽略 `stream=True` 时自动退回完整响应；中途断流不重试（避免重复）；正文被 `_enforce_speech_rule` 追加前缀时，已流出的部分无法回滚。
 
