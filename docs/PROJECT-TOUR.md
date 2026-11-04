@@ -15,7 +15,7 @@
 
 ```bash
 cd D:\xilian-v3
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 634 passed / 8 skipped
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 638 passed / 8 skipped
 uv run python main.py                                            # 打开 http://127.0.0.1:8000
 ```
 
@@ -34,10 +34,10 @@ uv run python main.py                                            # 打开 http:/
 
 ### 1.3 知道现在在哪（10 分钟）
 
-- 测试基线：**634 passed / 8 skipped / ~35s**（真模型人格测试默认排除）。
+- 测试基线：**638 passed / 8 skipped / ~35s**（真模型人格测试默认排除）。
 - 老工具路径（`_handle_tool_calls`）仍在服役；新循环 `LOOP_V2` **默认关闭**，`.env` 里 `LOOP_V2=1` 才启用。
-- P0–P3 已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机、40 条评测基线。
-- 下一步：X 时间保真（日期/时间 ground truth）+ P3 暴露的多步工具选择加固。
+- P0–P3 + X 已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机、40 条评测基线、时间保真 + 多步提示。
+- 下一步：M 模型路由（模型能力矩阵/失败统计）或 P1.5 真 token 流。
 
 ## 2. 2 小时版（能动手改）
 
@@ -76,7 +76,7 @@ codegraph impact ToolExecutor.execute
 ### 2.4 改一个小东西验证理解（20 分钟）
 
 例：给 `DatetimeModule` 加上完整日期（现在只有"星期X 晚上 10 点多"，没有年月日）。
-改完跑测试 → 启动 → 问"今天几号"，看她是否答对。这就是下一步 X 阶段要做的。
+改完跑测试 → 启动 → 问"今天几号"，看她是否答对。这就是 X 阶段（已完成）；下一步是 M 模型路由。
 
 ## 3. 我们最近改了什么、为什么（对照表）
 
@@ -91,13 +91,15 @@ codegraph impact ToolExecutor.execute
 | 接线 + SSE P1 | 新循环没人调用；前端看不到工具过程 | `LOOP_V2` 开关 + `tool_call/tool_result` 事件 + 气泡 | `add88d5` `e90f256` |
 | 确认状态机 P2 | 旧的 pending 是进程内单槽，多会话会串 | `ConfirmationStore` 按会话 + TTL | `31d6385` |
 | 确认后执行修复 | `ToolExecutor` 无条件返回 PENDING，确认了也执行不了 | `confirmed=True` 旁路 | `6a015f3` |
-| 评测集 P3 | 工具调用质量只能靠体感 | 40 条 JSONL + runner + 指标；loop 87.5% / legacy 77.5% | `3c383f2` |
+| 评测集 P3 | 工具调用质量只能靠体感 | 40 条 JSONL + runner + 指标；loop 97.5% / legacy 82.5% | `3c383f2` |
+| 时间保真 X | 日期/时间没有 ground truth，模型编造 | `DatetimeModule` 完整日期 + HH:MM；事实 100% | `3cf4069` |
+| 多步提示 | loop 只调天气、不调第二类工具 | 多意图 system 提示 + P3 用例校准；多步 100% | `9450d4f` |
 | 多 AgentCore 工具丢失 | 第二个实例 autodiscover 拿到空 registry | `_AVAILABLE` 缓存重放 | `7f76d1f` |
 
 ## 4. 快速自检（确认项目没坏）
 
 ```bash
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 634 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 638 passed
 uv run python -c "import main"                                    # 导入无副作用
 LOOP_V2=1 uv run python main.py                                   # 新循环模式跑一条"今天杭州天气"
 ```
