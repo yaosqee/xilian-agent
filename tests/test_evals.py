@@ -71,10 +71,16 @@ def test_validate_cases_catches_unknown_tool():
 def test_check_fact_date_time_weekday():
     assert check_fact("今天是 2026-11-04。", "current_date", NOW)
     assert check_fact("今天是 11月4日。", "current_date", NOW)
+    assert check_fact("今天是 2026 年 11 月 4 日。", "current_date", NOW)
     assert not check_fact("今天是 2026-11-05。", "current_date", NOW)
 
     assert check_fact("现在是 13:32。", "current_time", NOW)
     assert check_fact("下午 1:32。", "current_time", NOW)
+    assert check_fact("下午一点三十分。", "current_time", NOW)
+    assert check_fact(
+        "现在是傍晚六点三十七分。", "current_time",
+        datetime(2026, 11, 4, 18, 37),
+    )
     assert not check_fact("现在是 13:00。", "current_time", NOW)
     assert not check_fact("现在是 15:32。", "current_time", NOW)
 

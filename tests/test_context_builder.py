@@ -16,6 +16,17 @@ class TestDatetimeModule:
         assert '星期' in result
         assert len(result) > 3
 
+    def test_renders_full_date_and_minutes(self):
+        from datetime import datetime
+
+        fixed = datetime(2026, 11, 4, 18, 33)
+        result = DatetimeModule(now_fn=lambda: fixed).render()
+
+        assert "2026-11-04" in result
+        assert "18:33" in result
+        assert "星期三" in result
+        assert "不要推算" in result
+
     def test_priority_is_1(self):
         assert DatetimeModule().priority == 1
 

@@ -92,16 +92,16 @@ class ContextModule(ABC):
 # ═══════════════════════════════════════════════════════════
 
 class DatetimeModule(ContextModule):
-    """当前时间与星期（1-2 小时精度，口语化表达，零缓存代价）"""
+    """当前日期/时间/星期（完整 ground truth，供时间/日期问题直接引用）"""
 
-    def __init__(self):
-        super().__init__(name="datetime", priority=1, max_tokens=50)
+    def __init__(self, now_fn=None):
+        super().__init__(name="datetime", priority=1, max_tokens=70)
+        self._now_fn = now_fn or datetime.now
 
     def render(self) -> str:
-        now = datetime.now()
+        now = self._now_fn()
         hour = now.hour
-        minute = now.minute
-        # 时段判断
+        # 时段判断（保留一点口语感，但日期和分钟必须精确）
         if 5 <= hour < 12:
             period = "早晨" if hour < 9 else "上午"
         elif 12 <= hour < 14:
@@ -114,27 +114,12 @@ class DatetimeModule(ContextModule):
             period = "晚上"
         else:
             period = "深夜"
-        # 口语化约数（1-2 小时精度）
-        rough_hour = hour
-        if minute >= 45:
-            rough_hour = (hour + 1) % 24
-        elif minute >= 15:
-            rough_hour = hour  # "三点多"
-        else:
-            rough_hour = hour  # "三点左右" / "刚过三点"
-        # 自然语言表示
-        if minute < 10:
-            time_desc = f"{rough_hour}点出头"
-        elif minute < 20:
-            time_desc = f"{rough_hour}点多"
-        elif minute < 40:
-            time_desc = f"{rough_hour}点半左右"
-        elif minute < 50:
-            time_desc = f"快{rough_hour}点了"
-        else:
-            time_desc = f"快{rough_hour}点了"
         wd = ["一", "二", "三", "四", "五", "六", "日"][now.weekday()]
-        return f"现在是星期{wd}的{period}，{time_desc}。"
+        return (
+            f"现在是 {now.strftime('%Y-%m-%d')} 星期{wd} "
+            f"{now.strftime('%H:%M')}（{period}）。"
+            "伙伴问时间或日期时，直接引用这里，不要推算或编造。"
+        )
 
 
 # ═══════════════════════════════════════════════════════════

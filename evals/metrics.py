@@ -159,8 +159,37 @@ def _normalize(text: str) -> str:
     return unicodedata.normalize("NFKC", text or "")
 
 
+_CN_DIGITS = {
+    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+
+
+def _cn_to_int(token: str) -> int | None:
+    """中文数字转整数，覆盖 六 / 十 / 十八 / 三十七 这类时间写法。"""
+    if not token:
+        return None
+    if token.isdigit():
+        return int(token)
+    token = token.replace("零", "")
+    if not token:
+        return 0
+    if "十" in token:
+        left, _, right = token.partition("十")
+        tens = _CN_DIGITS.get(left, 1) if left else 1
+        ones = _CN_DIGITS.get(right, 0) if right else 0
+        if left and left not in _CN_DIGITS:
+            return None
+        if right and right not in _CN_DIGITS:
+            return None
+        return tens * 10 + ones
+    if len(token) == 1:
+        return _CN_DIGITS.get(token)
+    return None
+
+
 def _extract_times(text: str) -> list[tuple[int, int | None]]:
-    """从回复里抽取 (hour, minute|None)，支持 22:47 / 22点47分 / 22时。"""
+    """从回复里抽取 (hour, minute|None)，支持 22:47 / 22点47分 / 六点三十七分。"""
     text = _normalize(text)
     found: list[tuple[int, int | None]] = []
 
@@ -175,6 +204,19 @@ def _extract_times(text: str) -> list[tuple[int, int | None]]:
         if 0 <= hour <= 23 and (minute is None or 0 <= minute <= 59):
             found.append((hour, minute))
 
+    # 中文数字写法：六点三十七分 / 十八点零五分（排除「一点点」）
+    for match in re.finditer(
+        r"([零一二三四五六七八九十两]{1,4})\s*点(?!点)"
+        r"(?:\s*([零一二三四五六七八九十两]{1,4})\s*分?)?",
+        text,
+    ):
+        hour = _cn_to_int(match.group(1))
+        minute = _cn_to_int(match.group(2)) if match.group(2) else None
+        if hour is not None and 0 <= hour <= 23 and (
+            minute is None or 0 <= minute <= 59
+        ):
+            found.append((hour, minute))
+
     return found
 
 
@@ -184,6 +226,7 @@ def check_fact(reply: str, kind: str, now: datetime | None = None) -> bool:
     if not text:
         return False
     now = now or datetime.now()
+    compact = re.sub(r"\s+", "", text)
 
     if kind == "current_date":
         candidates = {
@@ -193,11 +236,11 @@ def check_fact(reply: str, kind: str, now: datetime | None = None) -> bool:
             f"{now.month}月{now.day}日",
             f"{now.month:02d}-{now.day:02d}",
         }
-        return any(candidate in text for candidate in candidates)
+        return any(candidate in compact for candidate in candidates)
 
     if kind == "weekday":
         name = _WEEKDAY_NAMES[now.weekday()]
-        return f"周{name}" in text or f"星期{name}" in text
+        return f"周{name}" in compact or f"星期{name}" in compact
 
     if kind == "current_time":
         for hour, minute in _extract_times(text):
