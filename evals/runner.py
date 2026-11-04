@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import functools
+import hashlib
 import json
 import os
 import sys
@@ -99,6 +100,10 @@ class ScriptedAdapter:
             case_id=case.id,
             reply=reply,
             tool_calls=calls,
+            # 脚本 oracle 假定工具都成功；报告已标 SIMULATED
+            tool_results=[
+                {"name": call["name"], "ok": True, "error": ""} for call in calls
+            ],
             latency_ms=1,
             model_calls=1,
             finished_at=self.now,
@@ -125,6 +130,7 @@ class LiveAgentAdapter:
         self._old_thinking: str | None = None
         self.available_tools: list[str] = []
         self._tool_calls: list[dict[str, Any]] = []
+        self._tool_results: list[dict[str, Any]] = []
         self._model_calls = 0
 
     async def start(self) -> None:
@@ -161,7 +167,13 @@ class LiveAgentAdapter:
                 "name": tool_name,
                 "arguments": dict(arguments or {}),
             })
-            return await original_execute(tool_name, arguments, *args, **kwargs)
+            result = await original_execute(tool_name, arguments, *args, **kwargs)
+            self._tool_results.append({
+                "name": tool_name,
+                "ok": bool(getattr(result, "success", False)),
+                "error": str(getattr(result, "error", "") or "")[:160],
+            })
+            return result
 
         self.agent.tool_executor.execute = recording_execute
 
@@ -202,6 +214,7 @@ class LiveAgentAdapter:
 
     def _reset_case_state(self) -> None:
         self._tool_calls = []
+        self._tool_results = []
         self._model_calls = 0
         context = self.agent.context
         context.history.clear()
@@ -252,6 +265,7 @@ class LiveAgentAdapter:
             case_id=case.id,
             reply=reply,
             tool_calls=list(self._tool_calls),
+            tool_results=list(self._tool_results),
             latency_ms=latency_ms,
             model_calls=self._model_calls,
             error=error,
@@ -290,6 +304,7 @@ def _summary_line(summary: dict[str, Any]) -> str:
         f"no_tool={summary['no_tool_accuracy']:.1%} "
         f"multi_step={summary['multi_step_completion']:.1%} "
         f"fact={summary['fact_accuracy']:.1%} "
+        f"tool_success={summary.get('tool_success_rate', 0.0):.1%} "
         f"avg_latency={summary['avg_latency_ms']}ms"
     )
 
@@ -324,6 +339,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
             ("no_tool_accuracy", "不该调准确率"),
             ("multi_step_completion", "多步完成率"),
             ("fact_accuracy", "事实正确率"),
+            ("tool_success_rate", "工具执行成功率"),
             ("keyword_accuracy", "关键词命中率"),
             ("avg_latency_ms", "平均耗时(ms)"),
             ("avg_tool_calls", "平均工具调用数"),
@@ -334,6 +350,20 @@ def render_markdown(payload: dict[str, Any]) -> str:
                 value = f"{value:.1%}"
             lines.append(f"| {label} | {value} |")
         lines.append("")
+
+        by_split = result.get("by_split") or {}
+        if by_split:
+            lines.append("| split | 用例 | 通过率 | 事实正确 | 多步 |")
+            lines.append("|---|---|---|---|---|")
+            for split in ("train", "holdout"):
+                part = by_split.get(split)
+                if not part:
+                    continue
+                lines.append(
+                    f"| {split} | {part['total']} | {part['case_pass_rate']:.1%} | "
+                    f"{part['fact_accuracy']:.1%} | {part['multi_step_completion']:.1%} |"
+                )
+            lines.append("")
 
         failed = [row for row in result["rows"] if not row["ok"]]
         lines.append(f"失败用例：{len(failed)} / {summary['total']}")
@@ -434,9 +464,12 @@ async def main_async(args: argparse.Namespace) -> int:
             summary=results[mode]["summary"],
         )
 
+    cases_sha256 = hashlib.sha256(Path(args.cases).read_bytes()).hexdigest()
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "cases_file": str(args.cases),
+        # 用例集指纹：冻结后一旦变化，报告里能立刻看出来
+        "cases_sha256": cases_sha256,
         "split": args.split,
         "category": args.category,
         "case_count": len(cases),

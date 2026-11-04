@@ -66,11 +66,24 @@ async def search_web(query: str, recency: str = "noLimit",
                 },
             )
 
+            if resp.status_code in (401, 403, 429):
+                # 额度/鉴权类错误：重试没有意义，明确告诉模型别再来回试
+                logger.warning(
+                    "search_web.unavailable",
+                    status=resp.status_code,
+                    body=resp.text[:200],
+                )
+                return ToolResult.fail(
+                    "搜索服务的额度或权限不可用。这次不要再重复搜索，"
+                    "直接如实告诉伙伴现在查不到，等会儿再试。"
+                )
+
             if resp.status_code != 200:
                 logger.warning("search_web.http_error",
                              status=resp.status_code, body=resp.text[:200])
                 return ToolResult.fail(
-                    f"搜索服务好像有点忙……状态码{resp.status_code}，等会儿再试试？"
+                    f"搜索服务暂时出错（状态码{resp.status_code}），这次先别重试，"
+                    "直接告诉伙伴没查到就好。"
                 )
 
             data = resp.json()
@@ -108,7 +121,9 @@ async def search_web(query: str, recency: str = "noLimit",
 
     except httpx.TimeoutException:
         logger.warning("search_web.timeout", query=query[:50])
-        return ToolResult.fail("搜索花了比较久还没回来……等会儿再试试好不好？")
+        return ToolResult.fail(
+            "搜索超时了。这次别再连着重试，先告诉伙伴没查到，稍后再帮他查。"
+        )
     except Exception as e:
         logger.error("search_web.error", error=str(e))
         return ToolResult.fail("搜索出了一点小问题……等会儿再试试好不好？")

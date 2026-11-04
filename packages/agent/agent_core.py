@@ -16,6 +16,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from loguru import logger
@@ -106,6 +107,12 @@ def _looks_like_multi_intent(text: str) -> bool:
         if any(pattern in text for pattern in patterns)
     )
     return categories >= 2
+
+
+# 问时间/日期的句式：命中时在 user 消息前再钉一次精确时间（见 _with_time_hint）
+_TIME_ASK_PATTERNS = (
+    "几点", "什么时间", "现在时间", "几号", "哪天", "星期几", "周几", "日期",
+)
 
 # TOOL_PLACEHOLDER 已移除 — 工具调用现由 LLM function calling 驱动
 
@@ -786,6 +793,9 @@ class AgentCore:
             # ── P1-②: 情绪调制 LLM 参数 ──
             emo_params = self._emotion_modulated_params()
 
+            # 问时间/日期时把精确时间钉在 user 消息前（两条路径一致）
+            messages = self._with_time_hint(messages, event.payload)
+
             if self._loop_v2 and self.tool_executor is not None:
                 # ── LOOP_V2: 每步带 tools + 结构化回填 + 预算循环 ──
                 # 有 event_sink 就同时开真 token 流（P1.5）；没有则只聚合结果。
@@ -1309,6 +1319,36 @@ class AgentCore:
         ):
             return {"type": "function", "function": {"name": forced_tool}}
         return "auto"
+
+    @staticmethod
+    def _with_time_hint(
+        messages: list[dict],
+        user_text: str,
+        now: datetime | None = None,
+    ) -> list[dict]:
+        """问时间/日期时，把精确时间插到 user 消息前（比上下文里的日期更醒目）。
+
+        DatetimeModule 已经在 system 上下文里给了日期/时间，但实测模型偶尔只答日期、
+        不引用 HH:MM。这里在同一轮再钉一次，减少"记不住就编"的概率。不改入参列表。
+        """
+        text = user_text or ""
+        if not any(pattern in text for pattern in _TIME_ASK_PATTERNS):
+            return messages
+        moment = now or datetime.now()
+        weekday = "一二三四五六日"[moment.weekday()]
+        hint = (
+            f"【当前时间】{moment.strftime('%Y-%m-%d')} 星期{weekday} "
+            f"{moment.strftime('%H:%M')}。"
+            "回答时间/日期问题时直接使用这个值，不要推算或编造。"
+        )
+        updated = list(messages)
+        insert_at = len(updated)
+        for index in range(len(updated) - 1, -1, -1):
+            if updated[index].get("role") == "user":
+                insert_at = index
+                break
+        updated.insert(insert_at, {"role": "system", "content": hint})
+        return updated
 
     @staticmethod
     def _with_multi_intent_hint(

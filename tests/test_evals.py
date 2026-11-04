@@ -128,6 +128,44 @@ def test_evaluate_metrics_and_failures():
     assert failed == {"n1"}
 
 
+def test_tool_success_rate_counts_execution_failures():
+    """工具被调用了但执行失败（如搜索额度用尽）不能算成功。"""
+    cases = [
+        _case("s1", "search", expect_tools=["search_web"]),
+        _case("s2", "search", expect_tools=["search_web"]),
+    ]
+    runs = [
+        CaseRun(
+            "s1",
+            reply="查到了",
+            tool_calls=[{"name": "search_web"}],
+            tool_results=[{"name": "search_web", "ok": True, "error": ""}],
+            latency_ms=5,
+        ),
+        CaseRun(
+            "s2",
+            reply="查不到",
+            tool_calls=[{"name": "search_web"}],
+            tool_results=[{"name": "search_web", "ok": False, "error": "额度不可用"}],
+            latency_ms=5,
+        ),
+    ]
+
+    result = evaluate(cases, runs, now=NOW)
+
+    assert result["summary"]["tool_success_rate"] == 0.5
+    assert result["summary"]["correct_tool_rate"] == 1.0  # 调用了就算"正确工具"
+    assert result["rows"][1]["tool_results"][0]["ok"] is False
+
+
+def test_tool_success_rate_is_zero_without_tool_calls():
+    case = _case("n1", "no_tool", max_tool_calls=0)
+    run = CaseRun("n1", reply="嗯嗯", latency_ms=1)
+    result = evaluate([case], [run], now=NOW)
+    assert result["summary"]["tool_success_rate"] == 0.0
+
+
+
 def test_evaluate_missing_run_is_error():
     case = _case("w1", "weather", expect_tools=["query_weather"])
     result = evaluate([case], [], now=NOW)

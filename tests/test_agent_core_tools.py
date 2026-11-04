@@ -7,6 +7,8 @@ import sys
 
 sys.path.insert(0, ".")
 
+from datetime import datetime
+
 import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -135,3 +137,32 @@ def test_sanitize_fabrication_replaces_weather_data():
 def test_sanitize_fabrication_leaves_normal_reply():
     agent = _bare_agent()
     assert agent._sanitize_fabrication("今天心情不错", tools_called=False) == "今天心情不错"
+
+
+# ── _with_time_hint（时间/日期直接引用）──────────────────
+
+def test_time_hint_inserted_before_user_message():
+    messages = [
+        {"role": "system", "content": "人格"},
+        {"role": "user", "content": "现在几点了？"},
+    ]
+    out = AgentCore._with_time_hint(
+        messages, "现在几点了？", now=datetime(2026, 11, 4, 19, 54)
+    )
+
+    assert len(out) == 3
+    assert out[0]["role"] == "system"
+    assert "【当前时间】" in out[1]["content"]
+    assert "2026-11-04" in out[1]["content"]
+    assert "19:54" in out[1]["content"]
+    assert out[2]["content"] == "现在几点了？"
+    # 不改调用方列表
+    assert len(messages) == 2
+
+
+def test_time_hint_skipped_for_normal_messages():
+    messages = [{"role": "user", "content": "今天好累啊"}]
+    out = AgentCore._with_time_hint(
+        messages, "今天好累啊", now=datetime(2026, 11, 4, 19, 54)
+    )
+    assert out is messages

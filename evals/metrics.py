@@ -78,6 +78,8 @@ class CaseRun:
     case_id: str
     reply: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    # 每个工具调用的执行结果：{"name": ..., "ok": bool, "error": str}
+    tool_results: list[dict[str, Any]] = field(default_factory=list)
     latency_ms: int = 0
     model_calls: int = 0
     error: str = ""
@@ -284,6 +286,8 @@ def _summarize(
     multi_hits = 0
     fact_total = 0
     fact_hits = 0
+    tool_success_total = 0
+    tool_success_hits = 0
     keyword_total = 0
     keyword_hits = 0
     passed = 0
@@ -305,6 +309,11 @@ def _summarize(
 
         if calls > 0:
             tool_call_hits += 1
+
+        for item in run.tool_results:
+            tool_success_total += 1
+            if item.get("ok"):
+                tool_success_hits += 1
 
         expected_ok: bool | None = None
         if case.expect_tools:
@@ -373,6 +382,7 @@ def _summarize(
             "message": case.message,
             "tools": names,
             "tool_calls": calls,
+            "tool_results": run.tool_results,
             "model_calls": run.model_calls,
             "latency_ms": run.latency_ms,
             "ok": case_ok,
@@ -395,6 +405,7 @@ def _summarize(
         "no_tool_accuracy": _rate(no_tool_hits, no_tool_total),
         "multi_step_completion": _rate(multi_hits, multi_total),
         "fact_accuracy": _rate(fact_hits, fact_total),
+        "tool_success_rate": _rate(tool_success_hits, tool_success_total),
         "keyword_accuracy": _rate(keyword_hits, keyword_total),
         "avg_latency_ms": round(total_latency / total, 1) if total else 0.0,
         "avg_tool_calls": round(total_tool_calls / total, 2) if total else 0.0,
