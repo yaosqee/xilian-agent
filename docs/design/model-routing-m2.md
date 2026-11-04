@@ -1,7 +1,7 @@
 # M2 · 声明式模型路由（计划）
 
 > 日期：2026-11-04
-> 状态：M2-0 计划草案，**未实施**
+> 状态：M2-0 **已定稿**（2026-11-04），未实施
 > 目标：把「任务 → 模型」从散落在代码/DB/env 的隐式规则，收敛成一份可校验、可解释、可回退的声明式配置。
 > 范围：只改模型路由与配置层，不动人格、记忆、工具实现、评测用例。
 
@@ -120,6 +120,14 @@ model = "deepseek-v4-pro"
 temperature = 0.3
 max_tokens = 2000
 
+[embedding]
+# 向量模型独立成段：不进 profiles / routing，避免和对话模型混在一起
+provider = "siliconflow"
+model = "BAAI/bge-m3"
+dimensions = 1024
+base_url = "https://api.siliconflow.cn/v1"
+api_key_env = "EMBED_API_KEY"
+
 [routing_groups]
 # 未单列的 task 落组默认；reasoning/code/planning 单独成组，不落回 dialogue
 dialogue = "dialogue"
@@ -171,7 +179,7 @@ task_type
 
 ### 5.2 建议
 
-1. 新增 `model_configs.source` 列（migration 005）：
+1. 新增 `model_configs.source` 列（migration **007**，当前 head 是 006）：
    - `legacy`：迁移前已有的 tier/override 行；
    - `ui`：M2 之后设置面板写入的覆盖。
 2. V2=1 时：
@@ -184,13 +192,33 @@ task_type
 4. V2=0：
    - 完全走旧逻辑，忽略 `source`，所有旧行照常生效。
 
-### 5.3 设置面板
+### 5.3 设置面板（重做）
 
-M2-3 之前，面板仍按 tier/override 编辑：
+决定：不复用现有 tier 编辑面板，按 DSH 风格重做，分两步交付。
 
-- `tier:*` 写入时标 `source='ui'`；
-- V2 解析时把 tier 名映射到 profile（`powerful → dialogue`、`fast → background`、`reasoning → reasoning`）；
-- M2-3 再决定是否把面板改成「任务组 / profile」视图。
+**信息模型（四层）**
+
+```text
+Providers（供应商：base_url + api_key_env）
+  └── Models（模型：能力 / 上下文 / 成本）
+        └── Profiles（用途：dialogue / background / tool_decision / reasoning）
+               └── Routing（task_type → profile）
+```
+
+**界面五块**
+
+| 区块 | 内容 | 第一版 |
+|---|---|---|
+| Models | 模型卡片：能力徽章（tools/vision/thinking）、上下文、价格 | 只读 |
+| Profiles | 每个用途选模型 + fallback 排序 | 只读 |
+| Routing | task → profile 一览 | 只读 |
+| Effective | 每个 task 的 `effective_model` / `source` / `fallbacks` | 只读 |
+| Embedding | 向量模型单独卡片：provider / model / dimensions / 最近写入时间 | 只读 |
+
+**M2-3a（只读）**：`/api/models/config` 返回解析结果 + 来源；面板先只展示上面五块。
+**M2-3b（可编辑）**：Models/Profiles 下拉切换、fallback 增删、保存写 DB `source='ui'`；提供「恢复文件默认」（删除 ui 行）。
+
+Embedding 第一版**只读**：换向量模型会让已有向量失效，必须走「重新索引」流程，不做随手切换。
 
 ---
 
@@ -201,7 +229,8 @@ M2-3 之前，面板仍按 tier/override 编辑：
 | **M2-0** | 本文档：schema、优先级、迁移、验收 | 计划确认 | 不改代码 |
 | **M2-1** | `packages/shared/model_config.py`：TOML 加载、schema 校验、env 插值、profile 解析 | 纯函数 + 单测；**不接 router** | 不改路由行为 |
 | **M2-2** | `ModelRouter` 接入 V2，`MODEL_ROUTING_V2=0` 开关；golden route tests | 默认配置下路由与今天一致 | 不改 UI |
-| **M2-3** | `/api/models/config` 返回生效路由 + 来源；设置面板兼容 `source='ui'` | API/UI 小改 | 不重做面板 |
+| **M2-3a** | `/api/models/config` 返回解析结果 + 来源；面板重做为只读五块（Models/Profiles/Routing/Effective/Embedding） | 能看到「现在用谁」 | 不做编辑 |
+| **M2-3b** | 可编辑：切换模型、fallback 增删、保存写 DB `source='ui'`、恢复文件默认 | UI 能改且立即生效 | 不动文件基线 |
 | **M2-4** | 打开默认、迁移旧 DB、更新文档、重跑 P3 | 默认启用 + 回归 | 不删旧路径 |
 
 建议 M2-1/M2-2 合并验收：只有 pure loader 通过、且 golden route 全绿，才允许打开开关。
@@ -217,6 +246,8 @@ M2-3 之前，面板仍按 tier/override 编辑：
 - 缺模型、缺能力、缺 Key 时有明确错误，不静默选别的模型。
 - `fallbacks` 命中时日志包含 `task / from / to / reason`。
 - `/api/models/config` 能看到每个 task 的 `effective_model`、`source`、`fallbacks`。
+- 面板保存后立即生效（reload 后 effective 变化），且能一键「恢复文件默认」。
+- Embedding 卡片单列只读；换向量模型必须显式走重新索引流程。
 - 配置文件不含任何密钥明文。
 
 ### 工程
@@ -248,13 +279,15 @@ M2-3 之前，面板仍按 tier/override 编辑：
 
 ---
 
-## 9. 待确认
+## 9. 已确认决策（2026-11-04）
 
-1. **格式**：TOML（推荐） / YAML / DB JSON？
-2. **优先级**：文件基线 + DB `source='ui'` 覆盖（推荐），还是文件完全优先？
-3. **UI 范围**：M2-3 只做兼容和“生效路由”展示，还是重做面板？
-4. **开关默认**：`MODEL_ROUTING_V2=0` 先验证（推荐），还是直接 1？
-5. **embedding**：本轮是否纳入 `[embedding]` 配置，还是继续用 `embed_config` 表？
+| # | 问题 | 决定 | 理由 / 影响 |
+|---|---|---|---|
+| 1 | 格式 | **TOML**：`config/model_routing.toml` | Python 3.12 自带 `tomllib`，零依赖、可注释；YAML 有隐式类型坑，JSON 不便手改。DB 覆盖存 JSON 行 |
+| 2 | 优先级 | **文件基线 < DB `source='ui'` < env（仅密钥）** | 「文件完全优先」会让设置面板失效；「DB 全量覆盖」会让文件永不生效。`legacy` 行 V2 下忽略、回滚时生效 |
+| 3 | UI | **重做，DSH 风格，分 M2-3a 只读 / M2-3b 可编辑** | 先让「现在用谁、为什么」可见，再做编辑；见 §5.3 |
+| 4 | 开关 | **`MODEL_ROUTING_V2=0` 先验证**；M2-2 + golden tests 通过后打开，M2-4 再默认 1 | 路由错 = 所有对话错；开关是一行回滚，不是可选优化 |
+| 5 | embedding | **纳入 `[embedding]` 独立段；UI 单列只读；DB `embed_config` 保留为 ui 覆盖** | 换向量模型需重嵌入，不能随手切 |
 
 ---
 
