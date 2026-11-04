@@ -13,6 +13,7 @@ HTTPChannel — FastAPI HTTP 通道
   · GET  /api/status          系统状态摘要（阶段 3 新增）
 """
 import asyncio
+import inspect
 import json
 import os
 import time
@@ -27,6 +28,70 @@ from loguru import logger
 from .base import Channel, EventHandler
 from packages.shared.events import InternalEvent
 from gateway.security import SecurityFilter
+
+
+# ── Agent 循环 v2 事件 → SSE ────────────────────────────────
+
+
+def _summarize_tool_data(data, limit: int = 120) -> str:
+    """把工具结果压成一行给前端气泡，避免整块 JSON 塞进 UI。"""
+    if data is None:
+        return ""
+    if isinstance(data, dict):
+        parts = []
+        for value in data.values():
+            if value is None or value == "":
+                continue
+            if isinstance(value, (list, tuple)):
+                value = "、".join(str(item) for item in value[:3])
+            parts.append(str(value))
+        text = "，".join(parts) if parts else json.dumps(data, ensure_ascii=False)
+    elif isinstance(data, (list, tuple)):
+        text = "、".join(str(item) for item in data[:3])
+    else:
+        text = str(data)
+    return " ".join(text.split())[:limit]
+
+
+def _format_loop_event(loop_event) -> str | None:
+    """把 ToolCallEvent / ToolResultEvent 转成 SSE 帧；其他事件返回 None。"""
+    from packages.agent.loop.events import ToolCallEvent, ToolResultEvent
+
+    if isinstance(loop_event, ToolCallEvent):
+        payload = {
+            "step": loop_event.step,
+            "calls": [
+                {"id": call.id, "name": call.name, "arguments": call.arguments}
+                for call in loop_event.calls
+            ],
+        }
+        return f"event: tool_call\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    if isinstance(loop_event, ToolResultEvent):
+        payload = {
+            "step": loop_event.step,
+            "results": [
+                {
+                    "name": outcome.name,
+                    "ok": outcome.ok,
+                    "cached": outcome.cached,
+                    "summary": _summarize_tool_data(outcome.data) if outcome.ok else "",
+                    "error": "" if outcome.ok else outcome.error,
+                }
+                for outcome in loop_event.results
+            ],
+        }
+        return f"event: tool_result\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return None
+
+
+def _handler_accepts_event_sink(handler) -> bool:
+    """判断 handler 是否支持 event_sink（AgentCore.process 支持，老 handler 不支持）。"""
+    try:
+        return "event_sink" in inspect.signature(handler).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 class HTTPChannel(Channel):
@@ -205,15 +270,38 @@ class HTTPChannel(Channel):
                 self._nudge_engine.poke()
 
             async def sse_generator():
-                import json as _json
+                queue: asyncio.Queue = asyncio.Queue()
+                sentinel = object()
+
+                async def event_sink(loop_event):
+                    chunk = _format_loop_event(loop_event)
+                    if chunk:
+                        await queue.put(chunk)
+
+                async def run_handler():
+                    try:
+                        if _handler_accepts_event_sink(self._handler):
+                            return await self._handler(filtered, event_sink=event_sink)
+                        return await self._handler(filtered)
+                    finally:
+                        await queue.put(sentinel)
+
+                task = asyncio.create_task(run_handler())
                 try:
-                    response = await self._handler(filtered)
+                    # 先把工具阶段事件按发生顺序吐出去（LOOP_V2 才有）
+                    while True:
+                        item = await queue.get()
+                        if item is sentinel:
+                            break
+                        yield item
+
+                    response = await task
                     reply = response.reply
-                    sticker = response.sticker
+                    sticker = getattr(response, "sticker", None)
 
                     # 先发送 sticker 事件（如果有）
                     if sticker:
-                        yield f"event: sticker\ndata: {_json.dumps(sticker, ensure_ascii=False)}\n\n"
+                        yield f"event: sticker\ndata: {json.dumps(sticker, ensure_ascii=False)}\n\n"
 
                     # 逐块流式推送 token（模拟打字效果，3字符/块，50ms间隔）
                     chunk_size = 3
@@ -228,6 +316,9 @@ class HTTPChannel(Channel):
                     logger.error("sse.error", error=str(e))
                     yield "event: token\ndata: 人家走神了呢……伙伴再试一次好不好？\n\n"
                     yield "event: done\ndata: [DONE]\n\n"
+                finally:
+                    if not task.done():
+                        task.cancel()
 
             return StreamingResponse(
                 sse_generator(),

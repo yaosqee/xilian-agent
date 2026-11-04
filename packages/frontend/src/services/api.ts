@@ -1,3 +1,5 @@
+import type { ToolStatus } from '../types/chat';
+
 const BASE = '/api';
 
 export async function postChat(message: string, images?: string[]): Promise<{ reply: string; sticker?: { id: string; file: string } | null }> {
@@ -19,6 +21,7 @@ export function postChatStream(
   onSticker: (sticker: { id: string; file: string }) => void,
   onDone: () => void,
   onError: (err: Error) => void,
+  onToolStatus?: (status: ToolStatus) => void,
 ): AbortController {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(new Error('SSE stream timeout')), 120_000); // 2min
@@ -59,7 +62,30 @@ export function postChatStream(
                   const sticker = JSON.parse(data);
                   onSticker(sticker);
                 } catch { /* ignore malformed sticker data */ }
-              } else {
+              } else if (eventType === 'tool_call') {
+                try {
+                  const payload = JSON.parse(data) as { calls?: Array<{ name?: string }> };
+                  for (const call of payload.calls || []) {
+                    if (call.name) onToolStatus?.({ phase: 'call', name: call.name });
+                  }
+                } catch { /* ignore malformed tool data */ }
+              } else if (eventType === 'tool_result') {
+                try {
+                  const payload = JSON.parse(data) as {
+                    results?: Array<{ name?: string; ok?: boolean; summary?: string; error?: string }>;
+                  };
+                  for (const result of payload.results || []) {
+                    if (!result.name) continue;
+                    onToolStatus?.({
+                      phase: 'result',
+                      name: result.name,
+                      ok: result.ok !== false,
+                      summary: result.summary || '',
+                      error: result.error || '',
+                    });
+                  }
+                } catch { /* ignore malformed tool data */ }
+              } else if (eventType === 'token') {
                 onToken(data.replace(/\\n/g, '\n'));
               }
             }

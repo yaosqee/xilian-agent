@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from loguru import logger
 
@@ -247,9 +247,16 @@ class AgentLoopRunner:
         messages: list[dict],
         tools: list[dict] | None = None,
         budget: LoopBudget | None = None,
+        *,
+        on_event: Callable[[LoopEvent], Awaitable[None]] | None = None,
         **kwargs: Any,
     ) -> LoopResult:
-        """消费事件流并聚合成 `LoopResult`（给暂时不需要事件的调用方）。"""
+        """消费事件流并聚合成 `LoopResult`（给暂时不需要事件的调用方）。
+
+        Args:
+            on_event: 可选异步回调；每个事件产出后调用一次，用于 SSE 实时转发。
+                回调异常只记日志，不打断循环。
+        """
         result = LoopResult()
         async for event in self.run(messages, tools, budget, **kwargs):
             result.events.append(event)
@@ -262,6 +269,15 @@ class AgentLoopRunner:
                 result.tool_calls = event.tool_calls
                 result.usage = event.usage
                 result.error = event.error
+            if on_event is not None:
+                try:
+                    await on_event(event)
+                except Exception as exc:  # noqa: BLE001 — 事件消费失败不能影响主循环
+                    logger.warning(
+                        "loop.runner.event_sink_error",
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
         return result
 
     # ── 消息构造 ─────────────────────────────────────────

@@ -141,6 +141,64 @@ class TestChatStream:
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
+    def test_sse_emits_tool_events_before_tokens(self, client, http_channel):
+        from types import SimpleNamespace
+        from packages.agent.loop.events import (
+            ToolCall, ToolCallEvent, ToolOutcome, ToolResultEvent,
+        )
+
+        async def fake_handler(event, event_sink=None):
+            if event_sink:
+                await event_sink(ToolCallEvent(
+                    step=1,
+                    calls=[ToolCall(id="c1", name="query_weather", arguments={"city": "杭州"})],
+                ))
+                await event_sink(ToolResultEvent(
+                    step=1,
+                    results=[ToolOutcome(
+                        call_id="c1",
+                        name="query_weather",
+                        ok=True,
+                        data={"city": "杭州", "temp": "18-24℃", "weather": "多云"},
+                    )],
+                ))
+            return SimpleNamespace(reply="杭州 18～24℃，多云。", sticker=None)
+
+        http_channel._handler = fake_handler
+        resp = client.post(
+            "/api/chat/stream",
+            json={"message": "杭州天气", "user_id": "hezi"},
+        )
+        body = resp.text
+
+        assert resp.status_code == 200
+        assert "event: tool_call" in body
+        assert '"name": "query_weather"' in body
+        assert "event: tool_result" in body
+        assert "杭州" in body
+        assert "event: token" in body
+        assert "event: done" in body
+        assert body.index("event: tool_call") < body.index("event: tool_result")
+        assert body.index("event: tool_result") < body.index("event: token")
+
+    def test_sse_supports_handler_without_event_sink(self, client, http_channel):
+        from types import SimpleNamespace
+
+        async def legacy_handler(event):
+            return SimpleNamespace(reply="好呀。", sticker=None)
+
+        http_channel._handler = legacy_handler
+        resp = client.post(
+            "/api/chat/stream",
+            json={"message": "你好", "user_id": "hezi"},
+        )
+        body = resp.text
+
+        assert resp.status_code == 200
+        assert "event: tool_call" not in body
+        assert "event: token" in body
+        assert "event: done" in body
+
 
 # ── CORS ──
 

@@ -304,6 +304,33 @@ async def test_first_tool_choice_forces_only_first_step():
     assert result.reason == "stop"
 
 
+@pytest.mark.asyncio
+async def test_run_to_result_forwards_events_to_sink():
+    router = FakeRouter(
+        [
+            make_response(tool_calls=[tool_call("query_weather", {"city": "杭州"}, "c1")]),
+            make_response(content="杭州 18℃。"),
+        ]
+    )
+    tools = FakeToolExecutor()
+    runner = AgentLoopRunner(router, LoopToolExecutor(tools))
+    seen = []
+
+    async def sink(event):
+        seen.append(event)
+
+    await runner.run_to_result(
+        [{"role": "user", "content": "杭州天气"}],
+        TOOLS,
+        LoopBudget(max_steps=5),
+        on_event=sink,
+    )
+
+    assert [event.type for event in seen] == [
+        "tool_call", "tool_result", "done",
+    ]
+
+
 # ─────────────────────────────────────────────────────────────
 # 2. 工具失败：不抛异常，结构化告知模型
 # ─────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from ..shared.model_router import ModelRouter
@@ -574,6 +575,7 @@ class AgentCore:
         self,
         event: InternalEvent,
         stream: bool = False,
+        event_sink: Callable[[Any], Awaitable[None]] | None = None,
     ) -> AgentResponse:
         """
         处理一条用户消息，返回昔涟的回复。
@@ -731,7 +733,8 @@ class AgentCore:
             if self._loop_v2 and not stream and self.tool_executor is not None:
                 # ── LOOP_V2: 每步带 tools + 结构化回填 + 预算循环 ──
                 loop_result = await self._run_loop_v2(
-                    messages, tools, forced_tool, emo_params, event, trace_log
+                    messages, tools, forced_tool, emo_params, event, trace_log,
+                    event_sink=event_sink,
                 )
                 reply = self._loop_reply(loop_result)
                 # 复用老副作用的期望形状 [(tool_name, result-like), ...]
@@ -1257,6 +1260,7 @@ class AgentCore:
         emo_params: dict,
         event: InternalEvent,
         trace_log,
+        event_sink: Callable[[Any], Awaitable[None]] | None = None,
     ) -> LoopResult:
         """跑一次新循环，返回聚合结果（不在这里做话术映射/副作用）。"""
         runner = self._ensure_loop_runner()
@@ -1268,6 +1272,7 @@ class AgentCore:
             max_tokens=emo_params["max_tokens"],
             user_id=event.user_id or "hezi",
             first_tool_choice=self._loop_first_tool_choice(forced_tool, tools),
+            on_event=event_sink,
         )
         trace_log.info(
             "agent.loop_v2.done",

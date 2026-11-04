@@ -1,8 +1,30 @@
 /* FILE: src/components/chat/ChatView.tsx */
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useChat } from '../../hooks/useChat';
-import type { ChatMessage } from '../../types/chat';
+import type { ChatMessage, ToolStatus } from '../../types/chat';
 import { StickerPanel } from './StickerPanel';
+
+const TOOL_LABELS: Record<string, string> = {
+  query_weather: '天气',
+  search_web: '搜索结果',
+  search_memory: '记忆',
+  coding_delegate: '执行结果',
+};
+
+const TOOL_ACTIONS: Record<string, string> = {
+  query_weather: '查天气',
+  search_web: '搜索网页',
+  search_memory: '回忆',
+  coding_delegate: '执行任务',
+};
+
+function toolStatusText(status: ToolStatus): string {
+  const label = TOOL_LABELS[status.name] || status.name;
+  const action = TOOL_ACTIONS[status.name] || `查${label}`;
+  if (status.phase === 'call') return `她在${action}……`;
+  if (status.ok === false) return `没查到${label}，人家不会编。`;
+  return status.summary ? `查到了：${status.summary}` : `${label}好了。`;
+}
 
 /* ── 消息气泡 ── */
 const Bubble: React.FC<{ msg: ChatMessage; isMobile?: boolean }> = React.memo(({ msg, isMobile = false }) => {
@@ -103,10 +125,40 @@ const Bubble: React.FC<{ msg: ChatMessage; isMobile?: boolean }> = React.memo(({
             />
           </div>
         )}
+        {/* 工具执行状态（SSE tool_call / tool_result） */}
+        {msg.toolStatus && (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '3px 10px',
+              marginBottom: msg.content ? 8 : 0,
+              borderRadius: 10,
+              background: 'rgba(255, 255, 255, 0.4)',
+              border: '1px solid rgba(216, 180, 226, 0.25)',
+              fontSize: 12,
+              color: 'var(--color-text-dim)',
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: msg.toolStatus.phase === 'call'
+                  ? '#FFB7C5'
+                  : msg.toolStatus.ok === false ? '#C9A0DC' : '#9BD8C3',
+                flexShrink: 0,
+              }}
+            />
+            {toolStatusText(msg.toolStatus)}
+          </div>
+        )}
         {/* 文字 */}
         {msg.content ? (
           msg.content
-        ) : msg.sticker ? null : (
+        ) : msg.sticker || msg.toolStatus ? null : (
           <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
             昔涟在思考...
           </span>

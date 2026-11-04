@@ -1,7 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { postChat, postChatStream, fetchConversationHistory, fetchGreeting } from '../services/api';
-import type { ChatMessage } from '../types/chat';
+import type { ChatMessage, ToolStatus } from '../types/chat';
 
 let msgId = 0;
 function nextId() { return `msg-${Date.now()}-${++msgId}`; }
@@ -13,6 +13,22 @@ export function useChat() {
   } = useChatStore();
   const abortRef = useRef<AbortController | null>(null);
   const initialLoaded = useRef(false);
+
+  // 工具状态写到当前 assistant 气泡；没有气泡就先建一个（SSE 可能早于占位消息）
+  const updateToolStatus = useCallback((status: ToolStatus) => {
+    const existing = useChatStore.getState().messages;
+    const lastIdx = existing.length - 1;
+    if (lastIdx >= 0 && existing[lastIdx].role === 'assistant') {
+      const updated = [...existing];
+      updated[lastIdx] = { ...updated[lastIdx], toolStatus: status };
+      useChatStore.setState({ messages: updated });
+    } else {
+      addMessage({
+        id: nextId(), role: 'assistant', content: '',
+        toolStatus: status, timestamp: Date.now(),
+      });
+    }
+  }, [addMessage]);
 
   // 自动加载最近 10 轮历史
   const loadHistory = useCallback(async () => {
@@ -88,6 +104,8 @@ export function useChat() {
     setError(null);
 
     if (stream) {
+      // 先放占位气泡，工具事件/token 都往里写
+      addMessage({ id: nextId(), role: 'assistant', content: '', timestamp: Date.now() });
       let partial = '';
       const controller = postChatStream(
         text,
@@ -121,9 +139,9 @@ export function useChat() {
           setError(err.message);
           setLoading(false);
         },
+        updateToolStatus,
       );
       abortRef.current = controller;
-      addMessage({ id: nextId(), role: 'assistant', content: '', timestamp: Date.now() });
     } else {
       postChat(text, images)
         .then((data) => {
@@ -139,7 +157,7 @@ export function useChat() {
           setLoading(false);
         });
     }
-  }, [addMessage, setLoading, setError]);
+  }, [addMessage, setLoading, setError, updateToolStatus]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -159,6 +177,8 @@ export function useChat() {
     setLoading(true);
     setError(null);
 
+    // 先放占位气泡，工具事件/token 都往里写
+    addMessage({ id: nextId(), role: 'assistant', content: '', timestamp: Date.now() });
     let partial = '';
     const controller = postChatStream(
       `[sticker:${sticker.id}]`,
@@ -186,10 +206,10 @@ export function useChat() {
       },
       () => { setLoading(false); },
       (err) => { setError(err.message); setLoading(false); },
+      updateToolStatus,
     );
     abortRef.current = controller;
-    addMessage({ id: nextId(), role: 'assistant', content: '', timestamp: Date.now() });
-  }, [addMessage, setLoading, setError]);
+  }, [addMessage, setLoading, setError, updateToolStatus]);
 
   return { messages, isLoading, error, send, sendSticker, cancel, loadHistory, hasMore, isLoadingMore };
 }

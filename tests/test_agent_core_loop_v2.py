@@ -166,6 +166,24 @@ async def test_run_loop_v2_auto_when_intent_not_forced():
     assert agent._loop_runner.calls[0]["first_tool_choice"] == "auto"
 
 
+@pytest.mark.asyncio
+async def test_run_loop_v2_forwards_event_sink():
+    agent = _bare_agent(LoopResult(text="好", reason="stop"))
+    sink = AsyncMock()
+
+    await agent._run_loop_v2(
+        messages=[],
+        tools=TOOLS,
+        forced_tool=None,
+        emo_params={"temperature": 0.7, "max_tokens": 800},
+        event=_event(),
+        trace_log=MagicMock(),
+        event_sink=sink,
+    )
+
+    assert agent._loop_runner.calls[0]["on_event"] is sink
+
+
 # ─────────────────────────────────────────────────────────────
 # 副作用标记复用
 # ─────────────────────────────────────────────────────────────
