@@ -102,10 +102,9 @@ class TestModelRouter:
 
     @pytest.mark.asyncio
     async def test_route_tool_error_retry(self):
-        """tool error → 缓存标记不支持 → 重试不带 tools。"""
+        """tool error → 原样重试一次成功，不永久禁用 tools。"""
         with patch.dict(os.environ, {}, clear=True):
             mock_adapter = MagicMock()
-            # 第一次带 tools 抛出 ToolRelatedError
             mock_adapter.chat = AsyncMock(side_effect=[
                 ToolRelatedError("tools not supported"),
                 ProviderResponse(content="retry-ok", tool_calls=None, reasoning_content=""),
@@ -121,7 +120,123 @@ class TestModelRouter:
                 tools=[{"type": "function", "function": {"name": "test"}}],
             )
             assert result.content == "retry-ok"
-            # 缓存应标记为不支持
-            assert router._supports_tools("test:test-model") is False
-            # chat 应被调用两次
+            # 第二次成功 → 缓存不应被污染
+            assert router._supports_tools("test:test-model") is True
             assert mock_adapter.chat.call_count == 2
+            snapshot = router.stats["test:test-model"]
+            assert snapshot["tool_errors"] >= 1
+            assert snapshot["tool_retries"] == 1
+
+    @pytest.mark.asyncio
+    async def test_route_tool_error_degrades_after_two_failures(self):
+        """连续两次 tool error → 临时禁用 tools，第三次无 tools 成功。"""
+        with patch.dict(os.environ, {}, clear=True):
+            mock_adapter = MagicMock()
+            mock_adapter.chat = AsyncMock(side_effect=[
+                ToolRelatedError("tools not supported"),
+                ToolRelatedError("tools not supported"),
+                ProviderResponse(content="fallback-ok", tool_calls=None, reasoning_content=""),
+            ])
+            router = ModelRouter()
+            router._adapters["test"] = mock_adapter
+            router._tier_configs["powerful"] = TierConfig(
+                tier="powerful", provider="test", model_name="test-model",
+                temperature=0.7, max_tokens=800,
+            )
+            result = await router.route(
+                "chat", [{"role": "user", "content": "hi"}],
+                tools=[{"type": "function", "function": {"name": "test"}}],
+            )
+            assert result.content == "fallback-ok"
+            assert router._supports_tools("test:test-model") is False
+            assert "test:test-model" in router._tools_disabled_until
+            assert mock_adapter.chat.call_count == 3
+            third_kwargs = mock_adapter.chat.await_args_list[2].kwargs
+            assert third_kwargs["tools"] is None
+            assert router.stats["test:test-model"]["degraded"] == 1
+
+    @pytest.mark.asyncio
+    async def test_route_tool_choice_error_retries_auto(self):
+        """tool_choice 不兼容 → 改用 auto 重试，不临时禁用 tools。"""
+        with patch.dict(os.environ, {}, clear=True):
+            mock_adapter = MagicMock()
+            mock_adapter.chat = AsyncMock(side_effect=[
+                Exception("Thinking mode does not support this tool_choice"),
+                ProviderResponse(content="auto-ok", tool_calls=None, reasoning_content=""),
+            ])
+            router = ModelRouter()
+            router._adapters["test"] = mock_adapter
+            router._tier_configs["powerful"] = TierConfig(
+                tier="powerful", provider="test", model_name="test-model",
+                temperature=0.7, max_tokens=800,
+            )
+            forced = {"type": "function", "function": {"name": "test"}}
+            result = await router.route(
+                "chat", [{"role": "user", "content": "hi"}],
+                tools=[{"type": "function", "function": {"name": "test"}}],
+                tool_choice=forced,
+            )
+            assert result.content == "auto-ok"
+            second_kwargs = mock_adapter.chat.await_args_list[1].kwargs
+            assert second_kwargs["tool_choice"] == "auto"
+            assert second_kwargs["tools"] is not None
+            assert router._supports_tools("test:test-model") is True
+
+    # ── 能力矩阵 / 观测 ──
+
+    def test_model_policy_from_adapter_info(self):
+        from packages.shared.providers.base import ModelInfo
+
+        with patch.dict(os.environ, {}, clear=True):
+            mock_adapter = MagicMock()
+            mock_adapter.get_available_models.return_value = [
+                ModelInfo(
+                    id="m1", name="M1", provider="test",
+                    supports_tools=False, supports_streaming=False,
+                    input_modalities=["text", "image"],
+                    context_window=64_000,
+                )
+            ]
+            router = ModelRouter()
+            router._adapters["test"] = mock_adapter
+            policy = router.get_model_policy("test", "m1")
+            assert policy.supports_tools is False
+            assert policy.supports_vision is True
+            assert policy.context_window == 64_000
+
+    @pytest.mark.asyncio
+    async def test_stats_records_calls_and_latency(self):
+        with patch.dict(os.environ, {}, clear=True):
+            mock_adapter = MagicMock()
+            mock_adapter.chat = AsyncMock(return_value=ProviderResponse(
+                content="ok", tool_calls=None, reasoning_content="",
+            ))
+            router = ModelRouter()
+            router._adapters["test"] = mock_adapter
+            router._tier_configs["powerful"] = TierConfig(
+                tier="powerful", provider="test", model_name="test-model",
+                temperature=0.7, max_tokens=800,
+            )
+            await router.route("chat", [{"role": "user", "content": "hi"}])
+            snapshot = router.stats["test:test-model"]
+            assert snapshot["calls"] == 1
+            assert snapshot["successes"] == 1
+            assert "p95_latency_ms" in snapshot
+
+    def test_degradation_expires(self):
+        import time
+
+        with patch.dict(os.environ, {}, clear=True):
+            router = ModelRouter()
+            router._tools_support_cache["x:y"] = False
+            router._tools_disabled_until["x:y"] = time.time() - 1
+            assert router._supports_tools("x:y") is True
+            assert "x:y" not in router._tools_support_cache
+
+    def test_tool_decision_task_group(self):
+        from packages.shared.providers import TASK_TIER_MAP, task_group
+
+        assert TASK_TIER_MAP["tool_decision"] == "powerful"
+        assert task_group("tool_decision") == "tool_decision"
+        assert task_group("chat") == "dialogue"
+        assert task_group("memory_encoding") == "background"

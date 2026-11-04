@@ -1296,6 +1296,7 @@ class AgentCore:
             self._loop_runner = AgentLoopRunner(
                 self.router,
                 LoopToolExecutor(self.tool_executor),
+                task_type="tool_decision",
             )
         return self._loop_runner
 

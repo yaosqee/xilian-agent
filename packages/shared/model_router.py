@@ -20,10 +20,15 @@ import importlib
 
 from .providers import (
     TaskType, TASK_TIER_MAP, TierConfig, ProviderResponse, TaskOverride,
+    ModelPolicy, policy_from_adapter,
     DEFAULT_TIER_MODELS, DEFAULT_EMBED_MODELS, detect_configured_providers,
     PROVIDER_REGISTRY,
 )
 from .providers.base import ProviderAdapter
+from .model_stats import ModelStatsRegistry
+
+# tool 相关错误先重试一次；只有连续失败才临时禁用 tools
+TOOL_DEGRADE_SECONDS = 900  # 15 分钟
 
 # Re-export for backward compat
 __all__ = [
@@ -70,10 +75,15 @@ class ModelRouter:
         # ── Embed config (separate from tier configs) ──
         self._embed_config: dict | None = None  # {provider, model_name, base_url, api_key, dimensions}
 
-        # ── Tool compatibility cache (per model_key, 24h TTL) ──
+        # ── Tool compatibility cache（兼容旧字段；新逻辑用 disabled_until）──
         self._tools_support_cache: dict[str, bool] = {}
-        self._tools_cache_reset_interval = 86400  # 24h
+        self._tools_disabled_until: dict[str, float] = {}
+        self._tools_cache_reset_interval = 86400  # 兼容旧行为
         self._tools_cache_last_reset = _time_module.time()
+
+        # ── 显式能力矩阵 + 观测 ──
+        self._model_policies: dict[str, ModelPolicy] = {}
+        self._stats = ModelStatsRegistry()
 
         # ── Lazy init: create default DeepSeek adapter immediately ──
         self._init_default_adapter()
@@ -420,54 +430,106 @@ class ModelRouter:
         # ── 4. Tool compatibility check ──
         model_key = f"{provider}:{model}"
         if tools and not self._supports_tools(model_key):
-            logger.info("model_router.tools_degraded", model=model_key)
+            logger.info("model_router.tools_degraded_active", model=model_key)
             tools = None
             tool_choice = None
 
+        common = {
+            "model": model,
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_tokens": kwargs.get("max_tokens", 800),
+            "stream": kwargs.get("stream", False),
+        }
+
         # ── 5. Call adapter ──
         try:
-            result = await adapter.chat(
-                model=model,
-                messages=messages,
-                temperature=kwargs.get("temperature", 0.7),
-                max_tokens=kwargs.get("max_tokens", 800),
-                stream=kwargs.get("stream", False),
-                tools=tools,
-                tool_choice=tool_choice,
+            result = await self._invoke(
+                adapter, model_key, tools=tools, tool_choice=tool_choice, **common
             )
             # ── 5b. 空回复 / 截断重试 ──
             # thinking 模型可能把 max_tokens 预算烧在 reasoning_content 上，
             # 导致 content 为空、finish_reason="length"。裸的「……♪」兜底会掩盖这次失败。
             return await self._retry_if_empty(
-                result, adapter, model, messages, tools, tool_choice, kwargs,
+                result, adapter, model_key, model, messages, tools, tool_choice, kwargs,
             )
         except Exception as e:
-            # Tool error → mark incompatible and retry once without tools
-            if tools and _is_tool_error(e):
-                logger.warning("model_router.tool_error", model=model_key, error=str(e)[:200])
-                self._tools_support_cache[model_key] = False
+            if not tools:
+                raise
+
+            skip_same_retry = False
+
+            # 5c-1. tool_choice 兼容性错误（如 DeepSeek thinking 模式）→ 改 auto 重试一次
+            if _is_tool_choice_error(e) and tool_choice not in (None, "auto"):
+                skip_same_retry = True
+                self._stats.get(model_key).tool_retries += 1
+                logger.warning(
+                    "model_router.tool_choice_retry",
+                    model=model_key,
+                    error=str(e)[:160],
+                )
                 try:
-                    return await adapter.chat(
-                        model=model,
-                        messages=messages,
-                        temperature=kwargs.get("temperature", 0.7),
-                        max_tokens=kwargs.get("max_tokens", 800),
-                        stream=kwargs.get("stream", False),
-                        tools=None,
-                        tool_choice=None,
+                    result = await self._invoke(
+                        adapter, model_key, tools=tools, tool_choice="auto", **common
+                    )
+                    logger.info("model_router.tool_choice_retry_ok", model=model_key)
+                    return await self._retry_if_empty(
+                        result, adapter, model_key, model, messages, tools, "auto", kwargs,
+                    )
+                except Exception as auto_error:
+                    e = auto_error
+                    if not _is_tool_error(e):
+                        raise
+
+            # 5c-2. 普通 tool error → 先原样重试一次，仍失败才降级
+            if not skip_same_retry and _is_tool_error(e):
+                self._stats.get(model_key).tool_retries += 1
+                logger.warning(
+                    "model_router.tool_error_retry",
+                    model=model_key,
+                    error=str(e)[:160],
+                )
+                try:
+                    result = await self._invoke(
+                        adapter, model_key, tools=tools, tool_choice=tool_choice, **common
+                    )
+                    logger.info("model_router.tool_error_recovered", model=model_key)
+                    return await self._retry_if_empty(
+                        result, adapter, model_key, model, messages, tools, tool_choice, kwargs,
                     )
                 except Exception as retry_error:
-                    logger.error(
-                        "model_router.tool_retry_failed",
-                        model=model_key,
-                        original_error=str(e)[:200],
-                        retry_error=str(retry_error)[:200],
-                    )
-                    raise retry_error from e
-            raise
+                    e = retry_error
+                    if not _is_tool_error(e):
+                        logger.error(
+                            "model_router.tool_retry_failed",
+                            model=model_key,
+                            error=str(e)[:200],
+                        )
+                        raise
+
+            if not _is_tool_error(e):
+                raise
+
+            # 5c-3. 连续失败 → 临时禁用 tools（15 分钟），并明确记录
+            self._disable_tools(model_key, str(e))
+            try:
+                result = await self._invoke(
+                    adapter, model_key, tools=None, tool_choice=None, **common
+                )
+                return await self._retry_if_empty(
+                    result, adapter, model_key, model, messages, None, None, kwargs,
+                )
+            except Exception as retry_error:
+                logger.error(
+                    "model_router.tool_retry_failed",
+                    model=model_key,
+                    original_error=str(e)[:200],
+                    retry_error=str(retry_error)[:200],
+                )
+                raise retry_error from e
 
     async def _retry_if_empty(
-        self, result, adapter, model, messages, tools, tool_choice, kwargs,
+        self, result, adapter, model_key, model, messages, tools, tool_choice, kwargs,
     ):
         """空回复或截断时，提高预算重试一次。
 
@@ -501,7 +563,8 @@ class ModelRouter:
         )
 
         try:
-            retry = await adapter.chat(
+            retry = await self._invoke(
+                adapter, model_key,
                 model=model,
                 messages=messages,
                 temperature=kwargs.get("temperature", 0.7),
@@ -588,19 +651,85 @@ class ModelRouter:
         return None
 
     # ══════════════════════════════════════════════════════════
+    # Model policy + observability
+    # ══════════════════════════════════════════════════════════
+
+    def get_model_policy(self, provider: str, model: str) -> ModelPolicy:
+        """返回显式能力矩阵（tools / vision / context / cost）。"""
+        return self._policy_for(provider, model)
+
+    def _policy_for(self, provider: str, model: str) -> ModelPolicy:
+        key = f"{provider}:{model}"
+        if key in self._model_policies:
+            return self._model_policies[key]
+        adapter = self._adapters.get(provider)
+        if adapter is not None:
+            policy = policy_from_adapter(adapter, provider, model)
+        else:
+            policy = ModelPolicy(provider=provider, model=model)
+        self._model_policies[key] = policy
+        return policy
+
+    @property
+    def stats(self) -> dict[str, dict]:
+        """按模型统计：成功/失败/超时/空回复/降级/p95 延迟。"""
+        return self._stats.snapshot()
+
+    def reset_stats(self) -> None:
+        self._stats.reset()
+
+    async def _invoke(self, adapter: ProviderAdapter, model_key: str, **call_kwargs):
+        """调用 adapter 并记录观测；不改变异常语义。"""
+        stats = self._stats.get(model_key) if hasattr(self, "_stats") else None
+        if stats is not None:
+            stats.record_call()
+        started = _time_module.monotonic()
+        try:
+            result = await adapter.chat(**call_kwargs)
+        except Exception as exc:
+            if stats is not None:
+                stats.record_error(exc, (_time_module.monotonic() - started) * 1000)
+                if _is_tool_error(exc):
+                    stats.tool_errors += 1
+            raise
+        if stats is not None:
+            stats.record_success(result, (_time_module.monotonic() - started) * 1000)
+        return result
+
+    def _disable_tools(self, model_key: str, reason: str) -> None:
+        """连续 tool 失败后临时禁用 tools，而不是静默 24 小时。"""
+        until = _time_module.time() + TOOL_DEGRADE_SECONDS
+        self._tools_disabled_until[model_key] = until
+        self._tools_support_cache[model_key] = False
+        self._stats.get(model_key).degraded += 1
+        logger.warning(
+            "model_router.tools_degraded",
+            model=model_key,
+            reason=reason[:160],
+            ttl_seconds=TOOL_DEGRADE_SECONDS,
+        )
+
+    # ══════════════════════════════════════════════════════════
     # Tool compatibility
     # ══════════════════════════════════════════════════════════
 
     def _supports_tools(self, model_key: str) -> bool:
-        """检查模型是否支持工具调用。
+        """显式能力矩阵 + 临时降级窗口。"""
+        provider, _, model = model_key.partition(":")
+        policy = self._policy_for(provider, model)
+        if not policy.supports_tools:
+            return False
 
-        每日自动重置缓存（避免因临时故障永久禁用工具）。
-        """
         now = _time_module.time()
-        if now - self._tools_cache_last_reset > self._tools_cache_reset_interval:
-            self._tools_support_cache.clear()
-            self._tools_cache_last_reset = now
-            logger.debug("model_router.tools_cache_reset")
+        until = self._tools_disabled_until.get(model_key)
+        if until is not None:
+            if now < until:
+                return False
+            self._tools_disabled_until.pop(model_key, None)
+            self._tools_support_cache.pop(model_key, None)
+            logger.info("model_router.tools_reenabled", model=model_key)
+
+        # 兼容旧缓存字段（测试/旧调用方可能直接写入）
         return self._tools_support_cache.get(model_key, True)
 
     # ══════════════════════════════════════════════════════════
@@ -679,7 +808,8 @@ class ModelRouter:
             else:
                 raise RuntimeError(f"无法创建供应商 '{provider}' 的适配器")
 
-        return await adapter.chat(
+        return await self._invoke(
+            adapter, f"{provider}:{model}",
             model=model,
             messages=messages,
             temperature=kwargs.get("temperature", 0.7),
@@ -693,6 +823,17 @@ class ModelRouter:
 # ═══════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════
+
+def _is_tool_choice_error(e: Exception) -> bool:
+    """是否只是 tool_choice 参数不被当前模型/模式接受（可退回 auto）。"""
+    msg = str(e).lower()
+    if "tool_choice" not in msg and "tool choice" not in msg:
+        return False
+    return any(
+        kw in msg
+        for kw in ("not support", "does not support", "invalid", "unsupported")
+    )
+
 
 def _is_tool_error(e: Exception) -> bool:
     """Check if an exception is caused by tool call incompatibility.

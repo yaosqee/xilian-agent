@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .base import ModelInfo, ProviderAdapter
+from .model_policy import ModelPolicy, policy_from_adapter
 
 # ═══════════════════════════════════════════════════════════════
 # Task type → Tier mapping
@@ -38,6 +39,7 @@ TaskType = Literal[
     "personality_check", "prompt_injection_detect", "approval_text",
     "emotion_analysis", "tool_result_wrap",
     "proactive_greeting", "image_response",
+    "tool_decision",
 ]
 
 # Default mapping: task_type → tier
@@ -53,6 +55,7 @@ TASK_TIER_MAP: dict[TaskType, TierName] = {
     "prompt_injection_detect":  "powerful",
     "proactive_greeting":       "powerful",
     "image_response":           "powerful",
+    "tool_decision":            "powerful",
     # ── fast tier: background async tasks ──
     "memory_encoding":          "fast",
     "autobiography":            "fast",
@@ -62,6 +65,35 @@ TASK_TIER_MAP: dict[TaskType, TierName] = {
     "emotion_analysis":         "fast",
     "tool_result_wrap":         "fast",
 }
+
+# 任务分组：路由与模型配置以后按这三组收敛，不再散落十几个任务名。
+# 当前仍兼容 TASK_TIER_MAP 的逐项覆盖；tool_decision 是新增的「带工具对话」任务，
+# 可以单独在 model_configs 里配 override:tool_decision。
+TASK_GROUPS: dict[str, set[str]] = {
+    "dialogue": {
+        "chat", "empathy", "proactive_greeting", "image_response",
+        "personality_check", "prompt_injection_detect",
+    },
+    "background": {
+        "memory_encoding", "autobiography", "reflection", "dream",
+        "approval_text", "emotion_analysis", "tool_result_wrap",
+    },
+    "tool_decision": {"tool_decision"},
+}
+
+TASK_GROUP_TIERS: dict[str, "TierName"] = {
+    "dialogue": "powerful",
+    "background": "fast",
+    "tool_decision": "powerful",
+}
+
+
+def task_group(task_type: str) -> str:
+    """返回任务所属分组；未知任务按 dialogue 处理，保持向后兼容。"""
+    for group, tasks in TASK_GROUPS.items():
+        if task_type in tasks:
+            return group
+    return "dialogue"
 
 
 # ═══════════════════════════════════════════════════════════════

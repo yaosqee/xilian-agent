@@ -73,7 +73,7 @@ async def test_retry_on_empty_content():
     router = ModelRouter.__new__(ModelRouter)
 
     out = await router._retry_if_empty(
-        empty, adapter, "m", MESSAGES, None, None,
+        empty, adapter, "test:m", "m", MESSAGES, None, None,
         {"max_tokens": 800, "temperature": 0.6},
     )
 
@@ -91,7 +91,7 @@ async def test_retry_on_truncated_even_with_partial_content():
     router = ModelRouter.__new__(ModelRouter)
 
     out = await router._retry_if_empty(
-        truncated, adapter, "m", MESSAGES, None, None,
+        truncated, adapter, "test:m", "m", MESSAGES, None, None,
         {"max_tokens": 1500, "temperature": 0.6},
     )
 
@@ -106,7 +106,7 @@ async def test_no_retry_on_healthy_response():
     router = ModelRouter.__new__(ModelRouter)
 
     out = await router._retry_if_empty(
-        good, adapter, "m", MESSAGES, None, None,
+        good, adapter, "test:m", "m", MESSAGES, None, None,
         {"max_tokens": 800, "temperature": 0.6},
     )
 
@@ -122,7 +122,7 @@ async def test_retry_still_empty_returns_retry_result():
     router = ModelRouter.__new__(ModelRouter)
 
     out = await router._retry_if_empty(
-        empty, adapter, "m", MESSAGES, None, None,
+        empty, adapter, "test:m", "m", MESSAGES, None, None,
         {"max_tokens": 800, "temperature": 0.6},
     )
 
@@ -140,7 +140,7 @@ async def test_tool_only_response_is_not_retried():
     router = ModelRouter.__new__(ModelRouter)
 
     out = await router._retry_if_empty(
-        tool_only, adapter, "m", MESSAGES, None, None,
+        tool_only, adapter, "test:m", "m", MESSAGES, None, None,
         {"max_tokens": 800, "temperature": 0.6},
     )
 
