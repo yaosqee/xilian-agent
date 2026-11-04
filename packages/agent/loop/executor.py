@@ -100,6 +100,10 @@ class LoopToolExecutor:
         cache = cache if cache is not None else {}
 
         keys = [self.cache_key(call) for call in calls]
+        if confirmed:
+            # 确认重放不能复用普通调用缓存里的 PENDING_CONFIRMATION 结果；
+            # 用独立命名空间，既保留幂等又不把「未确认」当成「已执行」。
+            keys = [f"{key}\x1fconfirmed" for key in keys]
 
         # 先把「缓存里没有」的 key 去重，保证同一批里的重复调用也只执行一次。
         pending: dict[str, ToolCall] = {}

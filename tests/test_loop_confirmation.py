@@ -342,3 +342,41 @@ async def test_executor_without_confirmed_support_does_not_crash():
 
     assert outcomes[0].ok is True
 
+
+class _PendingUntilConfirmed:
+    """未确认返回 PENDING，确认后真正执行。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def execute(self, name, arguments, user_id="", confirmed=False):
+        self.calls += 1
+        if not confirmed:
+            return ToolResult(
+                success=False,
+                error="PENDING_CONFIRMATION",
+                data={"tool_name": name, "arguments": arguments},
+            )
+        return ToolResult.ok({"executed": True})
+
+
+@pytest.mark.asyncio
+async def test_confirmed_batch_does_not_reuse_pending_cache():
+    """同一 cache 里已有 PENDING 结果时，confirmed=True 必须重新执行。"""
+    inner = _PendingUntilConfirmed()
+    executor = LoopToolExecutor(inner)
+    cache: dict = {}
+    call = ToolCall(id="c1", name="coding_delegate", arguments={"task": "x"})
+
+    first = await executor.execute_batch([call], cache=cache)
+    second = await executor.execute_batch(
+        [ToolCall(id="c2", name="coding_delegate", arguments={"task": "x"})],
+        cache=cache,
+        confirmed=True,
+    )
+
+    assert first[0].needs_confirmation is True
+    assert second[0].ok is True
+    assert second[0].needs_confirmation is False
+    assert inner.calls == 2
+
