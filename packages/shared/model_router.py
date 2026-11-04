@@ -108,9 +108,10 @@ class ModelRouter:
                 self._adapters["deepseek"] = adapter
 
                 # Default tier configs (all tiers use DeepSeek)
+                # 对话默认 Flash：Pro 成本高，评测/新库都应与生产一致
                 self._tier_configs["powerful"] = TierConfig(
                     tier="powerful", provider="deepseek",
-                    model_name="deepseek-v4-pro", temperature=0.65, max_tokens=800,
+                    model_name="deepseek-flash", temperature=0.65, max_tokens=800,
                 )
                 self._tier_configs["fast"] = TierConfig(
                     tier="fast", provider="deepseek",

@@ -174,7 +174,7 @@ class TaskOverride:
 # These are used during auto-configuration when only .env keys exist.
 DEFAULT_TIER_MODELS: dict[str, dict[str, str]] = {
     "deepseek": {
-        "powerful": "deepseek-v4-pro",
+        "powerful": "deepseek-flash",
         "fast": "deepseek-flash",
         "reasoning": "deepseek-reasoner",
     },

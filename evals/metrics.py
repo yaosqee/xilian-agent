@@ -235,7 +235,11 @@ def check_fact(reply: str, kind: str, now: datetime | None = None) -> bool:
             now.strftime("%Y-%m-%d"),
             now.strftime("%Y/%m/%d"),
             f"{now.year}年{now.month}月{now.day}日",
+            f"{now.year}年{now.month}月{now.day}号",
             f"{now.month}月{now.day}日",
+            f"{now.month}月{now.day}号",
+            f"{now.month:02d}月{now.day:02d}日",
+            f"{now.month:02d}月{now.day:02d}号",
             f"{now.month:02d}-{now.day:02d}",
         }
         return any(candidate in compact for candidate in candidates)
