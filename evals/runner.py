@@ -32,6 +32,7 @@ from typing import Any
 from loguru import logger
 
 from .metrics import (
+    CATEGORY_COUNTS,
     CaseRun,
     EvalCase,
     evaluate,
@@ -299,7 +300,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "",
         f"- 生成时间：{payload['generated_at']}",
         f"- 用例文件：`{payload['cases_file']}`",
-        f"- split：`{payload['split']}`，用例数：{payload['case_count']}",
+        f"- split：`{payload['split']}`，category：`{payload.get('category', 'all')}`，用例数：{payload['case_count']}",
         "",
     ]
     modes: dict[str, Any] = payload["modes"]
@@ -411,6 +412,8 @@ async def main_async(args: argparse.Namespace) -> int:
 
     if args.split != "all":
         cases = [case for case in cases if case.split == args.split]
+    if args.category != "all":
+        cases = [case for case in cases if case.category == args.category]
     if args.limit and args.limit > 0:
         cases = cases[: args.limit]
     if not cases:
@@ -435,6 +438,7 @@ async def main_async(args: argparse.Namespace) -> int:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "cases_file": str(args.cases),
         "split": args.split,
+        "category": args.category,
         "case_count": len(cases),
         "modes": results,
     }
@@ -454,6 +458,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--split", default="all", choices=["all", "train", "holdout"],
+    )
+    parser.add_argument(
+        "--category", default="all", choices=["all", *CATEGORY_COUNTS],
+        help="只跑某一类（weather/time/memory/search/no_tool/multi_step）",
     )
     parser.add_argument(
         "--limit", type=int, default=0, help="只跑前 N 条（0=全部）",

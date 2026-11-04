@@ -32,9 +32,9 @@
 {"id": "no-tool-06", "split": "holdout", "category": "no_tool", "message": "陪我说说话吧", "expect_tools": [], "max_tool_calls": 0}
 {"id": "no-tool-07", "split": "holdout", "category": "no_tool", "message": "你最近在做什么？", "expect_tools": [], "max_tool_calls": 0}
 {"id": "no-tool-08", "split": "holdout", "category": "no_tool", "message": "谢谢你一直陪着我", "expect_tools": [], "max_tool_calls": 0}
-{"id": "multi-01", "split": "train", "category": "multi_step", "message": "查下杭州天气，顺便搜一下明天要不要带伞", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["杭州"]}
+{"id": "multi-01", "split": "train", "category": "multi_step", "message": "查下杭州天气，顺便搜一下杭州周末有什么展览", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["杭州"]}
 {"id": "multi-02", "split": "train", "category": "multi_step", "message": "先看看北京天气，再帮我搜下北京有什么好玩的", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["北京"]}
 {"id": "multi-03", "split": "train", "category": "multi_step", "message": "查一下上海天气，然后搜索上海周末活动", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["上海"]}
 {"id": "multi-04", "split": "holdout", "category": "multi_step", "message": "帮我查杭州天气，再回忆一下我上次说要去哪玩", "expect_tools": ["query_weather", "search_memory"], "min_tool_calls": 2, "must_contain": ["杭州"]}
-{"id": "multi-05", "split": "holdout", "category": "multi_step", "message": "搜一下杭州天气预警，然后查杭州天气", "expect_tools": ["search_web", "query_weather"], "min_tool_calls": 2, "must_contain": ["杭州"]}
-{"id": "multi-06", "split": "holdout", "category": "multi_step", "message": "查下杭州天气，再搜一下穿衣建议", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["杭州"]}
+{"id": "multi-05", "split": "holdout", "category": "multi_step", "message": "搜一下杭州最近的科技新闻，然后查一下杭州天气", "expect_tools": ["search_web", "query_weather"], "min_tool_calls": 2, "must_contain": ["杭州"]}
+{"id": "multi-06", "split": "holdout", "category": "multi_step", "message": "查下杭州天气，再搜一下杭州有什么好吃的", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["杭州"]}

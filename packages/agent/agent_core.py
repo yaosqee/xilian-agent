@@ -76,6 +76,37 @@ CONFIRM_WORDS = frozenset({
     "嗯", "做吧", "去吧", "执行", "确认执行",
 })
 
+# 多步工具请求：只有「连接词 + 至少两类工具意图」才加规划提示，
+# 避免把「今天好累，再陪我聊聊」这类情绪消息误判成多工具任务。
+MULTI_INTENT_CONNECTORS = (
+    "顺便", "然后", "接着", "并且", "同时", "另外", "还有",
+    "再帮我", "再查", "再搜", "再看", "再回忆",
+)
+MULTI_INTENT_PATTERNS = {
+    "weather": ("天气", "气温", "下雨", "带伞", "冷不冷", "热不热",
+                "多少度", "湿度", "风大", "穿衣"),
+    "search": ("搜", "搜索", "新闻", "资料", "攻略", "好玩", "电影",
+               "高铁", "活动", "预警", "网页"),
+    "memory": ("记得", "回忆", "之前", "上次", "说过", "聊过"),
+}
+MULTI_INTENT_HINT = (
+    "【工具规划】伙伴这次同时提了多个需要外部信息的请求。"
+    "请分别调用对应工具（例如先查天气，再搜索另一件事），"
+    "不要用一次查询的结果代替另一项；信息齐了再回答。"
+)
+
+
+def _looks_like_multi_intent(text: str) -> bool:
+    """连接词 + 至少两类工具意图 → 认为需要多步工具规划。"""
+    text = text or ""
+    if not any(connector in text for connector in MULTI_INTENT_CONNECTORS):
+        return False
+    categories = sum(
+        1 for patterns in MULTI_INTENT_PATTERNS.values()
+        if any(pattern in text for pattern in patterns)
+    )
+    return categories >= 2
+
 # TOOL_PLACEHOLDER 已移除 — 工具调用现由 LLM function calling 驱动
 
 
@@ -1279,6 +1310,24 @@ class AgentCore:
             return {"type": "function", "function": {"name": forced_tool}}
         return "auto"
 
+    @staticmethod
+    def _with_multi_intent_hint(
+        messages: list[dict],
+        user_text: str,
+        tools: list[dict] | None,
+    ) -> list[dict]:
+        """多意图消息前插一条工具规划提示；不改调用方列表。"""
+        if not tools or not _looks_like_multi_intent(user_text):
+            return messages
+        updated = list(messages)
+        insert_at = len(updated)
+        for index in range(len(updated) - 1, -1, -1):
+            if updated[index].get("role") == "user":
+                insert_at = index
+                break
+        updated.insert(insert_at, {"role": "system", "content": MULTI_INTENT_HINT})
+        return updated
+
     async def _run_loop_v2(
         self,
         messages: list[dict],
@@ -1291,8 +1340,11 @@ class AgentCore:
     ) -> LoopResult:
         """跑一次新循环，返回聚合结果（不在这里做话术映射/副作用）。"""
         runner = self._ensure_loop_runner()
+        loop_messages = self._with_multi_intent_hint(messages, event.payload, tools)
+        if len(loop_messages) != len(messages):
+            trace_log.info("agent.loop_v2.multi_intent_hint")
         result = await runner.run_to_result(
-            messages,
+            loop_messages,
             tools,
             self._loop_budget,
             temperature=emo_params["temperature"],

@@ -16,7 +16,12 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from packages.agent.agent_core import AgentCore, DEGRADED_REPLY, _env_flag
+from packages.agent.agent_core import (
+    AgentCore,
+    DEGRADED_REPLY,
+    _env_flag,
+    _looks_like_multi_intent,
+)
 from packages.agent.loop import LoopBudget, LoopResult, ToolOutcome
 from packages.shared.events import InternalEvent
 
@@ -164,6 +169,55 @@ async def test_run_loop_v2_auto_when_intent_not_forced():
     )
 
     assert agent._loop_runner.calls[0]["first_tool_choice"] == "auto"
+
+
+def test_multi_intent_detector():
+    assert _looks_like_multi_intent("查下杭州天气，顺便搜一下北京好玩的地方")
+    assert _looks_like_multi_intent("先看看北京天气，再帮我搜下有什么好玩的")
+    assert _looks_like_multi_intent("帮我查杭州天气，再回忆一下上次说的旅行")
+
+    assert not _looks_like_multi_intent("杭州今天天气怎么样")
+    assert not _looks_like_multi_intent("今天好累啊，再陪我聊聊")
+
+
+@pytest.mark.asyncio
+async def test_run_loop_v2_injects_multi_intent_hint():
+    agent = _bare_agent(LoopResult(text="好", reason="stop"))
+    messages = [{"role": "user", "content": "查下杭州天气，顺便搜一下北京好玩的地方"}]
+
+    await agent._run_loop_v2(
+        messages=messages,
+        tools=TOOLS,
+        forced_tool=None,
+        emo_params={"temperature": 0.7, "max_tokens": 800},
+        event=_event(payload="查下杭州天气，顺便搜一下北京好玩的地方"),
+        trace_log=MagicMock(),
+    )
+
+    sent = agent._loop_runner.calls[0]["messages"]
+    assert len(sent) == 2
+    assert sent[0]["role"] == "system"
+    assert "工具规划" in sent[0]["content"]
+    assert sent[-1]["role"] == "user"
+    # 不改调用方原列表
+    assert messages == [{"role": "user", "content": "查下杭州天气，顺便搜一下北京好玩的地方"}]
+
+
+@pytest.mark.asyncio
+async def test_run_loop_v2_single_intent_has_no_hint():
+    agent = _bare_agent(LoopResult(text="好", reason="stop"))
+    messages = [{"role": "user", "content": "杭州天气怎么样"}]
+
+    await agent._run_loop_v2(
+        messages=messages,
+        tools=TOOLS,
+        forced_tool=None,
+        emo_params={"temperature": 0.7, "max_tokens": 800},
+        event=_event(payload="杭州天气怎么样"),
+        trace_log=MagicMock(),
+    )
+
+    assert agent._loop_runner.calls[0]["messages"] == messages
 
 
 @pytest.mark.asyncio
