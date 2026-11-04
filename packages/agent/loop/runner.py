@@ -25,12 +25,28 @@ from .events import (
     ToolCallEvent,
     ToolOutcome,
     ToolResultEvent,
+    TokenEvent,
 )
 from .executor import LoopToolExecutor
+from .streaming import StreamAccumulator
 
 
 # 预算触顶时的兜底话术（由上层决定是否替换成人格化文案）。
 DEFAULT_BUDGET_TEXT = "人家查得有点久了……先跟伙伴说这些，好吗？"
+
+
+def _is_provider_response(value: Any) -> bool:
+    """判断适配器是否忽略了 stream=True，直接返回了完整响应。"""
+    return hasattr(value, "content") and not hasattr(value, "__aiter__")
+
+
+class _StreamInterrupted(Exception):
+    """流中途失败：携带已聚合的响应，交给 runner 决定是否保留部分文本。"""
+
+    def __init__(self, response: Any, cause: BaseException):
+        super().__init__(str(cause))
+        self.response = response
+        self.cause = cause
 
 
 @dataclass
@@ -101,6 +117,7 @@ class AgentLoopRunner:
         max_tokens: int = 800,
         user_id: str | None = None,
         first_tool_choice: str | dict | None = None,
+        stream: bool = False,
     ) -> AsyncIterator[LoopEvent]:
         """执行循环，逐事件产出。
 
@@ -110,6 +127,9 @@ class AgentLoopRunner:
             user_id: 本次运行的工具执行用户；None 用 runner 构造时的默认值。
             first_tool_choice: 仅第一步使用的 tool_choice（快路径强制工具用）；
                 None 表示第一步也用 "auto"。后续步始终 "auto"。
+            stream: 为 True 时向模型请求 `stream=True`，并在循环过程中
+                产出 TokenEvent；流打不开或中途失败会退回非流式/收尾，
+                不会把异常抛给调用方。
         """
         budget = budget or LoopBudget()
         max_steps = max(1, int(budget.max_steps))
@@ -127,6 +147,7 @@ class AgentLoopRunner:
         error = ""
         pending_calls: list[ToolCall] = []
         resume_messages: list[dict] = []
+        stream_enabled = bool(stream)
 
         for step in range(1, max_steps + 1):
             steps = step
@@ -145,16 +166,83 @@ class AgentLoopRunner:
                 step_tool_choice = "auto"
 
             try:
-                response = await self.router.route(
-                    self.task_type,
-                    conversation,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=False,
-                    # ★ 约束：每一步都带 tools，选择权交还模型。
-                    tools=tools or None,
-                    tool_choice=step_tool_choice,
+                if stream_enabled:
+                    try:
+                        raw = await self._route_once(
+                            conversation,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            tools=tools,
+                            step_tool_choice=step_tool_choice,
+                            stream=True,
+                        )
+                    except Exception as exc:  # noqa: BLE001 — 流打不开就退回非流式
+                        logger.warning(
+                            "loop.runner.stream_open_failed",
+                            step=step,
+                            error=f"{type(exc).__name__}: {exc}"[:300],
+                        )
+                        stream_enabled = False
+                        raw = None
+
+                    if raw is None:
+                        response = await self._route_once(
+                            conversation,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            tools=tools,
+                            step_tool_choice=step_tool_choice,
+                        )
+                    elif _is_provider_response(raw):
+                        # 适配器忽略了 stream=True，直接返回了完整响应。
+                        response = raw
+                        stream_enabled = False
+                    else:
+                        accumulator = StreamAccumulator()
+                        stream_started = self._clock()
+                        first_piece = True
+                        try:
+                            async for piece in accumulator.consume(raw):
+                                if first_piece:
+                                    first_piece = False
+                                    logger.info(
+                                        "loop.runner.ttft",
+                                        step=step,
+                                        ms=round((self._clock() - stream_started) * 1000),
+                                    )
+                                yield TokenEvent(step=step, text=piece)
+                        except Exception as exc:  # noqa: BLE001 — 已吐出的 token 不能撤回
+                            raise _StreamInterrupted(
+                                accumulator.to_response(), exc
+                            ) from exc
+                        response = accumulator.to_response()
+                else:
+                    response = await self._route_once(
+                        conversation,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        tools=tools,
+                        step_tool_choice=step_tool_choice,
+                    )
+            except _StreamInterrupted as exc:
+                # 已经吐过部分正文，不能再重试（会重复）。保留已聚合的文本收尾。
+                response = exc.response
+                error = f"{type(exc.cause).__name__}: {exc.cause}"
+                logger.warning(
+                    "loop.runner.stream_interrupted",
+                    step=step,
+                    error=error[:300],
+                    content_len=len(getattr(response, "text", "") or ""),
                 )
+                self._merge_usage(usage, response.usage)
+                partial = (getattr(response, "text", "") or "").strip()
+                if not partial:
+                    reason = "error"
+                    text = ""
+                    break
+                reason = "stop"
+                text = partial
+                break
             except Exception as exc:  # noqa: BLE001 — 循环要把模型异常变成事件
                 error = f"{type(exc).__name__}: {exc}"
                 reason = "error"
@@ -297,6 +385,30 @@ class AgentLoopRunner:
                         error=str(exc)[:200],
                     )
         return result
+
+    # ── 模型调用 ─────────────────────────────────────────
+
+    async def _route_once(
+        self,
+        conversation: list[dict],
+        *,
+        temperature: float,
+        max_tokens: int,
+        tools: list[dict] | None,
+        step_tool_choice: str | dict | None,
+        stream: bool = False,
+    ) -> Any:
+        """一次模型调用；每步都强制带 tools + tool_choice。"""
+        return await self.router.route(
+            self.task_type,
+            conversation,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+            # ★ 约束：每一步都带 tools，选择权交还模型。
+            tools=tools or None,
+            tool_choice=step_tool_choice,
+        )
 
     # ── 消息构造 ─────────────────────────────────────────
 

@@ -236,6 +236,26 @@ async def test_run_loop_v2_forwards_event_sink():
     )
 
     assert agent._loop_runner.calls[0]["on_event"] is sink
+    assert agent._loop_runner.calls[0]["stream"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_loop_v2_forwards_stream_flag():
+    agent = _bare_agent(LoopResult(text="好", reason="stop"))
+    sink = AsyncMock()
+
+    await agent._run_loop_v2(
+        messages=[],
+        tools=TOOLS,
+        forced_tool=None,
+        emo_params={"temperature": 0.7, "max_tokens": 800},
+        event=_event(),
+        trace_log=MagicMock(),
+        event_sink=sink,
+        stream=True,
+    )
+
+    assert agent._loop_runner.calls[0]["stream"] is True
 
 
 # ─────────────────────────────────────────────────────────────

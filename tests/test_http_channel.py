@@ -181,6 +181,50 @@ class TestChatStream:
         assert body.index("event: tool_call") < body.index("event: tool_result")
         assert body.index("event: tool_result") < body.index("event: token")
 
+    def test_sse_streams_real_token_events_without_duplicate_chunks(self, client, http_channel):
+        from types import SimpleNamespace
+        from packages.agent.loop.events import TokenEvent
+
+        async def fake_handler(event, event_sink=None):
+            if event_sink:
+                await event_sink(TokenEvent(step=1, text="杭州"))
+                await event_sink(TokenEvent(step=1, text=" 18℃。"))
+            return SimpleNamespace(reply="杭州 18℃。", sticker=None)
+
+        http_channel._handler = fake_handler
+        resp = client.post(
+            "/api/chat/stream",
+            json={"message": "杭州天气", "user_id": "hezi"},
+        )
+        body = resp.text
+
+        assert resp.status_code == 200
+        assert body.count("event: token") == 2
+        assert "event: done" in body
+        # 真 token 已经推过正文，不能再走一遍 3 字符假切片
+        assert body.count("杭州") == 1
+
+    def test_sse_filters_markers_from_real_tokens(self, client, http_channel):
+        from types import SimpleNamespace
+        from packages.agent.loop.events import TokenEvent
+
+        async def fake_handler(event, event_sink=None):
+            if event_sink:
+                await event_sink(TokenEvent(step=1, text="你好[sticker:blush]"))
+            return SimpleNamespace(reply="你好", sticker={"id": "blush", "file": "x.webp"})
+
+        http_channel._handler = fake_handler
+        resp = client.post(
+            "/api/chat/stream",
+            json={"message": "你好", "user_id": "hezi"},
+        )
+        body = resp.text
+
+        assert "event: token" in body
+        assert "event: sticker" in body
+        assert "sticker:blush" not in body  # 标记不能漏进正文
+        assert "你好" in body
+
     def test_sse_supports_handler_without_event_sink(self, client, http_channel):
         from types import SimpleNamespace
 

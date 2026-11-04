@@ -11,6 +11,7 @@ import inspect
 import json
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,6 +26,7 @@ from packages.agent.loop import (
     ToolCall,
     ToolCallEvent,
     ToolResultEvent,
+    TokenEvent,
 )
 from packages.agent.tool_result import ToolResult
 from packages.shared.providers import ProviderResponse
@@ -124,6 +126,62 @@ class SlowRouter(FakeRouter):
         return await super().route(task_type, messages, **kwargs)
 
 
+class FakeStreamRouter:
+    """按脚本返回 raw stream 或 ProviderResponse；记录每次调用参数。"""
+
+    def __init__(self, scripted: list):
+        self._scripted = list(scripted)
+        self.calls: list[dict] = []
+
+    async def route(self, task_type: str, messages: list, **kwargs):
+        self.calls.append(
+            {"task_type": task_type, "messages": copy.deepcopy(messages), **kwargs}
+        )
+        if not self._scripted:
+            raise AssertionError("FakeStreamRouter 收到了脚本外的模型调用")
+        item = self._scripted.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def openai_chunk(
+    *,
+    content: str | None = None,
+    reasoning: str | None = None,
+    tool_calls: list | None = None,
+    finish: str | None = None,
+    usage: dict | None = None,
+):
+    """构造 OpenAI / DeepSeek 风格的流 chunk。"""
+    delta = SimpleNamespace(
+        content=content, reasoning_content=reasoning, tool_calls=tool_calls
+    )
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=delta, finish_reason=finish)],
+        usage=usage,
+    )
+
+
+def stream_tool_delta(
+    index: int = 0,
+    *,
+    call_id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+):
+    return SimpleNamespace(
+        index=index,
+        id=call_id,
+        function=SimpleNamespace(name=name, arguments=arguments),
+    )
+
+
+async def stream_of(*chunks):
+    for chunk in chunks:
+        yield chunk
+
+
 class FakeToolExecutor:
     """实现旧 ToolExecutor 的 execute() 形状，按工具名分派。"""
 
@@ -149,9 +207,11 @@ async def collect_events(
     messages: list[dict],
     tools: list[dict] | None = TOOLS,
     budget: LoopBudget | None = None,
+    *,
+    stream: bool = False,
 ) -> list:
     events = []
-    async for event in runner.run(messages, tools, budget):
+    async for event in runner.run(messages, tools, budget, stream=stream):
         events.append(event)
     return events
 
@@ -609,7 +669,126 @@ async def test_single_tool_timeout_does_not_affect_others():
 
 
 # ─────────────────────────────────────────────────────────────
-# 7. 事件序列化（为 P1 SSE 预留）
+# 7. P1.5 真 token 流
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_token_events_and_done_text():
+    router = FakeStreamRouter(
+        [
+            stream_of(
+                openai_chunk(reasoning="先想一下", content="杭州"),
+                openai_chunk(
+                    content=" 18℃。",
+                    finish="stop",
+                    usage={"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9},
+                ),
+            )
+        ]
+    )
+    runner = AgentLoopRunner(router, LoopToolExecutor(FakeToolExecutor()))
+
+    events = await collect_events(
+        runner, [{"role": "user", "content": "杭州天气"}], stream=True
+    )
+
+    assert [event.type for event in events] == ["token", "token", "done"]
+    text = "".join(event.text for event in events if isinstance(event, TokenEvent))
+    assert text == "杭州 18℃。"  # reasoning_content 不能混进正文
+    done = events[-1]
+    assert done.text == "杭州 18℃。"
+    assert done.reason == "stop"
+    assert done.usage["total_tokens"] == 9
+    assert router.calls[0]["stream"] is True
+    assert router.calls[0]["tools"] == TOOLS
+
+
+@pytest.mark.asyncio
+async def test_stream_assembles_tool_call_fragments():
+    router = FakeStreamRouter(
+        [
+            stream_of(
+                openai_chunk(
+                    tool_calls=[
+                        stream_tool_delta(
+                            0, call_id="c1", name="query_weather", arguments='{"city":'
+                        )
+                    ]
+                ),
+                openai_chunk(
+                    tool_calls=[stream_tool_delta(0, arguments='"杭州"}')],
+                    finish="tool_calls",
+                ),
+            ),
+            stream_of(openai_chunk(content="杭州 18℃。", finish="stop")),
+        ]
+    )
+    tools = FakeToolExecutor({"query_weather": ToolResult.ok({"temp": 18})})
+    runner = AgentLoopRunner(router, LoopToolExecutor(tools))
+
+    events = await collect_events(
+        runner, [{"role": "user", "content": "杭州天气"}], stream=True
+    )
+
+    assert [event.type for event in events] == [
+        "tool_call", "tool_result", "token", "done",
+    ]
+    assert events[0].calls[0].name == "query_weather"
+    assert events[0].calls[0].arguments == {"city": "杭州"}
+    assert tools.calls[0]["arguments"] == {"city": "杭州"}
+    assert events[2].text == "杭州 18℃。"
+
+    # 工具调用参数按 index 拼接后，assistant 消息要能原样回填
+    assistant = next(
+        m for m in router.calls[1]["messages"] if m["role"] == "assistant"
+    )
+    assert assistant["tool_calls"][0]["id"] == "c1"
+    assert json.loads(assistant["tool_calls"][0]["function"]["arguments"]) == {
+        "city": "杭州"
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_open_failure_falls_back_to_non_stream():
+    router = FakeStreamRouter(
+        [RuntimeError("stream unsupported"), make_response(content="兜底回答")]
+    )
+    runner = AgentLoopRunner(router, LoopToolExecutor(FakeToolExecutor()))
+
+    events = await collect_events(
+        runner, [{"role": "user", "content": "在吗"}], stream=True
+    )
+
+    assert [event.type for event in events] == ["done"]
+    assert events[0].text == "兜底回答"
+    assert router.calls[0]["stream"] is True
+    assert router.calls[1]["stream"] is False
+
+
+@pytest.mark.asyncio
+async def test_stream_interruption_keeps_partial_text():
+    async def broken_stream():
+        yield openai_chunk(content="你")
+        raise RuntimeError("stream broke")
+
+    router = FakeStreamRouter([broken_stream()])
+    runner = AgentLoopRunner(router, LoopToolExecutor(FakeToolExecutor()))
+
+    events = await collect_events(
+        runner, [{"role": "user", "content": "在吗"}], stream=True
+    )
+
+    assert [event.type for event in events] == ["token", "done"]
+    assert events[0].text == "你"
+    done = events[-1]
+    assert done.text == "你"
+    assert done.reason == "stop"
+    assert "stream broke" in done.error
+
+
+# ─────────────────────────────────────────────────────────────
+# 8. 事件序列化（为 P1 SSE 预留）
 # ─────────────────────────────────────────────────────────────
 
 

@@ -53,9 +53,20 @@ def _summarize_tool_data(data, limit: int = 120) -> str:
     return " ".join(text.split())[:limit]
 
 
+def _format_token_frame(text: str) -> str:
+    """Token 帧。SSE 的 data 不能含未转义换行，和原假流式保持一致。"""
+    safe = text.replace("\n", "\\n")
+    return f"event: token\ndata: {safe}\n\n"
+
+
 def _format_loop_event(loop_event) -> str | None:
-    """把 ToolCallEvent / ToolResultEvent 转成 SSE 帧；其他事件返回 None。"""
-    from packages.agent.loop.events import ToolCallEvent, ToolResultEvent
+    """把 ToolCallEvent / ToolResultEvent / TokenEvent 转成 SSE 帧。"""
+    from packages.agent.loop.events import TokenEvent, ToolCallEvent, ToolResultEvent
+
+    if isinstance(loop_event, TokenEvent):
+        if not loop_event.text:
+            return None
+        return _format_token_frame(loop_event.text)
 
     if isinstance(loop_event, ToolCallEvent):
         payload = {
@@ -278,10 +289,24 @@ class HTTPChannel(Channel):
                 self._nudge_engine.poke()
 
             async def sse_generator():
+                from packages.agent.loop.events import TokenEvent
+                from packages.shared.marker_parser import MarkerParser
+
                 queue: asyncio.Queue = asyncio.Queue()
                 sentinel = object()
+                # 真 token 流：标记（sticker/emotion/…）在服务端过滤，只把可见文本推给前端。
+                marker_parser = MarkerParser()
+                streamed_chars = 0
 
                 async def event_sink(loop_event):
+                    nonlocal streamed_chars
+                    if isinstance(loop_event, TokenEvent):
+                        for token in marker_parser.feed(loop_event.text):
+                            if token.kind == "literal" and token.text:
+                                streamed_chars += len(token.text.strip())
+                                await queue.put(_format_token_frame(token.text))
+                        return
+
                     chunk = _format_loop_event(loop_event)
                     if chunk:
                         await queue.put(chunk)
@@ -303,6 +328,12 @@ class HTTPChannel(Channel):
                             break
                         yield item
 
+                    # 流结束时把 MarkerParser 里剩的普通文本吐完（例如未闭合的 [）
+                    for token in marker_parser.flush():
+                        if token.kind == "literal" and token.text:
+                            streamed_chars += len(token.text.strip())
+                            yield _format_token_frame(token.text)
+
                     response = await task
                     reply = response.reply
                     sticker = getattr(response, "sticker", None)
@@ -311,9 +342,9 @@ class HTTPChannel(Channel):
                     if sticker:
                         yield f"event: sticker\ndata: {json.dumps(sticker, ensure_ascii=False)}\n\n"
 
-                    # 逐块流式推送 token（模拟打字效果，3字符/块，50ms间隔）
+                    # 真 token 流已经推过正文 → 不再重复假切片
                     chunk_size = 3
-                    for i in range(0, len(reply), chunk_size):
+                    for i in range(0, len(reply) if streamed_chars == 0 else 0, chunk_size):
                         chunk = reply[i:i+chunk_size]
                         # SSE 格式需要转义换行符
                         safe = chunk.replace("\n", "\\n")

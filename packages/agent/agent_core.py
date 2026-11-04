@@ -786,11 +786,13 @@ class AgentCore:
             # ── P1-②: 情绪调制 LLM 参数 ──
             emo_params = self._emotion_modulated_params()
 
-            if self._loop_v2 and not stream and self.tool_executor is not None:
+            if self._loop_v2 and self.tool_executor is not None:
                 # ── LOOP_V2: 每步带 tools + 结构化回填 + 预算循环 ──
+                # 有 event_sink 就同时开真 token 流（P1.5）；没有则只聚合结果。
                 loop_result = await self._run_loop_v2(
                     messages, tools, forced_tool, emo_params, event, trace_log,
                     event_sink=event_sink,
+                    stream=bool(stream or event_sink is not None),
                 )
                 if loop_result.reason == "confirmation":
                     self._store_loop_pending(loop_result, event, trace_log)
@@ -801,9 +803,6 @@ class AgentCore:
                 if tool_results:
                     self._process_tool_side_effects(tool_results, event.payload)
             else:
-                if self._loop_v2 and stream:
-                    trace_log.debug("agent.loop_v2.stream_fallback")
-
                 result = await self.router.route(
                     "chat",
                     messages,
@@ -1338,6 +1337,7 @@ class AgentCore:
         event: InternalEvent,
         trace_log,
         event_sink: Callable[[Any], Awaitable[None]] | None = None,
+        stream: bool = False,
     ) -> LoopResult:
         """跑一次新循环，返回聚合结果（不在这里做话术映射/副作用）。"""
         runner = self._ensure_loop_runner()
@@ -1352,6 +1352,7 @@ class AgentCore:
             max_tokens=emo_params["max_tokens"],
             user_id=event.user_id or "hezi",
             first_tool_choice=self._loop_first_tool_choice(forced_tool, tools),
+            stream=stream,
             on_event=event_sink,
         )
         trace_log.info(
@@ -1503,6 +1504,7 @@ class AgentCore:
             event,
             trace_log,
             event_sink=event_sink,
+            stream=event_sink is not None,
         )
         if loop_result.reason == "confirmation":
             self._store_loop_pending(loop_result, event, trace_log)
