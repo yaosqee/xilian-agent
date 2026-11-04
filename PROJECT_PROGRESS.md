@@ -1,7 +1,7 @@
 # 昔涟 V3.7 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P3 + X 完成**：loop 97.5% / legacy 82.5%，时间 100%，多步 loop 100%，下一步真 token 流 / M 模型路由）
+> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P3 + X + M 第一阶段完成**：loop 97.5% / legacy 82.5%，ModelPolicy/重试降级/stats 已落地，下一步 P1.5 真 token 流或 DSH 风格路由配置二阶段）
 > 📅 最后更新：2026-11-04
 
 ---
@@ -149,6 +149,20 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 | 平均耗时 | **4.19s** | 5.77s |
 
 loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜索服务 HTTP 错误，回复靠记忆列北京景点、未出现「北京」二字，被关键词判失败。
+
+---
+
+## M：模型路由第一阶段（2026-11-04，`7879eb3`）
+
+| 项 | 实现 |
+|---|---|
+| 能力矩阵 | `providers/model_policy.py` `ModelPolicy`：tools / vision / streaming / thinking / context / 成本；从 `ModelInfo` 构建，`router.get_model_policy()` 可查 |
+| 工具重试 | tool error 先原样重试一次；`tool_choice` 不兼容（如 thinking 模式）先退 `auto`；仍失败才临时禁用 tools **15 分钟**，不再静默 24h |
+| 观测 | `model_stats.py` 按模型记 calls / success / errors / timeout / empty / truncated / tool_errors / degraded / p50 / p95；`/api/status` 暴露 `model_stats` |
+| 任务分层 | 新增 `tool_decision` 任务（loop 使用），`TASK_GROUPS` 收敛为 dialogue / background / tool_decision；仍兼容逐任务 override |
+| 测试 | **644 passed / 8 skipped / 36s**；新增 ModelPolicy、重试恢复、连续失败降级、tool_choice auto、stats、TTL 测试 |
+
+限制：模型配置仍在 `model_configs` + 环境变量，多模型/多供应商的配置体验未重做；DSH 风格配置（能力矩阵 + 任务 profile 的声明式配置）留作 M 二阶段。
 
 ---
 
