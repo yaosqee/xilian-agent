@@ -1,7 +1,7 @@
 # 昔涟 V3.7 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P3 + X + M1 + P1.5 完成**：loop 97.5% / legacy 82.5%，真 token 流已接通，下一步 M2 DSH 风格路由配置或 P3 评测收尾）
+> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P0–P3 + X + M1 + P1.5 完成，评测集已冻结**：loop 100% / legacy 85%，train/holdout 均 100%；下一步 M2 或把 LOOP_V2 设为默认）
 > 📅 最后更新：2026-11-04
 
 ## 📌 当前状态速查（压缩上下文前先看这里）
@@ -9,13 +9,41 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区仅未跟踪 `scripts/ab_thinking.py` |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **656 passed / 8 skipped / ~34s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 已完成；下一步 **M2 DSH 风格路由配置** 或 **P3 评测收尾** |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **660 passed / 8 skipped / ~36s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 已完成；评测集 v1 已冻结；下一步 **M2 路由配置** 或 **把 LOOP_V2 设为默认** |
 | 运行默认 | `LOOP_V2=0` 走老工具路径；`LOOP_V2=1` 才启用新循环（`.env` 重启生效） |
-| P3 基线 | 40 条：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100% |
+| P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`）：loop **100%** / legacy 85%；loop 多步 100%、事实 100%、正确工具 100%，**train/holdout 均 100%** |
+| 工具执行成功率 | loop **69.4%** / legacy 76.9% —— 失败全部来自 `search_web`（智谱 429 余额不足），不是循环问题 |
 | 流式 | SSE 工具事件真流；LOOP_V2 下正文也已是真 token 流（P1.5），老路径仍为 3 字符/50ms 假切片 |
 | 关键本地文档 | `docs/PROJECT-TOUR.md`、`docs/evals/agent-loop-v2-baseline-2026-11-04.md`、`docs/plans/HANDOFF-2026-11-04.md`（`docs/plans/` 被 gitignore） |
-| 关键风险 | 模型配置仍是 env + DB tier/override；`model_stats` 内存不持久；`search_web` 当前 HTTP 错误；确认 pending 重启丢失 |
+| 关键风险 | 搜索服务额度耗尽（需充值或换供应商）；模型配置仍是 env + DB tier/override；`model_stats` 内存不持久；确认 pending 重启丢失 |
+
+---
+
+## 评测加固与终版基线（2026-11-04 晚，`bad6c43`）
+
+本轮只做"让数字可信"的三件事：
+
+1. **冻结用例集**：`evals/cases/CHANGELOG.md` 写入规则（holdout 看过结果不得修改；无效用例标 `valid:false` 或升版本）；报告新增 `cases_sha256` 指纹与 train/holdout 分表。
+2. **新增 `tool_success_rate`**：工具被调用 ≠ 工具成功。终版基线里 loop 正确工具 100%，但执行成功率只有 69.4%——11 次 `search_web` 全部因智谱 429（余额不足）失败。此前用例只校验"调没调"，会把这个洞藏起来。
+3. **时间兜底**：问时间/日期时，把 `【当前时间】YYYY-MM-DD 周X HH:MM` 以 system 消息钉在 user 前（与 DatetimeModule 双保险）。改前 24 次采样里出现过 1 次"只答日期不答时间"；改后 3×6 全过。
+
+**终版基线**（`evals/reports/final_all.json`，40 条，thinking off）：
+
+| 指标 | legacy | loop |
+|---|---:|---:|
+| 用例通过率（train / holdout） | 85% / 85% | **100% / 100%** |
+| 正确工具率 | 76.9% | **100%** |
+| 多步完成率 | 0% | **100%** |
+| 事实正确率 | 100% | **100%** |
+| 不该调准确率 | 100% | 100% |
+| 工具执行成功率 | 76.9% | 69.4% |
+| 平均耗时 | 4.82s | 4.76s |
+
+结论：
+- 新循环在**正确工具/多步**上是结构性优势（旧路径回传不带 tools，多步物理上做不到）。
+- 两者耗时已基本持平（4.76 vs 4.82s），此前"loop 慢 1.5s"主要来自搜索失败的重试，错误文案改掉后消失。
+- 唯一硬伤是搜索服务额度（账号问题，非代码），修好前 `search` 类用例只能证明"会调"，不能证明"查得到"。
 
 ---
 

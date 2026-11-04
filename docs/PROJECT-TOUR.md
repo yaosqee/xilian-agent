@@ -15,7 +15,7 @@
 
 ```bash
 cd D:\xilian-v3
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 656 passed / 8 skipped
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 660 passed / 8 skipped
 uv run python main.py                                            # 打开 http://127.0.0.1:8000
 ```
 
@@ -34,7 +34,7 @@ uv run python main.py                                            # 打开 http:/
 
 ### 1.3 知道现在在哪（10 分钟）
 
-- 测试基线：**656 passed / 8 skipped / ~34s**（真模型人格测试默认排除）。
+- 测试基线：**660 passed / 8 skipped / ~36s**（真模型人格测试默认排除）。
 - 老工具路径（`_handle_tool_calls`）仍在服役；新循环 `LOOP_V2` **默认关闭**，`.env` 里 `LOOP_V2=1` 才启用。
 - P0–P3 + X + M1 + P1.5 已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机、40 条评测基线、时间保真 + 多步提示、ModelPolicy/重试降级/stats、真 token 流。
 - 下一步：M 二阶段 DSH 风格声明式路由配置；P3 剩余是搜索工具与评测收尾。
@@ -101,7 +101,7 @@ codegraph impact ToolExecutor.execute
 ## 4. 快速自检（确认项目没坏）
 
 ```bash
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 656 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 660 passed
 uv run python -c "import main"                                    # 导入无副作用
 LOOP_V2=1 uv run python main.py                                   # 新循环模式跑一条"今天杭州天气"
 ```
