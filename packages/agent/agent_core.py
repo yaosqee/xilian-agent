@@ -1812,7 +1812,12 @@ class AgentCore:
         if any(t in payload for t in ("帮我查", "搜一下", "搜索", "查一下")):
             return "search_web"
         # 记忆意图：回溯过去的对话
-        if any(t in payload for t in ("你还记得", "上次", "之前说过", "我们聊过")):
+        # 词表覆盖「提过/说过/记得吗」等口语变体；"记得"单独出现不触发（避免
+        # 「记得吃饭」这类祈使句被误判），只认疑问/回溯组合。
+        if any(t in payload for t in (
+            "你还记得", "还记得", "记得吗", "你记得", "上次",
+            "之前说", "之前提", "提过", "说过", "聊过", "回忆",
+        )):
             return "search_memory"
         return None
 

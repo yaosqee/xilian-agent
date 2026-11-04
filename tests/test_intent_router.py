@@ -36,6 +36,14 @@ def test_route_intent_search(agent):
 def test_route_intent_memory(agent):
     assert agent._route_intent("你还记得我之前说过什么吗") == "search_memory"
     assert agent._route_intent("上次我们聊到哪里了") == "search_memory"
+    # 2026-11-04：补口语变体（评测 memory-02 漏调的直接原因）
+    assert agent._route_intent("我之前提过想学什么吗？") == "search_memory"
+    assert agent._route_intent("你记得我上次说的那个项目吗") == "search_memory"
+
+
+def test_route_intent_memory_does_not_hijack_imperatives(agent):
+    # 「记得吃饭」是祈使句，不是回溯记忆，不应强制调记忆工具
+    assert agent._route_intent("记得吃饭") is None
 
 
 def test_route_intent_none(agent):
