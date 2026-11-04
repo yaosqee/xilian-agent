@@ -1,7 +1,7 @@
 # 昔涟 V3.7 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P2 确认状态机已完成（内存版）**，下一步 P3 评测集）
+> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P3 评测基线完成**：loop 87.5% / legacy 77.5%，下一步 X 时间保真 + 多步加固）
 > 📅 最后更新：2026-11-04
 
 ---
@@ -109,6 +109,27 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 限制：内存版，重启丢 pending；跨重启恢复等有真实需求再落 DB。
 
 **核查补丁（2026-11-04，`6a015f3`）**：审计发现 `ToolExecutor.execute()` 对 `requires_confirmation` 工具无条件返回 `PENDING_CONFIRMATION`——用户说「确认」后仍然拿到 PENDING。旧路径被 `ResultWrapper` 包成一句失败话术（不易察觉），新路径则重新挂起、永远执行不到。已加 `confirmed=True` 旁路，旧/新两条确认路径都传通；测试基线 → **624 passed / 8 skipped**。
+
+---
+
+## P3：评测集与基线（2026-11-04，`3c383f2`）
+
+新增 `evals/`：40 条 JSONL（train 20 / holdout 20，六类）、指标纯函数、fake/live runner、报告生成；`tests/test_evals.py` 7 条离线测试。完整报告：[docs/evals/agent-loop-v2-baseline-2026-11-04.md](docs/evals/agent-loop-v2-baseline-2026-11-04.md)。
+
+真实模型基线（deepseek-flash / thinking off / 4 工具可用）：
+
+| 指标 | legacy `LOOP_V2=0` | loop `LOOP_V2=1` |
+|---|---:|---:|
+| 用例通过率 | 77.5% | **87.5%** |
+| 正确工具率 | 76.9% | **88.5%** |
+| 多步完成率 | 0.0% | **50.0%** |
+| 事实正确率（时间/日期） | 66.7% | 66.7% |
+| 不该调准确率 | 100% | 100% |
+| 平均耗时 | **3.82s** | 4.88s |
+
+结论：新循环收益集中在多步/正确工具率；时间日期仍是硬伤（X 阶段）；多步一半失败是模型工具选择问题（只调天气、不调搜索），不是循环限制。
+
+**P3 顺带修复（`7f76d1f`）**：`ToolRegistry.autodiscover()` 原先只消费 `_PENDING`，同一进程第二个 AgentCore 拿不到工具（`--mode all` 的 loop 首轮 `available_tools=[]`）。已加 `_AVAILABLE` 重放缓存 + `tests/test_tool_registry.py`。
 
 ---
 

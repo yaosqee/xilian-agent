@@ -1,0 +1,58 @@
+# Agent 循环 v2 · P3 基线（2026-11-04）
+
+> 命令：`uv run python -m evals.runner --mode all --timeout 90 --output evals/reports/live_all`
+> 环境：Windows / deepseek-flash / thinking off（评分固定）/ 4 个工具全部注册（QWeather + Zhipu 可用）。
+> 用例：`evals/cases/agent_loop_v2.jsonl`，40 条，train 20 / holdout 20。
+> 完整逐条结果：`evals/reports/live_all.json`（本地生成，gitignore）。
+
+## 总览
+
+| 指标 | legacy (`LOOP_V2=0`) | loop (`LOOP_V2=1`) |
+|---|---:|---:|
+| 用例通过率 | 77.5% | **87.5%** |
+| 工具调用率 | 65.0% | 65.0% |
+| 正确工具率 | 76.9% | **88.5%** |
+| 不该调准确率 | 100% | 100% |
+| 多步完成率 | 0.0% | **50.0%** |
+| 事实正确率（时间/日期） | 66.7% | 66.7% |
+| 关键词命中率 | 92.9% | **100%** |
+| 平均耗时 | **3.82s** | 4.88s |
+| 平均工具调用数 | 0.70 | 1.02 |
+| 平均模型调用数 | 4.70 | 5.00 |
+
+分 split：
+
+| split | legacy 通过率 | loop 通过率 |
+|---|---:|---:|
+| train（20） | 75.0% | 90.0% |
+| holdout（20） | 80.0% | 85.0% |
+
+分 category（通过率）：
+
+| category | legacy | loop |
+|---|---:|---:|
+| weather | 87.5% | 100% |
+| time | 66.7% | 66.7% |
+| memory | 100% | 100% |
+| search | 100% | 100% |
+| no_tool | 100% | 100% |
+| multi_step | 0.0% | 50.0% |
+
+## 结论
+
+1. **新循环的收益集中在多步与正确工具率**：多步 0→50%，正确工具 76.9→88.5%，总通过率 +10pp。旧路径回传时不带 tools，多步在结构上就不可能，数据吻合。
+2. **时间/日期仍是硬伤（X 阶段）**：两种模式都只有 66.7%。失败集中在「今天几号」——模型要么编 2026-06-06，要么明说记不住；`DatetimeModule` 没有年月日 ground truth。
+3. **多步仍有一半失败**：loop 的 3 条失败中，multi-01 只调了天气没调搜索；multi-05/06 连续两次 `query_weather` 而没有 `search_web`。不是循环限制，是模型工具选择/去重问题，P3 用例把问题量化出来了。
+4. **旧路径 multi_step=0%**：除了「只调一个工具」，还出现 DeepSeek 的 DSML 文本漏进正文（`<｜｜DSML｜｜tool_calls>`），说明旧回传链路对工具协议的处理不够干净。
+5. **search_web 当前返回 HTTP 错误**（日志 `search_web.http_error`），但用例只校验「是否调用工具」，所以 search 类通过率仍是 100%；P3 指标暂不评搜索结果质量。
+
+## 顺带发现并修复
+
+- `ToolRegistry.autodiscover()` 原先只消费模块级 `_PENDING` 队列。第一个 AgentCore 导入工具后队列清空，同一进程里第二个 AgentCore（P3 的 `--mode all`）拿不到任何工具，loop 模式首轮基线出现 `available_tools=[]`、工具调用率 0%。已加 `_AVAILABLE` 缓存重放（commit `7f76d1f`），并补 `tests/test_tool_registry.py`。
+- P3 runner 现在会清空每个用例的 `ToolExecutor._call_counts`，避免连续天气用例触发每小时 6 次的频率限制。
+
+## 下一步
+
+- **X 时间保真**：`DatetimeModule` 注入 `YYYY-MM-DD 周X HH:MM` + 「问时间直接引用」；目标 time/date 6/6。
+- **多步加固**：确认 loop 的 `first_tool_choice`/`auto` 对「顺便搜一下」类句式的覆盖；可能需要 policy 快路径或提示词约束。
+- 再跑一次 `--mode all` 作为对照，报告覆盖写入本文件。
