@@ -2,7 +2,7 @@
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
 > 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 待开工）
-> 📅 最后更新：2026-11-03
+> 📅 最后更新：2026-11-04
 
 ---
 
@@ -51,6 +51,31 @@
 ### 下一步
 
 Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2.md`（本地文档，不入库）。P0 = 新建 `packages/agent/loop/` 骨架 + 假 adapter 单测，不切换现有调用路径。
+
+---
+
+## P0：Agent 循环 v2 骨架（2026-11-04，`5d106c2`）
+
+新增 `packages/agent/loop/`（`events.py` / `executor.py` / `runner.py`，约 730 行）+ `tests/test_loop_runner.py`（12 条，假 adapter，不连网不写库）。**旧路径 `AgentCore.process()` 零改动**，新循环尚未接线（P1 第一步）。
+
+| 能力 | 实现 |
+|---|---|
+| 多步工具链 | 每步都带 tools + `tool_choice="auto"`（旧实现回传时不带 tools） |
+| 结果回填 | `{"ok": true, "data": ...}` 结构化 JSON，不经 ResultWrapper 改写 |
+| 预算 | 步数 / 累计 token / 耗时，任一触顶优雅收尾 |
+| 执行 | 并行 + 单工具超时隔离 + 同轮幂等（同工具同参数只执行一次，第二次 `cached=True`） |
+| 事件 | `tool_call` / `tool_result` / `done`，可 `to_dict()` / `to_sse()` 供 P1 接传输层 |
+
+验收：全量离线 **593 passed / 8 skipped / 35s**（原 581 + 新增 12）。
+
+与方案的偏差（详见 `agent-loop-v2.md` §8）：
+
+1. **不做工具级自动重试**——EXECUTE 工具重试会重复副作用；改为失败结构化回传、由模型决定是否重调。
+2. 确认暂停时 `DoneEvent` 不带 pending 调用，assistant/tool 消息也未入会话 → P2 状态机要补。
+3. 时间预算只在步间检查（单次模型调用有 90s 超时兜底）。
+4. 接线未做 → P1 第一步加 `LOOP_V2` 开关。
+
+流程提醒：P0 完成后忘了提交，核查时补交 `5d106c2`。后续每阶段完成即 commit。
 
 ---
 
