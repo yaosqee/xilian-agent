@@ -15,7 +15,7 @@
 
 ```bash
 cd D:\xilian-v3
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 624 passed / 8 skipped
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 634 passed / 8 skipped
 uv run python main.py                                            # 打开 http://127.0.0.1:8000
 ```
 
@@ -34,10 +34,10 @@ uv run python main.py                                            # 打开 http:/
 
 ### 1.3 知道现在在哪（10 分钟）
 
-- 测试基线：**624 passed / 8 skipped / ~35s**（真模型人格测试默认排除）。
+- 测试基线：**634 passed / 8 skipped / ~35s**（真模型人格测试默认排除）。
 - 老工具路径（`_handle_tool_calls`）仍在服役；新循环 `LOOP_V2` **默认关闭**，`.env` 里 `LOOP_V2=1` 才启用。
-- P0–P2 已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机。
-- 下一步：P3 评测集（40 条，量化"该不该调工具"）。
+- P0–P3 已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机、40 条评测基线。
+- 下一步：X 时间保真（日期/时间 ground truth）+ P3 暴露的多步工具选择加固。
 
 ## 2. 2 小时版（能动手改）
 
@@ -91,11 +91,13 @@ codegraph impact ToolExecutor.execute
 | 接线 + SSE P1 | 新循环没人调用；前端看不到工具过程 | `LOOP_V2` 开关 + `tool_call/tool_result` 事件 + 气泡 | `add88d5` `e90f256` |
 | 确认状态机 P2 | 旧的 pending 是进程内单槽，多会话会串 | `ConfirmationStore` 按会话 + TTL | `31d6385` |
 | 确认后执行修复 | `ToolExecutor` 无条件返回 PENDING，确认了也执行不了 | `confirmed=True` 旁路 | `6a015f3` |
+| 评测集 P3 | 工具调用质量只能靠体感 | 40 条 JSONL + runner + 指标；loop 87.5% / legacy 77.5% | `3c383f2` |
+| 多 AgentCore 工具丢失 | 第二个实例 autodiscover 拿到空 registry | `_AVAILABLE` 缓存重放 | `7f76d1f` |
 
 ## 4. 快速自检（确认项目没坏）
 
 ```bash
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 624 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 634 passed
 uv run python -c "import main"                                    # 导入无副作用
 LOOP_V2=1 uv run python main.py                                   # 新循环模式跑一条"今天杭州天气"
 ```
