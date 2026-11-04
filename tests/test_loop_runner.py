@@ -230,6 +230,81 @@ async def test_multi_step_keeps_tools_and_structured_backfill():
 
 
 # ─────────────────────────────────────────────────────────────
+# 1b. 接线所需：副作用标记 / 聚合结果 / 首步 tool_choice
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_tool_outcome_carries_side_effect_flags():
+    tools = FakeToolExecutor(
+        {
+            "search_memory": ToolResult.ok(
+                {"results": ["记忆"]},
+                trigger_memory=True,
+                trigger_portrait_update=True,
+            )
+        }
+    )
+    executor = LoopToolExecutor(tools)
+    call = ToolCall.from_raw(tool_call("search_memory", {"query": "x"}, "c1"))
+
+    outcomes = await executor.execute_batch([call], cache={})
+
+    assert outcomes[0].ok is True
+    assert outcomes[0].trigger_memory is True
+    assert outcomes[0].trigger_portrait_update is True
+
+
+@pytest.mark.asyncio
+async def test_run_to_result_collects_tool_outcomes():
+    router = FakeRouter(
+        [
+            make_response(tool_calls=[tool_call("query_weather", {"city": "杭州"}, "c1")]),
+            make_response(content="杭州 18℃。"),
+        ]
+    )
+    tools = FakeToolExecutor(
+        {"query_weather": ToolResult.ok({"city": "杭州", "temp": 18})}
+    )
+    runner = AgentLoopRunner(router, LoopToolExecutor(tools))
+
+    result = await runner.run_to_result(
+        [{"role": "user", "content": "杭州天气"}], TOOLS, LoopBudget(max_steps=5)
+    )
+
+    assert [outcome.name for outcome in result.tool_outcomes] == ["query_weather"]
+    assert result.tool_outcomes[0].data == {"city": "杭州", "temp": 18}
+    assert result.reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_first_tool_choice_forces_only_first_step():
+    forced = {"type": "function", "function": {"name": "query_weather"}}
+    router = FakeRouter(
+        [
+            make_response(tool_calls=[tool_call("query_weather", {"city": "杭州"}, "c1")]),
+            make_response(content="查好啦。"),
+        ]
+    )
+    tools = FakeToolExecutor()
+    runner = AgentLoopRunner(router, LoopToolExecutor(tools), user_id="hezi")
+
+    result = await runner.run_to_result(
+        [{"role": "user", "content": "杭州天气"}],
+        TOOLS,
+        LoopBudget(max_steps=5),
+        first_tool_choice=forced,
+        user_id="partner",
+    )
+
+    assert router.calls[0]["tool_choice"] == forced
+    assert router.calls[1]["tool_choice"] == "auto"
+    assert all(call["tools"] == TOOLS for call in router.calls)
+    assert tools.calls[0]["user_id"] == "partner"
+    assert result.reason == "stop"
+
+
+# ─────────────────────────────────────────────────────────────
 # 2. 工具失败：不抛异常，结构化告知模型
 # ─────────────────────────────────────────────────────────────
 

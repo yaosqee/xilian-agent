@@ -184,6 +184,8 @@ class LoopToolExecutor:
             error=error,
             duration_ms=int((time.monotonic() - started) * 1000),
             needs_confirmation=(not ok and error == "PENDING_CONFIRMATION"),
+            trigger_memory=bool(getattr(result, "trigger_memory", False)),
+            trigger_portrait_update=bool(getattr(result, "trigger_portrait_update", False)),
         )
 
     @staticmethod

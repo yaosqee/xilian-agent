@@ -136,6 +136,9 @@ class ToolOutcome:
     cached: bool = False          # True = 本轮幂等缓存命中，没有真正执行
     duration_ms: int = 0
     needs_confirmation: bool = False  # 工具要求用户确认，循环应停下
+    # 从 ToolResult 透传的副作用标记，供 AgentCore 接线后复用原有逻辑
+    trigger_memory: bool = False
+    trigger_portrait_update: bool = False
 
     def structured(self) -> dict[str, Any]:
         """回填给模型的结构化载荷。"""

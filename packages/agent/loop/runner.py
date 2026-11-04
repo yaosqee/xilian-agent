@@ -54,6 +54,8 @@ class LoopResult:
     usage: dict[str, int] = field(default_factory=dict)
     error: str = ""
     events: list[LoopEvent] = field(default_factory=list)
+    # 所有实际执行过的工具结果（含幂等缓存命中），供 AgentCore 处理副作用
+    tool_outcomes: list[ToolOutcome] = field(default_factory=list)
 
 
 class AgentLoopRunner:
@@ -94,14 +96,22 @@ class AgentLoopRunner:
         *,
         temperature: float = 0.7,
         max_tokens: int = 800,
+        user_id: str | None = None,
+        first_tool_choice: str | dict | None = None,
     ) -> AsyncIterator[LoopEvent]:
         """执行循环，逐事件产出。
 
-        注意：`messages` 不会被原地修改（浅拷贝后使用）。
+        `messages` 不会被原地修改（浅拷贝后使用）。
+
+        Args:
+            user_id: 本次运行的工具执行用户；None 用 runner 构造时的默认值。
+            first_tool_choice: 仅第一步使用的 tool_choice（快路径强制工具用）；
+                None 表示第一步也用 "auto"。后续步始终 "auto"。
         """
         budget = budget or LoopBudget()
         max_steps = max(1, int(budget.max_steps))
         deadline = self._clock() + float(budget.max_seconds)
+        run_user_id = self.user_id if user_id is None else user_id
 
         conversation = [self._copy_message(message) for message in messages]
         cache: dict[str, ToolOutcome] = {}
@@ -121,6 +131,14 @@ class AgentLoopRunner:
                 text = DEFAULT_BUDGET_TEXT
                 break
 
+            # 第一步允许快路径强制工具；后续步始终交还模型。
+            if not tools:
+                step_tool_choice = None
+            elif step == 1 and first_tool_choice is not None:
+                step_tool_choice = first_tool_choice
+            else:
+                step_tool_choice = "auto"
+
             try:
                 response = await self.router.route(
                     self.task_type,
@@ -130,7 +148,7 @@ class AgentLoopRunner:
                     stream=False,
                     # ★ 约束：每一步都带 tools，选择权交还模型。
                     tools=tools or None,
-                    tool_choice="auto" if tools else None,
+                    tool_choice=step_tool_choice,
                 )
             except Exception as exc:  # noqa: BLE001 — 循环要把模型异常变成事件
                 error = f"{type(exc).__name__}: {exc}"
@@ -177,7 +195,7 @@ class AgentLoopRunner:
 
             outcomes = await self.executor.execute_batch(
                 calls,
-                user_id=self.user_id,
+                user_id=run_user_id,
                 timeout=budget.tool_timeout,
                 cache=cache,
             )
@@ -235,7 +253,9 @@ class AgentLoopRunner:
         result = LoopResult()
         async for event in self.run(messages, tools, budget, **kwargs):
             result.events.append(event)
-            if isinstance(event, DoneEvent):
+            if isinstance(event, ToolResultEvent):
+                result.tool_outcomes.extend(event.results)
+            elif isinstance(event, DoneEvent):
                 result.text = event.text
                 result.reason = event.reason
                 result.steps = event.steps

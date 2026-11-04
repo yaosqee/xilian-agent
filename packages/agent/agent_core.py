@@ -12,6 +12,7 @@ ActorMind 推理链（阶段 7）：
 import asyncio
 import json
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ from .memory_manager import MemoryManager
 from .notebook_manager import NotebookManager
 from .portrait_manager import PortraitManager
 from .skills_loader import SkillsLoader
+from .loop import AgentLoopRunner, LoopBudget, LoopResult, LoopToolExecutor
 
 # 阶段 7a: 模块化上下文 + Pipeline ServiceModule
 from .pipeline import ServiceModule
@@ -76,6 +78,30 @@ def _sanitize_surrogates(text: str) -> str:
     except Exception:
         # 极端情况：替换不可编码字符
         return text.encode("ascii", errors="replace").decode("ascii")
+
+
+# ── LOOP_V2 配置读取（默认 0，保证老路径行为不变）──────────
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "").strip() or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "").strip() or default)
+    except (TypeError, ValueError):
+        return default
 
 
 # ── Tool call serialization helpers ─────────────────────────
@@ -213,6 +239,23 @@ class AgentCore:
 
         # 打磨期: 工具确认回路状态
         self._pending_confirmation: dict | None = None
+
+        # 打磨期 P1: Agent 循环 v2 开关（默认 0，老路径行为不变）
+        self._loop_v2: bool = _env_flag("LOOP_V2", False)
+        self._loop_budget = LoopBudget(
+            max_steps=_env_int("LOOP_V2_MAX_STEPS", 6),
+            max_tokens=_env_int("LOOP_V2_MAX_TOKENS", 20_000),
+            max_seconds=_env_float("LOOP_V2_MAX_SECONDS", 90.0),
+            tool_timeout=_env_float("LOOP_V2_TOOL_TIMEOUT", 60.0),
+        )
+        self._loop_runner: AgentLoopRunner | None = None
+        if self._loop_v2:
+            logger.info(
+                "agent.loop_v2.enabled",
+                max_steps=self._loop_budget.max_steps,
+                max_tokens=self._loop_budget.max_tokens,
+                max_seconds=self._loop_budget.max_seconds,
+            )
 
         logger.info(
             "AgentCore 就绪",
@@ -680,32 +723,48 @@ class AgentCore:
         tools_called = False
         tool_results: list = []
         result = None
+        loop_result: LoopResult | None = None
         try:
             # ── P1-②: 情绪调制 LLM 参数 ──
             emo_params = self._emotion_modulated_params()
 
-            result = await self.router.route(
-                "chat",
-                messages,
-                temperature=emo_params["temperature"],
-                max_tokens=emo_params["max_tokens"],
-                stream=stream,
-                tools=tools,
-                tool_choice=tool_choice,
-            )
-            if stream:
-                reply = "[stream]"
-                trace_log.info("agent.process.stream_started")
-            elif result.tool_calls:
-                # LLM 返回了 tool_calls → 执行 + 包装 + 回传
-                reply, tool_results = await self._handle_tool_calls(
-                    result, event, messages, trace_log
+            if self._loop_v2 and not stream and self.tool_executor is not None:
+                # ── LOOP_V2: 每步带 tools + 结构化回填 + 预算循环 ──
+                loop_result = await self._run_loop_v2(
+                    messages, tools, forced_tool, emo_params, event, trace_log
                 )
+                reply = self._loop_reply(loop_result)
+                # 复用老副作用的期望形状 [(tool_name, result-like), ...]
+                tool_results = [(o.name, o) for o in loop_result.tool_outcomes]
                 tools_called = bool(tool_results)
                 if tool_results:
                     self._process_tool_side_effects(tool_results, event.payload)
             else:
-                reply = self._clean_reply(result.content or "")
+                if self._loop_v2 and stream:
+                    trace_log.debug("agent.loop_v2.stream_fallback")
+
+                result = await self.router.route(
+                    "chat",
+                    messages,
+                    temperature=emo_params["temperature"],
+                    max_tokens=emo_params["max_tokens"],
+                    stream=stream,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                )
+                if stream:
+                    reply = "[stream]"
+                    trace_log.info("agent.process.stream_started")
+                elif result.tool_calls:
+                    # LLM 返回了 tool_calls → 执行 + 包装 + 回传
+                    reply, tool_results = await self._handle_tool_calls(
+                        result, event, messages, trace_log
+                    )
+                    tools_called = bool(tool_results)
+                    if tool_results:
+                        self._process_tool_side_effects(tool_results, event.payload)
+                else:
+                    reply = self._clean_reply(result.content or "")
         except Exception as e:
             trace_log.error(f"agent.process.model_error: {type(e).__name__}: {e}"[:300])
             reply = DEGRADED_REPLY
@@ -714,9 +773,15 @@ class AgentCore:
         if not (reply or "").strip():
             trace_log.warning(
                 "agent.empty_reply",
-                model=getattr(result, "model", ""),
-                finish_reason=getattr(result, "finish_reason", None),
-                usage=str(getattr(result, "usage", None))[:160],
+                model=("loop_v2" if loop_result else getattr(result, "model", "")),
+                finish_reason=(
+                    loop_result.reason if loop_result
+                    else getattr(result, "finish_reason", None)
+                ),
+                usage=str(
+                    loop_result.usage if loop_result
+                    else getattr(result, "usage", None)
+                )[:160],
             )
             reply = DEGRADED_REPLY
 
@@ -1157,6 +1222,79 @@ class AgentCore:
     # ============================================================
     # 打磨期: LLM 驱动工具调用
     # ============================================================
+
+    # ============================================================
+    # 打磨期: LOOP_V2 接线（默认关闭，P2 再补确认状态机）
+    # ============================================================
+
+    def _ensure_loop_runner(self) -> AgentLoopRunner:
+        """懒创建新循环 runner。此时 tool_executor 必须已由 startup 注入。"""
+        if self._loop_runner is None:
+            if self.tool_executor is None:
+                raise RuntimeError("tool_executor 尚未初始化，无法启用 LOOP_V2")
+            self._loop_runner = AgentLoopRunner(
+                self.router,
+                LoopToolExecutor(self.tool_executor),
+            )
+        return self._loop_runner
+
+    @staticmethod
+    def _loop_first_tool_choice(forced_tool: str | None, tools: list[dict] | None):
+        """第一步沿用 _route_intent 快路径；没命中则交还 auto。"""
+        if not tools:
+            return None
+        if forced_tool and any(
+            t.get("function", {}).get("name") == forced_tool for t in tools
+        ):
+            return {"type": "function", "function": {"name": forced_tool}}
+        return "auto"
+
+    async def _run_loop_v2(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        forced_tool: str | None,
+        emo_params: dict,
+        event: InternalEvent,
+        trace_log,
+    ) -> LoopResult:
+        """跑一次新循环，返回聚合结果（不在这里做话术映射/副作用）。"""
+        runner = self._ensure_loop_runner()
+        result = await runner.run_to_result(
+            messages,
+            tools,
+            self._loop_budget,
+            temperature=emo_params["temperature"],
+            max_tokens=emo_params["max_tokens"],
+            user_id=event.user_id or "hezi",
+            first_tool_choice=self._loop_first_tool_choice(forced_tool, tools),
+        )
+        trace_log.info(
+            "agent.loop_v2.done",
+            reason=result.reason,
+            steps=result.steps,
+            tool_calls=result.tool_calls,
+            tokens=result.usage.get("total_tokens", 0),
+        )
+        return result
+
+    def _loop_reply(self, result: LoopResult) -> str:
+        """把 LoopResult.reason 映射成现有话术。空回复交给 process 的空兜底。"""
+        if result.reason == "stop":
+            return self._clean_reply(result.text)
+        if result.reason == "empty":
+            return ""
+        if result.reason == "confirmation":
+            # P2 状态机接管前的临时话术；此时 ToolOutcome.needs_confirmation=True。
+            return (
+                "人家想帮你执行这个操作……\n"
+                "不过需要伙伴确认一下才可以哦 ~♪\n"
+                "伙伴说一声「确认」人家就去办～"
+            )
+        if result.reason == "error":
+            return DEGRADED_REPLY
+        # max_steps / budget_tokens / budget_time → runner 的兜底话术
+        return self._clean_reply(result.text) or DEGRADED_REPLY
 
     async def _handle_tool_calls(self, message, event, messages, trace_log):
         """
