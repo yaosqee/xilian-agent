@@ -165,6 +165,7 @@ class AgentLoopRunner:
             else:
                 step_tool_choice = "auto"
 
+            request_started = self._clock()
             try:
                 if stream_enabled:
                     try:
@@ -199,7 +200,6 @@ class AgentLoopRunner:
                         stream_enabled = False
                     else:
                         accumulator = StreamAccumulator()
-                        stream_started = self._clock()
                         first_piece = True
                         try:
                             async for piece in accumulator.consume(raw):
@@ -208,7 +208,7 @@ class AgentLoopRunner:
                                     logger.info(
                                         "loop.runner.ttft",
                                         step=step,
-                                        ms=round((self._clock() - stream_started) * 1000),
+                                        ms=round((self._clock() - request_started) * 1000),
                                     )
                                 yield TokenEvent(step=step, text=piece)
                         except Exception as exc:  # noqa: BLE001 — 已吐出的 token 不能撤回
