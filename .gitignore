@@ -34,3 +34,6 @@ docs/design/emotion-system-audit-and-optimization.md
 
 # Claude Code agent skill definitions (toolchain, not project docs)
 .agents/
+
+# P3 评测报告（本地生成，不入库）
+evals/reports/

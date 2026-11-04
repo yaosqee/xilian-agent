@@ -1,0 +1,40 @@
+{"id": "weather-01", "split": "train", "category": "weather", "message": "杭州今天热吗？", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["杭州"]}
+{"id": "weather-02", "split": "train", "category": "weather", "message": "帮我看看北京明天天气怎么样", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["北京"]}
+{"id": "weather-03", "split": "train", "category": "weather", "message": "杭州外面冷不冷？", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["杭州"]}
+{"id": "weather-04", "split": "train", "category": "weather", "message": "我在杭州，明天要带伞吗？", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["杭州"]}
+{"id": "weather-05", "split": "holdout", "category": "weather", "message": "上海现在多少度？", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["上海"]}
+{"id": "weather-06", "split": "holdout", "category": "weather", "message": "查一下广州这周末的天气", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["广州"]}
+{"id": "weather-07", "split": "holdout", "category": "weather", "message": "杭州会下雨吗？", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["杭州"]}
+{"id": "weather-08", "split": "holdout", "category": "weather", "message": "成都今天风大不大？", "expect_tools": ["query_weather"], "min_tool_calls": 1, "must_contain": ["成都"]}
+{"id": "time-01", "split": "train", "category": "time", "message": "现在几点了？", "expect_tools": [], "fact_check": "current_time"}
+{"id": "time-02", "split": "train", "category": "time", "message": "今天几号？", "expect_tools": [], "fact_check": "current_date"}
+{"id": "time-03", "split": "train", "category": "time", "message": "今天星期几？", "expect_tools": [], "fact_check": "weekday"}
+{"id": "time-04", "split": "holdout", "category": "time", "message": "现在是什么时间？", "expect_tools": [], "fact_check": "current_time"}
+{"id": "time-05", "split": "holdout", "category": "time", "message": "今天是几月几号？", "expect_tools": [], "fact_check": "current_date"}
+{"id": "time-06", "split": "holdout", "category": "time", "message": "今天周几呀？", "expect_tools": [], "fact_check": "weekday"}
+{"id": "memory-01", "split": "train", "category": "memory", "message": "你还记得我上次说的那个项目吗？", "expect_tools": ["search_memory"], "min_tool_calls": 1}
+{"id": "memory-02", "split": "train", "category": "memory", "message": "我之前提过想学什么吗？", "expect_tools": ["search_memory"], "min_tool_calls": 1}
+{"id": "memory-03", "split": "train", "category": "memory", "message": "回忆一下我们聊过的旅行计划", "expect_tools": ["search_memory"], "min_tool_calls": 1}
+{"id": "memory-04", "split": "holdout", "category": "memory", "message": "你还记得我喜欢吃什么吗？", "expect_tools": ["search_memory"], "min_tool_calls": 1}
+{"id": "memory-05", "split": "holdout", "category": "memory", "message": "我之前说过的那个 deadline 是什么时候？", "expect_tools": ["search_memory"], "min_tool_calls": 1}
+{"id": "memory-06", "split": "holdout", "category": "memory", "message": "帮我找找我们之前聊过的书", "expect_tools": ["search_memory"], "min_tool_calls": 1}
+{"id": "search-01", "split": "train", "category": "search", "message": "帮我查一下杭州亚运会场馆", "expect_tools": ["search_web"], "min_tool_calls": 1}
+{"id": "search-02", "split": "train", "category": "search", "message": "搜一下最近有什么好看的电影", "expect_tools": ["search_web"], "min_tool_calls": 1}
+{"id": "search-03", "split": "train", "category": "search", "message": "网上说 DeepSeek 新模型是什么？", "expect_tools": ["search_web"], "min_tool_calls": 1}
+{"id": "search-04", "split": "holdout", "category": "search", "message": "查查明天杭州到上海的高铁", "expect_tools": ["search_web"], "min_tool_calls": 1}
+{"id": "search-05", "split": "holdout", "category": "search", "message": "帮我搜一下 Python 3.13 的新特性", "expect_tools": ["search_web"], "min_tool_calls": 1}
+{"id": "search-06", "split": "holdout", "category": "search", "message": "最近有什么科技新闻？", "expect_tools": ["search_web"], "min_tool_calls": 1}
+{"id": "no-tool-01", "split": "train", "category": "no_tool", "message": "今天好累啊", "expect_tools": [], "max_tool_calls": 0}
+{"id": "no-tool-02", "split": "train", "category": "no_tool", "message": "你觉得幸福是什么？", "expect_tools": [], "max_tool_calls": 0}
+{"id": "no-tool-03", "split": "train", "category": "no_tool", "message": "我有点想你了", "expect_tools": [], "max_tool_calls": 0}
+{"id": "no-tool-04", "split": "train", "category": "no_tool", "message": "晚安，昔涟", "expect_tools": [], "max_tool_calls": 0}
+{"id": "no-tool-05", "split": "holdout", "category": "no_tool", "message": "我今天考试考砸了", "expect_tools": [], "max_tool_calls": 0}
+{"id": "no-tool-06", "split": "holdout", "category": "no_tool", "message": "陪我说说话吧", "expect_tools": [], "max_tool_calls": 0}
+{"id": "no-tool-07", "split": "holdout", "category": "no_tool", "message": "你最近在做什么？", "expect_tools": [], "max_tool_calls": 0}
+{"id": "no-tool-08", "split": "holdout", "category": "no_tool", "message": "谢谢你一直陪着我", "expect_tools": [], "max_tool_calls": 0}
+{"id": "multi-01", "split": "train", "category": "multi_step", "message": "查下杭州天气，顺便搜一下明天要不要带伞", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["杭州"]}
+{"id": "multi-02", "split": "train", "category": "multi_step", "message": "先看看北京天气，再帮我搜下北京有什么好玩的", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["北京"]}
+{"id": "multi-03", "split": "train", "category": "multi_step", "message": "查一下上海天气，然后搜索上海周末活动", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["上海"]}
+{"id": "multi-04", "split": "holdout", "category": "multi_step", "message": "帮我查杭州天气，再回忆一下我上次说要去哪玩", "expect_tools": ["query_weather", "search_memory"], "min_tool_calls": 2, "must_contain": ["杭州"]}
+{"id": "multi-05", "split": "holdout", "category": "multi_step", "message": "搜一下杭州天气预警，然后查杭州天气", "expect_tools": ["search_web", "query_weather"], "min_tool_calls": 2, "must_contain": ["杭州"]}
+{"id": "multi-06", "split": "holdout", "category": "multi_step", "message": "查下杭州天气，再搜一下穿衣建议", "expect_tools": ["query_weather", "search_web"], "min_tool_calls": 2, "must_contain": ["杭州"]}
