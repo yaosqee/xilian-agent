@@ -95,7 +95,7 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 
 ---
 
-## P2：会话级确认状态机（2026-11-04，`31d6385`）
+## P2：会话级确认状态机（2026-11-04，`31d6385` / `101eef5`）
 
 | 项 | 实现 |
 |---|---|
@@ -104,7 +104,7 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 | 取消 / 过期 | 非确认文本丢弃 pending；TTL 默认 300s（`LOOP_CONFIRMATION_TTL`） |
 | 重复确认 | 先摘除 pending 再执行，避免重复副作用 |
 | SSE / 前端 | 确认结果也发 `tool_result`；pending 事件带 `needs_confirmation`，气泡显示「需要伙伴确认才能执行任务」 |
-| 测试 | **620 passed / 8 skipped / 34s**；确认相关 7 条，loop 相关共 36 条 |
+| 测试 | **621 passed / 8 skipped / 32s**；确认相关 8 条，loop 相关共 37 条 |
 
 限制：内存版，重启丢 pending；跨重启恢复等有真实需求再落 DB。
 
