@@ -253,6 +253,19 @@ async def test_confirmation_executes_pending_and_continues():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_confirmation_does_not_execute_twice():
+    agent, stub = _bare_agent()
+    _seed_pending(agent)
+
+    first = await agent._handle_loop_confirmation(_event("确认"), MagicMock())
+    second = await agent._handle_loop_confirmation(_event("确认"), MagicMock())
+
+    assert first is not None
+    assert second is None
+    assert len(stub.executor.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_non_confirm_text_cancels_pending():
     agent, stub = _bare_agent()
     _seed_pending(agent)
