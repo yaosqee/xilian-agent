@@ -489,7 +489,10 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 
 ---
 
-## 核心架构（V3.3 云端部署版）
+## 核心架构（V3.3 历史快照；当前实现见 `CONTEXT.md` / `docs/PROJECT-TOUR.md`）
+
+> ⚠️ 以下是 V3.3 时期的架构记录，模型名、ContextBuilder、工具路径均已演进，**不要作为当前实现依据**。
+> 当前：DeepSeek Flash 对话 / `LOOP_V2` 双路径 / 7 模块自然语言上下文 / ModelPolicy + stats。
 
 ```
 外部世界 (Console / HTTP / 将来微信)
@@ -530,12 +533,12 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 |----|------|
 | 语言 | Python 3.12+ |
 | 包管理 | uv |
-| 云端模型 | DeepSeek V4-Pro（双 Key 轮询）, DeepSeek V4-Flash |
+| 云端模型 | DeepSeek Flash（对话/后台）、DeepSeek V4-Pro（reasoning tier）；多供应商 ModelPolicy |
 | 向量存储 | sqlite-vec（SQLite 原生向量扩展，零外部依赖） |
 | 数据库 | SQLite（aiosqlite, WAL 模式），单文件 xilian.db |
 | 前端 | React + TypeScript + Vite（全功能面板集成） |
 | 日志 | loguru（结构化 JSON + trace_id） |
-| 测试 | pytest + pytest-asyncio |
+| 测试 | pytest + pytest-asyncio（644 passed / 8 skipped 离线基线） |
 | 迁移 | Alembic（SQLite schema 版本化） |
 | 部署 | `uv run python main.py` 一键启动，单进程 serve API + 前端 |
 
