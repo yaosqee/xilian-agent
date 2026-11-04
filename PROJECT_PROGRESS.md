@@ -8,7 +8,7 @@
 
 | 项 | 当前值 |
 |---|---|
-| 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区仅未跟踪 `scripts/ab_thinking.py` |
+| 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
 | 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **675 passed / 8 skipped / ~28s** |
 | 阶段 | P0–P3 + X + M1 + P1.5 完成；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2 或评测扩类 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |

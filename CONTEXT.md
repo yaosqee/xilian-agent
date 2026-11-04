@@ -368,10 +368,9 @@ AttentionScheduler 任务提醒流程：
 |------|------|
 | M2 | 模型配置仍是 env + `model_configs` tier/override；DSH 风格声明式配置后移 |
 | `model_stats` | 内存统计，重启清零，未持久化 |
-| `evals` | search_web 当前 HTTP 错误；只评「是否调用工具」，没有 `tool_success_rate` |
+| `evals` | 40 条用例已冻结（`cases_sha256` 指纹）；含 `tool_success_rate`；搜索已切 DeepSeek Search |
 | `ConfirmationStore` | 进程内内存，重启丢 pending；跨会话隔离已做 |
-| `.env.example` | `LOOP_V2` / 预算项因 DSH 凭据策略暂未写入模板，见 HANDOFF §5 |
-| `scripts/ab_thinking.py` | 本地未跟踪，P3 runner 已独立 |
+| `.env.example` | 已写入 `LOOP_V2` / `SEARCH_PROVIDER` / `DEEPSEEK_DISABLE_THINKING` 说明（不写凭据） |
 | `packages/voice/` | 语音管道接口占位，阶段 9 完整实现 |
 | `gateway/mcp/adapter.py` | MCP 适配器接口签名预埋 |
 | `markers_to_ssml()` | SSML 转换完整实现 |
