@@ -81,7 +81,7 @@ TASK_GROUPS: dict[str, set[str]] = {
     "tool_decision": {"tool_decision"},
 }
 
-TASK_GROUP_TIERS: dict[str, "TierName"] = {
+TASK_GROUP_TIERS: dict[str, TierName] = {
     "dialogue": "powerful",
     "background": "fast",
     "tool_decision": "powerful",
