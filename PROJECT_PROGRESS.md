@@ -1,7 +1,7 @@
 # 昔涟 V3.7 · 项目仪表盘
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
-> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P1 工具链路已通**，下一步 P2 确认状态机）
+> 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P2 确认状态机已完成（内存版）**，下一步 P3 评测集）
 > 📅 最后更新：2026-11-04
 
 ---
@@ -71,7 +71,7 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 与方案的偏差（详见 `agent-loop-v2.md` §8）：
 
 1. **不做工具级自动重试**——EXECUTE 工具重试会重复副作用；改为失败结构化回传、由模型决定是否重调。
-2. 确认暂停时 `DoneEvent` 不带 pending 调用，assistant/tool 消息也未入会话 → P2 状态机要补。
+2. 确认暂停时 `DoneEvent` 不带 pending 调用，assistant/tool 消息也未入会话 → P2 已补（`pending` + `resume_messages`）。
 3. 时间预算只在步间检查（单次模型调用有 90s 超时兜底）。
 4. 接线未做 → P1-1 已补：`LOOP_V2` 开关（默认 0）。
 
@@ -92,6 +92,21 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 配置（`.env`，重启生效）：`LOOP_V2=1`；预算 `LOOP_V2_MAX_STEPS`(6) / `LOOP_V2_MAX_TOKENS`(20000) / `LOOP_V2_MAX_SECONDS`(90) / `LOOP_V2_TOOL_TIMEOUT`(60)。
 
 未做：真 token 流仍为 3 字符/50ms 假流式；确认状态机留给 P2（当前 `confirmation` 只回话术，不保存 pending）。
+
+---
+
+## P2：会话级确认状态机（2026-11-04，`31d6385`）
+
+| 项 | 实现 |
+|---|---|
+| 会话隔离 | `ConfirmationStore` 按 `(user_id, session_id)` 存储；HTTP 传 `session_id="web"`，控制台默认 `default` |
+| 恢复上下文 | `DoneEvent` / `LoopResult` 带 `pending` + `resume_messages`；确认后补齐 tool 消息再续跑 runner |
+| 取消 / 过期 | 非确认文本丢弃 pending；TTL 默认 300s（`LOOP_CONFIRMATION_TTL`） |
+| 重复确认 | 先摘除 pending 再执行，避免重复副作用 |
+| SSE / 前端 | 确认结果也发 `tool_result`；pending 事件带 `needs_confirmation`，气泡显示「需要伙伴确认才能执行任务」 |
+| 测试 | **620 passed / 8 skipped / 34s**；确认相关 7 条，loop 相关共 36 条 |
+
+限制：内存版，重启丢 pending；跨重启恢复等有真实需求再落 DB。
 
 ---
 
