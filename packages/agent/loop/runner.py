@@ -56,6 +56,9 @@ class LoopResult:
     events: list[LoopEvent] = field(default_factory=list)
     # 所有实际执行过的工具结果（含幂等缓存命中），供 AgentCore 处理副作用
     tool_outcomes: list[ToolOutcome] = field(default_factory=list)
+    # confirmation 暂停：待确认调用 + 恢复用上下文
+    pending: list[ToolCall] = field(default_factory=list)
+    resume_messages: list[dict] = field(default_factory=list)
 
 
 class AgentLoopRunner:
@@ -122,6 +125,8 @@ class AgentLoopRunner:
         reason = "max_steps"
         text = DEFAULT_BUDGET_TEXT
         error = ""
+        pending_calls: list[ToolCall] = []
+        resume_messages: list[dict] = []
 
         for step in range(1, max_steps + 1):
             steps = step
@@ -202,7 +207,16 @@ class AgentLoopRunner:
             yield ToolResultEvent(step=step, results=outcomes)
 
             if any(outcome.needs_confirmation for outcome in outcomes):
-                # P2 才接确认状态机；这里先把循环停在可恢复的位置。
+                # 保留可恢复上下文：assistant(tool_calls) + 已执行工具结果。
+                # 待确认调用先不写 tool 消息，确认后再补，避免模型看到「已执行」的假象。
+                conversation.append(self._assistant_message(response, calls))
+                completed = [o for o in outcomes if not o.needs_confirmation]
+                conversation.extend(self._tool_messages(completed))
+                pending_calls = [
+                    call for call, outcome in zip(calls, outcomes)
+                    if outcome.needs_confirmation
+                ]
+                resume_messages = [dict(message) for message in conversation]
                 reason = "confirmation"
                 text = ""
                 break
@@ -240,6 +254,8 @@ class AgentLoopRunner:
             tool_calls=tool_call_count,
             usage=self._finalize_usage(usage),
             error=error,
+            pending=pending_calls,
+            resume_messages=resume_messages,
         )
 
     async def run_to_result(
@@ -269,6 +285,8 @@ class AgentLoopRunner:
                 result.tool_calls = event.tool_calls
                 result.usage = event.usage
                 result.error = event.error
+                result.pending = event.pending
+                result.resume_messages = event.resume_messages
             if on_event is not None:
                 try:
                     await on_event(event)

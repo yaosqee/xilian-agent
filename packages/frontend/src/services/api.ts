@@ -6,7 +6,7 @@ export async function postChat(message: string, images?: string[]): Promise<{ re
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, images: images || [], user_id: 'hezi' }),
+    body: JSON.stringify({ message, images: images || [], user_id: 'hezi', session_id: 'web' }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
@@ -28,7 +28,7 @@ export function postChatStream(
   fetch(`${BASE}/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, images: images || [], user_id: 'hezi' }),
+    body: JSON.stringify({ message, images: images || [], user_id: 'hezi', session_id: 'web' }),
     signal: controller.signal,
   })
     .then(async (res) => {
@@ -72,7 +72,10 @@ export function postChatStream(
               } else if (eventType === 'tool_result') {
                 try {
                   const payload = JSON.parse(data) as {
-                    results?: Array<{ name?: string; ok?: boolean; summary?: string; error?: string }>;
+                    results?: Array<{
+                      name?: string; ok?: boolean; needs_confirmation?: boolean;
+                      summary?: string; error?: string;
+                    }>;
                   };
                   for (const result of payload.results || []) {
                     if (!result.name) continue;
@@ -80,6 +83,7 @@ export function postChatStream(
                       phase: 'result',
                       name: result.name,
                       ok: result.ok !== false,
+                      needsConfirmation: result.needs_confirmation === true,
                       summary: result.summary || '',
                       error: result.error || '',
                     });

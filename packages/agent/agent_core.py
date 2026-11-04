@@ -35,7 +35,14 @@ from .memory_manager import MemoryManager
 from .notebook_manager import NotebookManager
 from .portrait_manager import PortraitManager
 from .skills_loader import SkillsLoader
-from .loop import AgentLoopRunner, LoopBudget, LoopResult, LoopToolExecutor
+from .loop import (
+    AgentLoopRunner,
+    ConfirmationStore,
+    LoopBudget,
+    LoopResult,
+    LoopToolExecutor,
+    ToolResultEvent,
+)
 
 # 阶段 7a: 模块化上下文 + Pipeline ServiceModule
 from .pipeline import ServiceModule
@@ -62,6 +69,12 @@ DEGRADED_REPLY = (
     "人家现在有点累呢……好像一时间说不出话来。"
     "伙伴能等一小会儿吗？"
 )
+
+# 确认回路：只认短确认词，避免「好的你帮我查下天气」被误当纯确认
+CONFIRM_WORDS = frozenset({
+    "确认", "好的", "好", "可以", "行", "ok", "yes",
+    "嗯", "做吧", "去吧", "执行", "确认执行",
+})
 
 # TOOL_PLACEHOLDER 已移除 — 工具调用现由 LLM function calling 驱动
 
@@ -250,6 +263,10 @@ class AgentCore:
             tool_timeout=_env_float("LOOP_V2_TOOL_TIMEOUT", 60.0),
         )
         self._loop_runner: AgentLoopRunner | None = None
+        # P2: 按 (user_id, session_id) 隔离的确认状态（内存版）
+        self._loop_confirmations = ConfirmationStore(
+            ttl_seconds=_env_float("LOOP_CONFIRMATION_TTL", 300.0),
+        )
         if self._loop_v2:
             logger.info(
                 "agent.loop_v2.enabled",
@@ -616,6 +633,14 @@ class AgentCore:
         intent = self._perceive(event.payload)
         trace_log.debug("agent.perceive", intent=intent)
 
+        # ── 1b. LOOP_V2 会话级确认（按 user_id + session_id）──
+        if self._loop_v2 and self.tool_executor is not None:
+            resumed = await self._handle_loop_confirmation(
+                event, trace_log, event_sink=event_sink
+            )
+            if resumed is not None:
+                return resumed
+
         # ── 1b. 工具确认回路检查 ──
         if self._pending_confirmation:
             confirmed = await self._handle_confirmation(event, trace_log)
@@ -736,6 +761,8 @@ class AgentCore:
                     messages, tools, forced_tool, emo_params, event, trace_log,
                     event_sink=event_sink,
                 )
+                if loop_result.reason == "confirmation":
+                    self._store_loop_pending(loop_result, event, trace_log)
                 reply = self._loop_reply(loop_result)
                 # 复用老副作用的期望形状 [(tool_name, result-like), ...]
                 tool_results = [(o.name, o) for o in loop_result.tool_outcomes]
@@ -1290,7 +1317,7 @@ class AgentCore:
         if result.reason == "empty":
             return ""
         if result.reason == "confirmation":
-            # P2 状态机接管前的临时话术；此时 ToolOutcome.needs_confirmation=True。
+            # pending 已由 _store_loop_pending 写入会话存储；这里只负责话术。
             return (
                 "人家想帮你执行这个操作……\n"
                 "不过需要伙伴确认一下才可以哦 ~♪\n"
@@ -1300,6 +1327,136 @@ class AgentCore:
             return DEGRADED_REPLY
         # max_steps / budget_tokens / budget_time → runner 的兜底话术
         return self._clean_reply(result.text) or DEGRADED_REPLY
+
+    # ── P2: 会话级确认状态机 ─────────────────────────────
+
+    @staticmethod
+    def _is_confirm_text(text: str) -> bool:
+        normalized = (text or "").strip().strip("。！!～~ ")
+        return normalized.lower() in CONFIRM_WORDS
+
+    def _store_loop_pending(self, result: LoopResult, event: InternalEvent, trace_log) -> None:
+        if not result.pending:
+            return
+        self._loop_confirmations.put(
+            event.user_id,
+            event.session_id,
+            calls=result.pending,
+            resume_messages=result.resume_messages,
+        )
+        trace_log.info(
+            "confirmation.pending",
+            tools=[call.name for call in result.pending],
+            session=event.session_id,
+        )
+
+    async def _record_confirmation_turn(
+        self,
+        event: InternalEvent,
+        reply: str,
+        outcomes: list,
+        trace_log,
+    ) -> None:
+        """确认回合落历史/日志；副作用复用旧入口。"""
+        if outcomes:
+            self._process_tool_side_effects(
+                [(outcome.name, outcome) for outcome in outcomes],
+                event.payload,
+            )
+        self.context.add_message("user", event.payload)
+        source = f"tool_{outcomes[0].name}" if outcomes else "llm_generated"
+        self.context.add_message("assistant", reply, source=source)
+        await self._write_conversation_log(event, reply)
+        self._schedule_memory_encoding()
+
+    async def _handle_loop_confirmation(
+        self,
+        event: InternalEvent,
+        trace_log,
+        event_sink: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> AgentResponse | None:
+        """LOOP_V2 的确认入口；返回 None 表示这不是确认场景。"""
+        pending = self._loop_confirmations.get(event.user_id, event.session_id)
+        if pending is None:
+            return None
+
+        if not self._is_confirm_text(event.payload):
+            # 用户说了别的话 → 放弃挂起，按普通消息继续处理
+            self._loop_confirmations.discard(event.user_id, event.session_id)
+            trace_log.debug("confirmation.cancelled", session=event.session_id)
+            return None
+
+        # 先摘掉 pending，防重复确认导致重复执行
+        self._loop_confirmations.discard(event.user_id, event.session_id)
+        trace_log.info(
+            "confirmation.resume",
+            tools=pending.tool_names,
+            session=event.session_id,
+        )
+
+        runner = self._ensure_loop_runner()
+        outcomes = await runner.executor.execute_batch(
+            pending.calls,
+            user_id=event.user_id or "hezi",
+            timeout=self._loop_budget.tool_timeout,
+            cache={},
+        )
+        if event_sink is not None:
+            try:
+                await event_sink(ToolResultEvent(step=0, results=outcomes))
+            except Exception as exc:  # noqa: BLE001 — 事件通道失败不影响确认
+                trace_log.warning(
+                    "confirmation.event_sink_error",
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:160],
+                )
+
+        messages = [dict(message) for message in pending.resume_messages]
+        completed = [outcome for outcome in outcomes if not outcome.needs_confirmation]
+        messages.extend(
+            {
+                "role": "tool",
+                "tool_call_id": outcome.call_id,
+                "content": outcome.content(),
+            }
+            for outcome in completed
+        )
+
+        # 极端情况：工具再次要求确认 → 重新挂起，不再往下跑模型
+        still_pending = [
+            call for call, outcome in zip(pending.calls, outcomes)
+            if outcome.needs_confirmation
+        ]
+        if still_pending:
+            self._loop_confirmations.put(
+                event.user_id, event.session_id,
+                calls=still_pending, resume_messages=messages,
+            )
+            reply = self._loop_reply(LoopResult(reason="confirmation"))
+            await self._record_confirmation_turn(event, reply, outcomes, trace_log)
+            return AgentResponse(reply=reply)
+
+        tools = None
+        if self.tool_executor and len(self.tool_registry) > 0:
+            tools = self.tool_registry.to_openai_tools()
+        emo_params = self._emotion_modulated_params()
+        loop_result = await self._run_loop_v2(
+            messages,
+            tools,
+            None,
+            emo_params,
+            event,
+            trace_log,
+            event_sink=event_sink,
+        )
+        if loop_result.reason == "confirmation":
+            self._store_loop_pending(loop_result, event, trace_log)
+
+        reply = self._loop_reply(loop_result) or DEGRADED_REPLY
+        await self._record_confirmation_turn(
+            event, reply, outcomes + loop_result.tool_outcomes, trace_log
+        )
+        return AgentResponse(reply=reply)
 
     async def _handle_tool_calls(self, message, event, messages, trace_log):
         """

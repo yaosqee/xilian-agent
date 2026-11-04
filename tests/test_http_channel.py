@@ -202,6 +202,23 @@ class TestChatStream:
 
 # ── CORS ──
 
+def test_tool_result_frame_marks_confirmation():
+    from gateway.channels.http_channel import _format_loop_event
+    from packages.agent.loop.events import ToolOutcome, ToolResultEvent
+
+    frame = _format_loop_event(ToolResultEvent(
+        step=1,
+        results=[ToolOutcome(
+            call_id="c1", name="coding_delegate", ok=False,
+            error="PENDING_CONFIRMATION", needs_confirmation=True,
+        )],
+    ))
+    payload = json.loads(frame.split("data: ", 1)[1])
+    result = payload["results"][0]
+    assert result["needs_confirmation"] is True
+    assert result["error"] == ""
+
+
 class TestCORS:
     def test_cors_headers(self, client):
         """CORS 预检请求应有正确的头部"""

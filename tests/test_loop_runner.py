@@ -631,5 +631,7 @@ def test_events_are_json_and_sse_serializable():
         "tool_calls": 0,
         "usage": {},
         "error": "",
+        "pending": [],
+        "resume_messages": [],
         "type": "done",
     }

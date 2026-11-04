@@ -17,6 +17,7 @@ class InternalEvent:
     timestamp: float = field(default_factory=time.time)
     source: str = ""           # "console" | "http" | 将来 "wechat"
     user_id: str = ""          # 发送者标识
+    session_id: str = "default"  # 会话标识（P2 确认状态机按它隔离）
     payload: str = ""          # 用户原始消息文本
     images: list[str] = field(default_factory=list)  # 图片 URL 列表（单图，仅第一张处理）
     sticker: dict | None = None  # 用户发送的表情包 {id, file} 或 None
@@ -30,6 +31,7 @@ class InternalEvent:
             f"Event({self.event_id[:8]}..) "
             f"src={self.source} "
             f"user={self.user_id} "
+            f"session={self.session_id} "
             f"owner={self.is_owner} "
             f"msg={self.payload[:50]}..."
             f"{' [img]' if has_images else ''}"

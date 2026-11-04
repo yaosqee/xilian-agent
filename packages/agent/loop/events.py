@@ -210,6 +210,9 @@ class DoneEvent(LoopEvent):
     tool_calls: int = 0
     usage: dict[str, int] = field(default_factory=dict)
     error: str = ""
+    # confirmation 暂停时挂起的调用 + 恢复用上下文（assistant + 已执行工具消息）
+    pending: list[ToolCall] = field(default_factory=list)
+    resume_messages: list[dict] = field(default_factory=list)
 
 
 LoopEventType: TypeAlias = ToolCallEvent | ToolResultEvent | TokenEvent | DoneEvent

@@ -22,6 +22,7 @@ function toolStatusText(status: ToolStatus): string {
   const label = TOOL_LABELS[status.name] || status.name;
   const action = TOOL_ACTIONS[status.name] || `查${label}`;
   if (status.phase === 'call') return `她在${action}……`;
+  if (status.needsConfirmation) return `需要伙伴确认才能${action}。`;
   if (status.ok === false) return `没查到${label}，人家不会编。`;
   return status.summary ? `查到了：${status.summary}` : `${label}好了。`;
 }

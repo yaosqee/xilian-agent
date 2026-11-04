@@ -7,6 +7,7 @@ export interface ToolStatus {
   phase: 'call' | 'result';
   name: string;
   ok?: boolean;
+  needsConfirmation?: boolean;
   summary?: string;
   error?: string;
 }

@@ -75,8 +75,12 @@ def _format_loop_event(loop_event) -> str | None:
                     "name": outcome.name,
                     "ok": outcome.ok,
                     "cached": outcome.cached,
+                    "needs_confirmation": outcome.needs_confirmation,
                     "summary": _summarize_tool_data(outcome.data) if outcome.ok else "",
-                    "error": "" if outcome.ok else outcome.error,
+                    "error": (
+                        "" if outcome.ok or outcome.needs_confirmation
+                        else outcome.error
+                    ),
                 }
                 for outcome in loop_event.results
             ],
@@ -212,6 +216,7 @@ class HTTPChannel(Channel):
             body = await request.json()
             user_msg = body.get("message", "")
             user_id = body.get("user_id", "anonymous")
+            session_id = body.get("session_id", "default")
             images = body.get("images", []) or []
 
             if not user_msg.strip() and not images:
@@ -220,6 +225,7 @@ class HTTPChannel(Channel):
             event = InternalEvent(
                 source="http",
                 user_id=user_id,
+                session_id=session_id,
                 payload=user_msg,
                 images=images,
                 is_owner=(user_id == self.security.owner_id),
@@ -245,6 +251,7 @@ class HTTPChannel(Channel):
             body = await request.json()
             user_msg = body.get("message", "")
             user_id = body.get("user_id", "anonymous")
+            session_id = body.get("session_id", "default")
             images = body.get("images", []) or []
 
             if not user_msg.strip() and not images:
@@ -253,6 +260,7 @@ class HTTPChannel(Channel):
             event = InternalEvent(
                 source="http",
                 user_id=user_id,
+                session_id=session_id,
                 payload=user_msg,
                 images=images,
                 is_owner=(user_id == self.security.owner_id),

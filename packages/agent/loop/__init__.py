@@ -10,6 +10,7 @@ Agent 循环 v2（P0 骨架）。
     async for event in runner.run(messages, tools=openai_tools, budget=LoopBudget()):
         ...
 """
+from .confirmation import ConfirmationStore, PendingConfirmation
 from .events import (
     DoneEvent,
     LoopEvent,
@@ -30,6 +31,7 @@ from .runner import (
 
 __all__ = [
     "AgentLoopRunner",
+    "ConfirmationStore",
     "DEFAULT_BUDGET_TEXT",
     "DoneEvent",
     "LoopBudget",
@@ -37,6 +39,7 @@ __all__ = [
     "LoopEventType",
     "LoopResult",
     "LoopToolExecutor",
+    "PendingConfirmation",
     "ToolCall",
     "ToolCallEvent",
     "ToolOutcome",
