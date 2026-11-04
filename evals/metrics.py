@@ -166,6 +166,25 @@ _CN_DIGITS = {
     "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
 }
 
+_CN_DATE_RE = re.compile(
+    r"(?:(\d{4})\s*年)?\s*([0-9]{1,2}|[一二三四五六七八九十]{1,3})\s*月\s*"
+    r"([0-9]{1,2}|[一二三四五六七八九十]{1,3})\s*[日号]"
+)
+
+
+def _extract_cn_dates(text: str) -> list[tuple[int | None, int, int]]:
+    """从文本里抽取 (年|None, 月, 日)，支持中文数字与阿拉伯数字混写。"""
+    found: list[tuple[int | None, int, int]] = []
+    for match in _CN_DATE_RE.finditer(text or ""):
+        year_s, month_s, day_s = match.groups()
+        month = _cn_to_int(month_s)
+        day = _cn_to_int(day_s)
+        if month is None or day is None:
+            continue
+        year = int(year_s) if year_s else None
+        found.append((year, month, day))
+    return found
+
 
 def _cn_to_int(token: str) -> int | None:
     """中文数字转整数，覆盖 六 / 十 / 十八 / 三十七 这类时间写法。"""
@@ -242,7 +261,14 @@ def check_fact(reply: str, kind: str, now: datetime | None = None) -> bool:
             f"{now.month:02d}月{now.day:02d}号",
             f"{now.month:02d}-{now.day:02d}",
         }
-        return any(candidate in compact for candidate in candidates)
+        if any(candidate in compact for candidate in candidates):
+            return True
+        # Flash 常用中文数字：「十一月四号」「2026年十一月四日」
+        for year, month, day in _extract_cn_dates(compact):
+            if month == now.month and day == now.day:
+                if year is None or year == now.year:
+                    return True
+        return False
 
     if kind == "weekday":
         name = _WEEKDAY_NAMES[now.weekday()]

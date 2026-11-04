@@ -72,8 +72,10 @@ def test_check_fact_date_time_weekday():
     assert check_fact("今天是 2026-11-04。", "current_date", NOW)
     assert check_fact("今天是 11月4日。", "current_date", NOW)
     assert check_fact("今天是 11 月 4 号。", "current_date", NOW)
+    assert check_fact("今天是十一月四号。", "current_date", NOW)
     assert check_fact("今天是 2026 年 11 月 4 日。", "current_date", NOW)
     assert not check_fact("今天是 2026-11-05。", "current_date", NOW)
+    assert not check_fact("今天是十二月四号。", "current_date", NOW)
 
     assert check_fact("现在是 13:32。", "current_time", NOW)
     assert check_fact("下午 1:32。", "current_time", NOW)
