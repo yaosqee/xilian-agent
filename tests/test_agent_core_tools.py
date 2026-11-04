@@ -103,7 +103,7 @@ async def test_handle_confirmation_executes_tool():
     assert reply == "执行好啦~"
     assert [tn for tn, _ in tool_results] == ["coding_delegate"]
     agent.tool_executor.execute.assert_awaited_once_with(
-        "coding_delegate", {"task": "test"}, user_id="hezi"
+        "coding_delegate", {"task": "test"}, user_id="hezi", confirmed=True
     )
 
 

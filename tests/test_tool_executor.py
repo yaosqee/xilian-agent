@@ -93,6 +93,20 @@ class TestToolExecutor:
         assert result.error == "PENDING_CONFIRMATION"
         assert result.data["tool_name"] == "dangerous_op"
 
+    @pytest.mark.asyncio
+    async def test_execute_confirmed_bypasses_confirmation(self, executor):
+        """用户确认后（confirmed=True）必须真正执行，不能再次返回 PENDING。"""
+        result = await executor.execute(
+            "dangerous_op", {"action": "delete"}, user_id="hezi", confirmed=True
+        )
+        assert result.success is True
+        assert result.data == "done"
+        assert result.error != "PENDING_CONFIRMATION"
+
+        # 普通调用仍然需要确认（默认行为不能被改掉）
+        again = await executor.execute("dangerous_op", {"action": "delete"}, user_id="hezi")
+        assert again.error == "PENDING_CONFIRMATION"
+
     # ── 6. 频率记录 ──
 
     def test_record_call_updates_counts(self, executor):

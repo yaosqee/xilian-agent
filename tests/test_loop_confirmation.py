@@ -290,3 +290,55 @@ async def test_confirmation_is_scoped_by_session():
     assert response is None
     assert stub.executor.calls == []
     assert agent._loop_confirmations.get("hezi", "web") is not None
+
+
+# ─────────────────────────────────────────────────────────────
+# 执行器透传 confirmed（2026-11-04 修复：确认后必须真正执行）
+# ─────────────────────────────────────────────────────────────
+
+
+class _ConfirmedAwareExecutor:
+    """支持 confirmed 参数的执行器（对齐真实 ToolExecutor 签名）。"""
+
+    def __init__(self):
+        self.calls: list[bool] = []
+
+    async def execute(self, name, arguments, user_id="", confirmed=False):
+        self.calls.append(confirmed)
+        return ToolResult.ok({"executed": True})
+
+
+class _LegacyExecutor:
+    """不支持 confirmed 参数的执行器（老桩/第三方实现）。"""
+
+    async def execute(self, name, arguments, user_id=""):
+        return ToolResult.ok({"executed": True})
+
+
+@pytest.mark.asyncio
+async def test_executor_forwards_confirmed_to_inner_executor():
+    inner = _ConfirmedAwareExecutor()
+    executor = LoopToolExecutor(inner)
+
+    outcomes = await executor.execute_batch(
+        [ToolCall(id="c1", name="coding_delegate", arguments={"task": "x"})],
+        confirmed=True,
+    )
+
+    assert inner.calls == [True]
+    assert outcomes[0].ok is True
+    assert outcomes[0].needs_confirmation is False
+
+
+@pytest.mark.asyncio
+async def test_executor_without_confirmed_support_does_not_crash():
+    """底层执行器没有 confirmed 参数时，不能因为透传而 TypeError。"""
+    executor = LoopToolExecutor(_LegacyExecutor())
+
+    outcomes = await executor.execute_batch(
+        [ToolCall(id="c1", name="coding_delegate", arguments={"task": "x"})],
+        confirmed=True,
+    )
+
+    assert outcomes[0].ok is True
+

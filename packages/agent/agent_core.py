@@ -1400,6 +1400,8 @@ class AgentCore:
             user_id=event.user_id or "hezi",
             timeout=self._loop_budget.tool_timeout,
             cache={},
+            # 用户已确认：跳过 requires_confirmation 的 PENDING 短路，真正执行
+            confirmed=True,
         )
         if event_sink is not None:
             try:
@@ -1627,7 +1629,7 @@ class AgentCore:
 
             # 强制执行（跳过 requires_confirmation 检查）
             result = await self.tool_executor.execute(
-                tool_name, arguments, user_id="hezi",
+                tool_name, arguments, user_id="hezi", confirmed=True,
             )
 
             wrapped = await self.result_wrapper.wrap(

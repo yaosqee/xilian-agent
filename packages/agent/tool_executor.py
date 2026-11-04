@@ -36,11 +36,17 @@ class ToolExecutor:
     # ── 主入口 ──────────────────────────────────────────
 
     async def execute(self, tool_name: str, arguments: dict,
-                      user_id: str = "", safe_mode: bool = False) -> ToolResult:
+                      user_id: str = "", safe_mode: bool = False,
+                      confirmed: bool = False) -> ToolResult:
         """
         执行一个工具调用。
 
         流程: validate → permission → rate_limit → confirm → execute → record_call → audit_log
+
+        Args:
+            confirmed: 调用方已完成用户确认（确认回路重放时传 True）。
+                只有为 True 才跳过 requires_confirmation 的 PENDING 短路；
+                默认 False，普通调用仍然先走确认。
         """
         # 1. validate
         tool = self.registry.get_tool(tool_name)
@@ -59,7 +65,7 @@ class ToolExecutor:
             return ToolResult.fail("刚才已经帮你查过了呢……等一会儿再看好不好？")
 
         # 4. confirm — 如需确认，返回特殊结果由调用方处理
-        if tool.get("requires_confirmation"):
+        if tool.get("requires_confirmation") and not confirmed:
             # 标记：需要调用方（agent_core）发起确认流程
             return ToolResult(
                 success=False,

@@ -14,6 +14,7 @@ LoopToolExecutor — 新循环的工具批执行器。
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 from dataclasses import replace
@@ -38,6 +39,15 @@ class LoopToolExecutor:
         self._executor = executor
         self.timeout = float(timeout)
         self.max_parallel = max(1, int(max_parallel))
+        # 底层执行器是否支持 confirmed 参数（ToolExecutor 支持；单测桩可能不支持）
+        self._accepts_confirmed = self._supports_confirmed(executor)
+
+    @staticmethod
+    def _supports_confirmed(executor: Any) -> bool:
+        try:
+            return "confirmed" in inspect.signature(executor.execute).parameters
+        except (TypeError, ValueError, AttributeError):
+            return False
 
     @property
     def tool_executor(self) -> Any:
@@ -69,6 +79,7 @@ class LoopToolExecutor:
         user_id: str = "",
         timeout: float | None = None,
         cache: MutableMapping[str, ToolOutcome] | None = None,
+        confirmed: bool = False,
     ) -> list[ToolOutcome]:
         """并行执行 calls，返回与输入顺序一一对应的结果。
 
@@ -78,6 +89,8 @@ class LoopToolExecutor:
             timeout: 单工具超时秒数；None 用构造时的默认值。
             cache: 本轮幂等缓存（runner 持有，每轮新建）。None 时临时新建，
                    调用方拿不到跨步复用，建议显式传入。
+            confirmed: 用户已确认（确认回路重放时传 True），底层会跳过
+                   requires_confirmation 的 PENDING 短路。
         """
         calls = list(calls)
         if not calls:
@@ -102,7 +115,9 @@ class LoopToolExecutor:
 
             async def run_one(call: ToolCall) -> ToolOutcome:
                 async with semaphore:
-                    return await self._execute_one(call, user_id=user_id, timeout=call_timeout)
+                    return await self._execute_one(
+                        call, user_id=user_id, timeout=call_timeout, confirmed=confirmed
+                    )
 
             fetched = await asyncio.gather(
                 *(run_one(call) for call in pending.values()),
@@ -133,7 +148,8 @@ class LoopToolExecutor:
 
     # ── 单工具执行 ───────────────────────────────────────
 
-    async def _execute_one(self, call: ToolCall, *, user_id: str, timeout: float) -> ToolOutcome:
+    async def _execute_one(self, call: ToolCall, *, user_id: str, timeout: float,
+                           confirmed: bool = False) -> ToolOutcome:
         started = time.monotonic()
 
         def _fail(message: str) -> ToolOutcome:
@@ -152,9 +168,12 @@ class LoopToolExecutor:
             return _fail("模型返回了空的工具名，未执行")
 
         try:
+            call_kwargs: dict[str, Any] = {"user_id": user_id}
+            if confirmed and self._accepts_confirmed:
+                call_kwargs["confirmed"] = True
             result = await asyncio.wait_for(
                 self._executor.execute(
-                    call.name, dict(call.arguments or {}), user_id=user_id
+                    call.name, dict(call.arguments or {}), **call_kwargs
                 ),
                 timeout=timeout,
             )
