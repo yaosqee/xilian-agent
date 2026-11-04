@@ -210,7 +210,9 @@ class TestChatStream:
 
         async def fake_handler(event, event_sink=None):
             if event_sink:
-                await event_sink(TokenEvent(step=1, text="你好[sticker:blush]"))
+                # 标记跨 token 边界，验证 MarkerParser 的 buffer
+                await event_sink(TokenEvent(step=1, text="你好[stick"))
+                await event_sink(TokenEvent(step=1, text="er:blush]"))
             return SimpleNamespace(reply="你好", sticker={"id": "blush", "file": "x.webp"})
 
         http_channel._handler = fake_handler
