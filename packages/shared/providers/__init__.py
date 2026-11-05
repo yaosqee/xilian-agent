@@ -79,12 +79,15 @@ TASK_GROUPS: dict[str, set[str]] = {
         "approval_text", "emotion_analysis", "tool_result_wrap",
     },
     "tool_decision": {"tool_decision"},
+    # M2: reasoning/code/planning 单独成组，避免 task_group() 归到 dialogue
+    "reasoning": {"reasoning", "code", "planning"},
 }
 
 TASK_GROUP_TIERS: dict[str, TierName] = {
     "dialogue": "powerful",
     "background": "fast",
     "tool_decision": "powerful",
+    "reasoning": "reasoning",
 }
 
 

@@ -240,3 +240,6 @@ class TestModelRouter:
         assert task_group("tool_decision") == "tool_decision"
         assert task_group("chat") == "dialogue"
         assert task_group("memory_encoding") == "background"
+        # M2: reasoning/code/planning 不再落回 dialogue
+        assert task_group("reasoning") == "reasoning"
+        assert task_group("code") == "reasoning"

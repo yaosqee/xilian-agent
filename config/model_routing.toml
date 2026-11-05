@@ -1,0 +1,83 @@
+# 昔涟 · 声明式模型路由（M2-1 默认基线）
+#
+# 规则：
+# - 这里只写路由与能力，不写 API Key；密钥从 api_key_env 指向的环境变量读取。
+# - 配置文件是基线，设置面板写入的 DB 行（source='ui'）可以覆盖。
+# - 默认值按 2026-11-04 当前实际生效配置导出：
+#   dialogue/tool_decision/background = deepseek-flash
+#   reasoning = deepseek-v4-pro
+#   embedding = BAAI/bge-m3 (SiliconFlow)
+version = 1
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[providers.siliconflow]
+base_url = "https://api.siliconflow.cn/v1"
+api_key_env = "EMBED_API_KEY"
+
+[models.deepseek-flash]
+provider = "deepseek"
+capabilities = ["tools", "streaming"]
+context_window = 128000
+max_output_tokens = 8000
+cost_per_1k_in = 0.0
+cost_per_1k_out = 0.0
+
+[models.deepseek-v4-pro]
+provider = "deepseek"
+capabilities = ["tools", "streaming", "thinking"]
+context_window = 128000
+max_output_tokens = 8000
+cost_per_1k_in = 0.0
+cost_per_1k_out = 0.0
+
+[profiles.dialogue]
+model = "deepseek-flash"
+fallbacks = ["deepseek-v4-pro"]
+temperature = 0.65
+max_tokens = 800
+
+[profiles.background]
+model = "deepseek-flash"
+fallbacks = ["deepseek-v4-pro"]
+temperature = 0.3
+max_tokens = 800
+
+[profiles.tool_decision]
+model = "deepseek-flash"
+requires = ["tools"]
+fallbacks = ["deepseek-v4-pro"]
+temperature = 0.65
+max_tokens = 800
+
+[profiles.reasoning]
+model = "deepseek-v4-pro"
+fallbacks = ["deepseek-flash"]
+temperature = 0.3
+max_tokens = 2000
+
+[embedding]
+# 向量模型独立成段：换模型需要重新索引，不随对话模型切换。
+provider = "siliconflow"
+model = "BAAI/bge-m3"
+dimensions = 1024
+base_url = "https://api.siliconflow.cn/v1"
+api_key_env = "EMBED_API_KEY"
+
+[routing_groups]
+dialogue = "dialogue"
+background = "background"
+tool_decision = "tool_decision"
+reasoning = "reasoning"
+
+[routing]
+# 单任务覆盖组默认；未列出的 task 走 routing_groups
+chat = "dialogue"
+empathy = "dialogue"
+tool_decision = "tool_decision"
+reasoning = "reasoning"
+code = "reasoning"
+planning = "reasoning"
+memory_encoding = "background"
