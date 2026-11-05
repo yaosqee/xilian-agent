@@ -9,6 +9,8 @@ import {
   resetModelOverrides,
   addModelProvider,
   deleteModelProvider,
+  addModelCatalog,
+  deleteModelCatalog,
   validateApiKey,
 } from '../services/api';
 
@@ -37,6 +39,15 @@ interface ModelState {
   addProviderKey: (provider: string, apiKey: string, baseUrl?: string) => Promise<boolean>;
   addProvider: (provider: string, apiKey: string, baseUrl?: string) => Promise<boolean>;
   removeProvider: (provider: string) => Promise<boolean>;
+  addModel: (
+    provider: string,
+    modelId: string,
+    displayName: string,
+    capabilities: string[],
+    contextWindow: number,
+    maxOutputTokens: number,
+  ) => Promise<boolean>;
+  removeModel: (provider: string, modelId: string) => Promise<boolean>;
   saveRoutingProfile: (
     name: string,
     patch: {
@@ -185,6 +196,42 @@ export const useModelStore = create<ModelState>((set, get) => ({
       return false;
     } catch (e: any) {
       set({ saving: false, error: e.message || '删除供应商失败' });
+      return false;
+    }
+  },
+
+  addModel: async (provider, modelId, displayName, capabilities, contextWindow, maxOutputTokens) => {
+    set({ saving: true, error: null });
+    try {
+      const result = await addModelCatalog(
+        provider, modelId, displayName, capabilities, contextWindow, maxOutputTokens,
+      );
+      if (result.status === 'ok') {
+        await get().loadConfig();
+        set({ saving: false });
+        return true;
+      }
+      set({ saving: false, error: result.error || '添加模型失败' });
+      return false;
+    } catch (e: any) {
+      set({ saving: false, error: e.message || '添加模型失败' });
+      return false;
+    }
+  },
+
+  removeModel: async (provider, modelId) => {
+    set({ saving: true, error: null });
+    try {
+      const result = await deleteModelCatalog(provider, modelId);
+      if (result.status === 'ok') {
+        await get().loadConfig();
+        set({ saving: false });
+        return true;
+      }
+      set({ saving: false, error: result.error || '删除模型失败' });
+      return false;
+    } catch (e: any) {
+      set({ saving: false, error: e.message || '删除模型失败' });
       return false;
     }
   },

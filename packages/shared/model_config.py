@@ -156,6 +156,7 @@ class ModelSpec:
     cost_per_1k_in: float = 0.0
     cost_per_1k_out: float = 0.0
     known_failures: tuple[str, ...] = ()
+    source: str = "file"
 
     def supports(self, capability: str) -> bool:
         return capability in self.capabilities
@@ -184,6 +185,7 @@ class ModelSpec:
             "cost_per_1k_in": self.cost_per_1k_in,
             "cost_per_1k_out": self.cost_per_1k_out,
             "known_failures": list(self.known_failures),
+            "source": self.source,
         }
 
 
@@ -465,6 +467,7 @@ class ModelRoutingConfig:
                     data.get("cost_per_1k_out"), f"model:{name}.cost_out",
                     default=(merged_models[name].cost_per_1k_out if name in merged_models else 0.0),
                 ),
+                source=str(data.get("source") or "db"),
             )
 
         return ModelRoutingConfig(

@@ -664,10 +664,121 @@ const ProviderAddForm: React.FC<{
   );
 };
 
+const ModelAddForm: React.FC<{
+  providers: string[];
+  saving: boolean;
+  onAdd: (
+    provider: string,
+    modelId: string,
+    displayName: string,
+    capabilities: string[],
+    contextWindow: number,
+    maxOutputTokens: number,
+  ) => Promise<boolean>;
+}> = ({ providers, saving, onAdd }) => {
+  const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState(providers[0] || '');
+  const [modelId, setModelId] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [caps, setCaps] = useState<string[]>(['tools', 'streaming']);
+  const [contextWindow, setContextWindow] = useState('128000');
+  const [maxOutputTokens, setMaxOutputTokens] = useState('8000');
+  const [message, setMessage] = useState('');
+
+  const toggleCap = (cap: string) => {
+    setCaps(caps.includes(cap) ? caps.filter((c) => c !== cap) : [...caps, cap]);
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => { setProvider(providers[0] || ''); setOpen(true); }}
+        style={{
+          width: '100%', marginTop: 4, padding: '6px 9px', borderRadius: 8,
+          border: '1px dashed rgba(216, 180, 226, 0.35)',
+          background: 'transparent', color: 'var(--color-text-muted)',
+          cursor: 'pointer', fontSize: 10, fontFamily: 'inherit',
+        }}
+      >+ 自定义模型</button>
+    );
+  }
+
+  return (
+    <div style={{ ...routingCardStyle, marginTop: 6 }}>
+      <div style={{ fontWeight: 600, color: 'var(--color-text)', marginBottom: 5 }}>自定义模型</div>
+      <select
+        value={provider}
+        onChange={(e) => setProvider(e.target.value)}
+        disabled={saving}
+        style={{ width: '100%', padding: '5px 7px', borderRadius: 6, border: '1px solid rgba(216,180,226,0.25)', background: 'rgba(255,255,255,0.6)', fontSize: 11, fontFamily: 'inherit', color: '#5E4B66', marginBottom: 5 }}
+      >
+        {providers.map((p) => <option key={p} value={p}>{p}</option>)}
+      </select>
+      <input
+        placeholder="模型 ID（API 实际名称）"
+        value={modelId}
+        onChange={(e) => setModelId(e.target.value)}
+        disabled={saving}
+        style={{ width: '100%', boxSizing: 'border-box', padding: '5px 7px', borderRadius: 6, border: '1px solid rgba(216,180,226,0.25)', background: 'rgba(255,255,255,0.6)', fontSize: 11, fontFamily: 'inherit', color: '#5E4B66', marginBottom: 5 }}
+      />
+      <input
+        placeholder="显示名（可选）"
+        value={displayName}
+        onChange={(e) => setDisplayName(e.target.value)}
+        disabled={saving}
+        style={{ width: '100%', boxSizing: 'border-box', padding: '5px 7px', borderRadius: 6, border: '1px solid rgba(216,180,226,0.25)', background: 'rgba(255,255,255,0.6)', fontSize: 11, fontFamily: 'inherit', color: '#5E4B66', marginBottom: 5 }}
+      />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 5 }}>
+        {(['tools', 'vision', 'streaming', 'thinking'] as const).map((cap) => (
+          <label key={cap} style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>
+            <input type="checkbox" checked={caps.includes(cap)} onChange={() => toggleCap(cap)} disabled={saving} />{' '}
+            {CAP_LABELS[cap]}
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5, marginBottom: 5 }}>
+        <input
+          type="number" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)}
+          disabled={saving} placeholder="context"
+          style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: 6, border: '1px solid rgba(216,180,226,0.2)', background: 'rgba(255,255,255,0.5)', fontSize: 10, fontFamily: 'inherit', color: '#5E4B66' }}
+        />
+        <input
+          type="number" value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(e.target.value)}
+          disabled={saving} placeholder="max output"
+          style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: 6, border: '1px solid rgba(216,180,226,0.2)', background: 'rgba(255,255,255,0.5)', fontSize: 10, fontFamily: 'inherit', color: '#5E4B66' }}
+        />
+      </div>
+      {message && <p style={{ fontSize: 10, color: '#c56b86', margin: '0 0 5px' }}>{message}</p>}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          onClick={async () => {
+            if (!provider || !modelId.trim()) { setMessage('请选择供应商并填写模型 ID'); return; }
+            setMessage('');
+            const ok = await onAdd(
+              provider, modelId.trim(), displayName.trim() || modelId.trim(),
+              caps, Number(contextWindow) || 128000, Number(maxOutputTokens) || 8000,
+            );
+            if (ok) { setOpen(false); setModelId(''); setDisplayName(''); }
+            else { setMessage('添加失败，请检查模型 ID 或供应商'); }
+          }}
+          disabled={saving}
+          style={{ flex: 1, padding: '5px 8px', borderRadius: 7, border: 'none', background: 'linear-gradient(135deg, var(--color-pink), var(--color-purple))', color: '#fff', cursor: saving ? 'default' : 'pointer', fontSize: 11, fontFamily: 'inherit' }}
+        >{saving ? '保存中...' : '添加模型'}</button>
+        <button
+          onClick={() => { setOpen(false); setMessage(''); }}
+          disabled={saving}
+          style={{ padding: '5px 8px', borderRadius: 7, border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: 10, fontFamily: 'inherit' }}
+        >取消</button>
+      </div>
+    </div>
+  );
+};
+
 const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ sectionStyle }) => {
   const {
     routing, loading, saving, error, providers,
-    loadProviders, addProvider,
+    loadProviders, addProvider, removeProvider,
+    addModel, removeModel,
     saveRoutingProfile, resetRoutingProfile,
   } = useModelStore();
   const [tab, setTab] = useState<'profiles' | 'providers' | 'models' | 'routing' | 'embedding'>('profiles');
@@ -766,6 +877,21 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
                 <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
                   {p.base_url || '默认地址'} · key: {p.api_key_env}
                 </div>
+                {info?.connected && info.key_source === 'db' && (
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm(`删除 ${name} 的本地 Key？`)) return;
+                      await removeProvider(name);
+                    }}
+                    disabled={saving}
+                    style={{
+                      marginTop: 4, padding: '2px 6px', borderRadius: 5,
+                      border: '1px solid rgba(197, 107, 134, 0.25)',
+                      background: 'transparent', color: '#c56b86',
+                      cursor: 'pointer', fontSize: 9, fontFamily: 'inherit',
+                    }}
+                  >删除本地 Key</button>
+                )}
               </div>
             );
           })}
@@ -799,8 +925,30 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
                   ctx {Math.round(m.context_window / 1000)}k
                 </span>
               </div>
+              {m.source !== 'file' && (
+                <button
+                  onClick={async () => {
+                    if (!window.confirm(`删除模型 ${name}？`)) return;
+                    await removeModel(m.provider, name);
+                  }}
+                  disabled={saving}
+                  style={{
+                    marginTop: 4, padding: '2px 6px', borderRadius: 5,
+                    border: '1px solid rgba(197, 107, 134, 0.25)',
+                    background: 'transparent', color: '#c56b86',
+                    cursor: 'pointer', fontSize: 9, fontFamily: 'inherit',
+                  }}
+                >删除模型</button>
+              )}
             </div>
           ))}
+          <ModelAddForm
+            providers={Object.keys(routing.providers)}
+            saving={saving}
+            onAdd={(provider, modelId, displayName, capabilities, contextWindow, maxOutputTokens) =>
+              addModel(provider, modelId, displayName, capabilities, contextWindow, maxOutputTokens)
+            }
+          />
         </RoutingBlock>
       </div>
 

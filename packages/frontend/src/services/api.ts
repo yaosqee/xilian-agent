@@ -340,6 +340,7 @@ export interface RoutingModelInfo {
   cost_per_1k_in: number;
   cost_per_1k_out: number;
   known_failures: string[];
+  source: string;
 }
 
 export interface RoutingProfileInfo {
@@ -431,6 +432,43 @@ export async function deleteModelProvider(
 ): Promise<{ status: string; error?: string }> {
   const res = await fetch(`${BASE}/models/providers/${provider}`, {
     method: 'DELETE',
+  });
+  return res.json();
+}
+
+/** 添加自定义模型（M2-6） */
+export async function addModelCatalog(
+  provider: string,
+  modelId: string,
+  displayName: string,
+  capabilities: string[],
+  contextWindow: number,
+  maxOutputTokens: number,
+): Promise<{ status: string; error?: string }> {
+  const res = await fetch(`${BASE}/models/catalog`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider,
+      model_id: modelId,
+      display_name: displayName,
+      capabilities,
+      context_window: contextWindow,
+      max_output_tokens: maxOutputTokens,
+    }),
+  });
+  return res.json();
+}
+
+/** 删除自定义模型（M2-6） */
+export async function deleteModelCatalog(
+  provider: string,
+  modelId: string,
+): Promise<{ status: string; error?: string }> {
+  const res = await fetch(`${BASE}/models/catalog`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, model_id: modelId }),
   });
   return res.json();
 }

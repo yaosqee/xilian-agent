@@ -1537,6 +1537,95 @@ class HTTPChannel(Channel):
                 return {"status": "partial", "errors": [f"reload: {exc}"]}
             return {"status": "ok", "reset": targets}
 
+        # ── 自定义模型目录（M2-6）──
+        @self.app.post("/api/models/catalog")
+        async def add_model_catalog(request: Request):
+            agent_ref = self._agent
+            if not agent_ref or not agent_ref._db:
+                return {"error": "agent not ready"}
+            router = agent_ref.router
+            routing_config = getattr(router, "routing_config", None)
+            if not getattr(router, "routing_v2", False) or routing_config is None:
+                return {"error": "MODEL_ROUTING_V2 未开启"}
+
+            body = await request.json()
+            provider = str(body.get("provider") or "").strip()
+            model_id = str(body.get("model_id") or "").strip()
+            display_name = str(body.get("display_name") or model_id).strip()
+            capabilities = body.get("capabilities") or []
+            if provider not in routing_config.providers:
+                return {"status": "error", "error": f"未知供应商 {provider}"}
+            if not model_id:
+                return {"status": "error", "error": "模型 ID 不能为空"}
+            if not isinstance(capabilities, list) or any(
+                not isinstance(cap, str) for cap in capabilities
+            ):
+                return {"status": "error", "error": "capabilities 必须是字符串数组"}
+            allowed = {"tools", "vision", "streaming", "thinking"}
+            if set(capabilities) - allowed:
+                return {"status": "error", "error": "capabilities 含未知能力"}
+            try:
+                context_window = int(body.get("context_window", 128000))
+                max_output_tokens = int(body.get("max_output_tokens", 8000))
+            except (TypeError, ValueError):
+                return {"status": "error", "error": "context/max_output 非法"}
+            if context_window <= 0 or max_output_tokens <= 0:
+                return {"status": "error", "error": "context/max_output 必须大于 0"}
+
+            try:
+                await agent_ref._db.upsert_model_catalog(
+                    provider=provider,
+                    model_id=model_id,
+                    display_name=display_name,
+                    capabilities=capabilities,
+                    context_window=context_window,
+                    max_output_tokens=max_output_tokens,
+                    source="manual",
+                )
+                await router.reload_config()
+            except Exception as exc:
+                return {"status": "error", "error": str(exc)[:300]}
+            return {
+                "status": "ok",
+                "provider": provider,
+                "model_id": model_id,
+                "display_name": display_name,
+                "capabilities": capabilities,
+            }
+
+        @self.app.delete("/api/models/catalog")
+        async def delete_model_catalog(request: Request):
+            agent_ref = self._agent
+            if not agent_ref or not agent_ref._db:
+                return {"error": "agent not ready"}
+            router = agent_ref.router
+            routing_config = getattr(router, "routing_config", None)
+            if not getattr(router, "routing_v2", False) or routing_config is None:
+                return {"error": "MODEL_ROUTING_V2 未开启"}
+
+            body = await request.json()
+            provider = str(body.get("provider") or "").strip()
+            model_id = str(body.get("model_id") or "").strip()
+            if not provider or not model_id:
+                return {"status": "error", "error": "provider/model_id 不能为空"}
+
+            for name, profile in routing_config.profiles.items():
+                if model_id in (profile.model, *profile.fallbacks):
+                    return {
+                        "status": "error",
+                        "error": f"profile {name} 仍在使用 {model_id}",
+                    }
+
+            rows = await agent_ref._db.get_model_catalog(provider)
+            if not any(row.get("model_id") == model_id for row in rows):
+                return {"status": "error", "error": "只能删除通过 UI 添加的模型"}
+            try:
+                await agent_ref._db.delete_model_catalog(provider, model_id)
+                await router.reload_config()
+            except Exception as exc:
+                return {"status": "error", "error": str(exc)[:300]}
+            return {"status": "ok", "provider": provider, "model_id": model_id}
+
         # ── 验证 API Key ──
         @self.app.post("/api/models/validate")
         async def validate_api_key(request: Request):

@@ -377,6 +377,37 @@ def test_add_model_provider_validates_and_saves(client, http_channel):
     router.reload_config.assert_awaited_once()
 
 
+def test_add_custom_model_catalog(client, http_channel):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from packages.shared.model_config import load_model_routing
+
+    db = SimpleNamespace(upsert_model_catalog=AsyncMock())
+    router = SimpleNamespace(
+        routing_v2=True,
+        routing_config=load_model_routing(),
+        reload_config=AsyncMock(),
+    )
+    http_channel._agent = SimpleNamespace(_db=db, router=router)
+
+    resp = client.post("/api/models/catalog", json={
+        "provider": "deepseek",
+        "model_id": "deepseek-custom",
+        "display_name": "Custom",
+        "capabilities": ["tools", "streaming"],
+        "context_window": 64000,
+        "max_output_tokens": 4000,
+    })
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    db.upsert_model_catalog.assert_awaited_once()
+    kwargs = db.upsert_model_catalog.await_args.kwargs
+    assert kwargs["model_id"] == "deepseek-custom"
+    assert kwargs["source"] == "manual"
+    router.reload_config.assert_awaited_once()
+
+
 class TestCORS:
     def test_cors_headers(self, client):
         """CORS 预检请求应有正确的头部"""
