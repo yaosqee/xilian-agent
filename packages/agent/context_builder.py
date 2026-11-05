@@ -100,24 +100,12 @@ class DatetimeModule(ContextModule):
 
     def render(self) -> str:
         now = self._now_fn()
-        hour = now.hour
-        # 时段判断（保留一点口语感，但日期和分钟必须精确）
-        if 5 <= hour < 12:
-            period = "早晨" if hour < 9 else "上午"
-        elif 12 <= hour < 14:
-            period = "中午"
-        elif 14 <= hour < 18:
-            period = "下午"
-        elif 18 <= hour < 20:
-            period = "傍晚"
-        elif 20 <= hour < 23:
-            period = "晚上"
-        else:
-            period = "深夜"
+        # 只给精确 ground truth：不再附带「傍晚/晚上」等时段词。
+        # 时段词会让模型把它当成时间语义，输出「傍晚五点多」而忽略 HH:MM。
         wd = ["一", "二", "三", "四", "五", "六", "日"][now.weekday()]
         return (
             f"现在是 {now.strftime('%Y-%m-%d')} 星期{wd} "
-            f"{now.strftime('%H:%M')}（{period}）。"
+            f"{now.strftime('%H:%M')}。"
             "伙伴问时间或日期时，直接引用这里，不要推算或编造。"
         )
 

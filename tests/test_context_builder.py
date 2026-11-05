@@ -27,6 +27,16 @@ class TestDatetimeModule:
         assert "星期三" in result
         assert "不要推算" in result
 
+    def test_does_not_prime_period_word(self):
+        from datetime import datetime
+
+        fixed = datetime(2026, 11, 4, 19, 17)
+        result = DatetimeModule(now_fn=lambda: fixed).render()
+
+        assert "19:17" in result
+        assert "傍晚" not in result
+        assert "晚上" not in result
+
     def test_priority_is_1(self):
         assert DatetimeModule().priority == 1
 
