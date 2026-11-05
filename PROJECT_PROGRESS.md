@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **724 passed / 8 skipped / ~26s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 完成；**V2 由 `.env` 开启**；评测集 v1 冻结；下一步时间稳定化或真实多供应商冒烟 |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **725 passed / 8 skipped / ~29s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间时段词修复完成；**V2 由 `.env` 开启**；下一步 weather 关键词波动/真实多供应商冒烟 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -210,6 +210,22 @@ Agent 循环 v2（P0–P3 + M 模型路由）方案在 `docs/plans/agent-loop-v2
 | 平均耗时 | **4.19s** | 5.77s |
 
 loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜索服务 HTTP 错误，回复靠记忆列北京景点、未出现「北京」二字，被关键词判失败。
+
+---
+
+## 时间时段词修复（2026-11-05）
+
+根因不是时间工具/路由，而是 `DatetimeModule` 在 `HH:MM` 后附加了 `（傍晚）`：模型把「傍晚」当成时间语义，输出「傍晚五点多 / 六点多」，忽略精确时间。
+
+修复：`DatetimeModule` 只输出 `YYYY-MM-DD 星期X HH:MM`，删除时段词；`_with_time_hint` 保持精确时间。
+
+| 指标 | 修复前 | 修复后 |
+|---|---:|---:|
+| time 类（6 条） | 66.7% / 83.3% | **100% / 100%**（连跑两次） |
+| 事实正确率 | 66.7% | **100%** |
+| 全量 V2 | 95% | **90%**（4 条 weather 仅关键词未命中，工具正确） |
+
+测试新增 `DatetimeModule` 不输出时段词；全量 **725 passed / 8 skipped**。
 
 ---
 

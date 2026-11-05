@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 724 passed / 26s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 725 passed / 29s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -46,7 +46,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/shared/database/_manager.py` — DatabaseManager 主类（生命周期 + 跨表操作）
 - `packages/agent/portrait_manager.py` — 用户印象文档管理器
 - `packages/agent/nudge_engine.py` — 自主生命节律引擎（想念值 + TokenBucket + GreetingBanner）
-- `packages/agent/context_builder.py` — 模块化上下文注入（7模块；Datetime 含完整日期 + HH:MM）
+- `packages/agent/context_builder.py` — 模块化上下文注入（7模块；Datetime 只给完整日期 + HH:MM，不再附时段词）
 - `packages/agent/notebook_manager.py` — 笔记本管理器（笔记/关注/任务，日记已并入自传体）
 - `data/character_memories.json` — 昔涟角色情景记忆（25条，session_id='character'）
 - `scripts/seed_character_memories.py` — 角色记忆导入脚本（幂等，bge-m3向量化）
