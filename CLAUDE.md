@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 714 passed / 27s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 715 passed / 27s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -36,7 +36,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/shared/model_config.py` — M2-1 声明式路由配置加载/校验/解析
 - `packages/shared/model_router.py` — V1 Tier + V2 声明式路由（`MODEL_ROUTING_V2` 默认 0）+ tool 重试/降级 + stats
 - `config/model_routing.toml` — 当前路由默认基线（TOML）
-- `docs/design/model-routing-m2.md` — M2 计划与 M2-1/M2-2/M2-3a/M2-3b 实施记录
+- `docs/design/model-routing-m2.md` — M2 计划与 M2-1~M2-4 实施记录
 - `packages/shared/events.py` — InternalEvent（含 `user_id` / `session_id`）
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点 + SSE（工具事件 + 真 token 流转发）
 - `evals/` — P3 评测集（40 条 JSONL + runner/metrics）；报告在 `docs/evals/`

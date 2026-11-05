@@ -1,7 +1,7 @@
 # M2 · 声明式模型路由（计划）
 
 > 日期：2026-11-04
-> 状态：M2-0 **已定稿**（2026-11-04）；M2-1/M2-2/M2-3a/M2-3b **已实施**（2026-11-05），V2 默认关闭
+> 状态：M2-0 **已定稿**（2026-11-04）；M2-1/M2-2/M2-3a/M2-3b 已实施（2026-11-05）；M2-4 代码就绪，V2 仍默认关闭
 > 目标：把「任务 → 模型」从散落在代码/DB/env 的隐式规则，收敛成一份可校验、可解释、可回退的声明式配置。
 > 范围：只改模型路由与配置层，不动人格、记忆、工具实现、评测用例。
 
@@ -231,7 +231,7 @@ Embedding 第一版**只读**：换向量模型会让已有向量失效，必须
 | **M2-2** | `ModelRouter` 接入 V2，`MODEL_ROUTING_V2=0` 开关；golden route tests | 默认配置下路由与今天一致 | 不改 UI | ✅ 2026-11-05（19 tests） |
 | **M2-3a** | `/api/models/config` 返回解析结果 + 来源；面板重做为只读五块（Models/Profiles/Routing/Effective/Embedding） | 能看到「现在用谁」 | 不做编辑 | ✅ 2026-11-05 |
 | **M2-3b** | 可编辑：切换模型、fallback 增删、保存写 DB `source='ui'`、恢复文件默认 | UI 能改且立即生效 | 不动文件基线 | ✅ 2026-11-05 |
-| **M2-4** | 打开默认、迁移旧 DB、更新文档、重跑 P3 | 默认启用 + 回归 | 不删旧路径 | 待开始 |
+| **M2-4** | 打开默认、迁移旧 DB、更新文档、重跑 P3 | 默认启用 + 回归 | 不删旧路径 | ⏳ 代码就绪；默认仍 0，待你决定是否切 1 |
 
 建议 M2-1/M2-2 合并验收：只有 pure loader 通过、且 golden route 全绿，才允许打开开关。
 
@@ -415,3 +415,40 @@ cd packages/frontend && npm run build                                      # tsc
 - 只编辑 profile 的主模型/fallback/温度/token；task → profile 的 routing 仍由文件定义。
 - DB `tier:*` / `override:*` 在 V2 下仍被忽略（只认 `profile:*` + `source='ui'`）。
 - API 失败后的 provider 级 fallback、配置 `base_url` 注入、打包 `config/` 仍是 M2-4/后续。
+
+---
+
+## 15. M2-4 收尾（2026-11-05）
+
+代码就绪；**`MODEL_ROUTING_V2` 仍默认 0**，没有擅自切生产默认。
+
+| 项 | 实现 |
+|---|---|
+| base_url 注入 | DeepSeek/OpenAI/Google/Anthropic 构造函数接受 `api_key/base_url`；V2 创建 adapter 时传配置值 |
+| provider fallback | V2 非 tool 类错误（超时/限流/鉴权）按 `ResolvedRoute.fallbacks` 递归尝试下一个模型；tool error 仍走原重试/降级 |
+| 配置路径 | `default_config_path()`：开发取项目根；frozen 优先 exe 同级 `config/`，否则 PyInstaller `_MEIPASS/config` |
+| 打包 | `xilian.spec` 加入 `('config','config')` |
+| 评测 | `evals.runner --routing-v2`：只让 loop 模式启用 V2，legacy 仍 V1 |
+
+V2 实跑（`--mode loop --routing-v2 --timeout 90`）：
+
+| 指标 | 结果 |
+|---|---:|
+| 通过率 | 95.0%（38/40） |
+| 正确工具率 | 100% |
+| 多步完成率 | 100% |
+| 工具成功率 | 100% |
+| 事实正确率 | 66.7% |
+| 平均耗时 | 3.60s |
+
+失败是 time-01/time-04：模型只答「五点多 / 傍晚」没给精确 HH:MM。单独重跑 time 类：V2 83.3%，V1 也 83.3%（V1 同样在 time-04 失败），所以是**时间回答的模型稳定性问题**，不是 V2 路由结构性回归；但“V2 达到 97.5% 基线”尚未复现。
+
+测试：`715 passed / 8 skipped`；前端 `npm run build` 通过。
+
+启用方式（需你自己确认后改 `.env` 并重启）：
+
+```bash
+MODEL_ROUTING_V2=1
+```
+
+未做：真正的 exe 打包冒烟、V2 多次评测取稳定值、时间类回答的提示词加固。

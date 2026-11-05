@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > 📅 最后更新：2026-11-05
-> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；M2-1/M2-2/M2-3a/M2-3b 已落地（V2 默认关闭）；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **714 passed / 8 skipped**。
+> 🔖 当前：P0–P3 + X + M1 + P1.5 + M2-1~M2-4（代码）完成；V2 默认 0；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **715 passed / 8 skipped**。
 
 ## 📚 文档导航
 
@@ -373,7 +373,7 @@ AttentionScheduler 任务提醒流程：
 
 | 位置 | 说明 |
 |------|------|
-| M2 | V2 声明式路由 + DB `source='ui'` + 可编辑 Profiles 已完成（默认关闭）；M2-4 默认启用/打包/config base_url 待做 |
+| M2 | M2-1~M2-4 代码完成（V2 默认 0）：TOML / DB ui 覆盖 / 可编辑 Profiles / base_url / provider fallback / 打包；是否转正待决策 |
 | `model_stats` | 内存统计，重启清零，未持久化 |
 | `evals` | 40 条用例已冻结（`cases_sha256` 指纹）；含 `tool_success_rate`；搜索已切 DeepSeek Search |
 | `ConfirmationStore` | 进程内内存，重启丢 pending；跨会话隔离已做 |
