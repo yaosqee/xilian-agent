@@ -202,6 +202,29 @@ def test_profile_overrides_reject_unknown_model():
         })
 
 
+def test_db_catalog_can_extend_file_models():
+    config = load_model_routing(DEFAULT_CONFIG)
+    extended = config.with_catalog(
+        {"openai": {"base_url": "https://api.openai.com/v1"}},
+        {
+            "gpt-test": {
+                "provider": "openai",
+                "capabilities": '["tools", "streaming"]',
+                "context_window": 64000,
+                "max_output_tokens": 4000,
+            }
+        },
+    )
+
+    assert "openai" in extended.providers
+    assert extended.models["gpt-test"].provider == "openai"
+    routed = extended.with_profile_overrides({
+        "dialogue": {"model": "gpt-test", "fallbacks": []}
+    }).resolve("chat")
+    assert routed.provider == "openai"
+    assert routed.model == "gpt-test"
+
+
 def test_invalid_model_reference_is_rejected(tmp_path):
     path = _write_config(
         tmp_path,

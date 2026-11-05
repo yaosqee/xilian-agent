@@ -307,6 +307,8 @@ export interface ProviderInfo {
   id: string;
   name: string;
   models: ModelInfo[];
+  connected?: boolean;
+  key_source?: string;
 }
 
 export interface ModelInfo {
@@ -406,6 +408,30 @@ export interface ModelConfigPatch {
 /** 获取可用供应商和模型列表 */
 export async function fetchModelProviders(): Promise<{ providers: ProviderInfo[] }> {
   const res = await fetch(`${BASE}/models/providers`);
+  return res.json();
+}
+
+/** 添加供应商（M2-5） */
+export async function addModelProvider(
+  provider: string,
+  apiKey: string,
+  baseUrl?: string,
+): Promise<{ status: string; provider?: string; models?: ModelInfo[]; error?: string }> {
+  const res = await fetch(`${BASE}/models/providers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl || '' }),
+  });
+  return res.json();
+}
+
+/** 删除供应商（M2-5） */
+export async function deleteModelProvider(
+  provider: string,
+): Promise<{ status: string; error?: string }> {
+  const res = await fetch(`${BASE}/models/providers/${provider}`, {
+    method: 'DELETE',
+  });
   return res.json();
 }
 

@@ -1099,6 +1099,7 @@ class HTTPChannel(Channel):
 
             遍历 PROVIDER_REGISTRY，排除专用 adapter（如 MiMo），
             通过静态方法获取模型列表，无需实例化 adapter。
+            DB 已添加的供应商/模型会覆盖静态列表，并标记连接状态。
             """
             from packages.shared.providers import PROVIDER_REGISTRY
             import importlib
@@ -1119,8 +1120,25 @@ class HTTPChannel(Channel):
                     "supports_thinking": m.supports_thinking,
                 } for m in models]
 
+            db = getattr(http._agent, "_db", None) if http._agent else None
+            db_providers: dict[str, dict] = {}
+            db_models: dict[str, list[dict]] = {}
+            if db:
+                try:
+                    for row in await db.get_model_providers():
+                        db_providers[row["provider"]] = row
+                    for row in await db.get_model_catalog():
+                        db_models.setdefault(row["provider"], []).append(row)
+                except Exception:
+                    pass
+
+            resolver = (
+                getattr(http._agent.router, "_credentials", None)
+                if http._agent else None
+            )
+
             providers = []
-            for pid in CHAT_PROVIDERS:
+            for pid in sorted(CHAT_PROVIDERS):
                 entry = PROVIDER_REGISTRY.get(pid)
                 if not entry:
                     continue
@@ -1128,16 +1146,194 @@ class HTTPChannel(Channel):
                 try:
                     mod = importlib.import_module(module_path)
                     cls = getattr(mod, class_name)
-                    models = cls.get_available_models()
-                    providers.append({
-                        "id": pid,
-                        "name": PROVIDER_DISPLAY.get(pid, pid),
-                        "models": _serialize(models),
-                    })
+                    static_models = _serialize(cls.get_available_models())
                 except Exception:
                     logger.warning("api.models.providers_skip", provider=pid)
+                    static_models = []
+
+                db_rows = db_models.get(pid) or []
+                if db_rows:
+                    models = [{
+                        "id": row["model_id"],
+                        "name": row.get("display_name") or row["model_id"],
+                        "cost_per_1k_in": 0.0,
+                        "cost_per_1k_out": 0.0,
+                        "supports_tools": "tools" in (row.get("capabilities") or ""),
+                        "supports_thinking": "thinking" in (row.get("capabilities") or ""),
+                    } for row in db_rows]
+                else:
+                    models = static_models
+
+                cred = resolver.resolve(pid) if resolver is not None else None
+                providers.append({
+                    "id": pid,
+                    "name": PROVIDER_DISPLAY.get(pid, pid),
+                    "models": models,
+                    "connected": bool(cred and cred.configured),
+                    "key_source": cred.source if cred else "",
+                })
+
+            # DB 里已连接但不在静态 CHAT_PROVIDERS 的供应商
+            for pid, row in db_providers.items():
+                if any(item["id"] == pid for item in providers):
+                    continue
+                db_rows = db_models.get(pid) or []
+                providers.append({
+                    "id": pid,
+                    "name": pid,
+                    "models": [{
+                        "id": item["model_id"],
+                        "name": item.get("display_name") or item["model_id"],
+                        "cost_per_1k_in": 0.0,
+                        "cost_per_1k_out": 0.0,
+                        "supports_tools": "tools" in (item.get("capabilities") or ""),
+                        "supports_thinking": "thinking" in (item.get("capabilities") or ""),
+                    } for item in db_rows],
+                    "connected": True,
+                    "key_source": row.get("key_source", "db"),
+                })
 
             return {"providers": providers}
+
+        # ── 添加供应商（M2-5）──
+        @self.app.post("/api/models/providers")
+        async def add_model_provider(request: Request):
+            agent_ref = self._agent
+            if not agent_ref or not agent_ref._db:
+                return {"error": "agent not ready"}
+
+            from packages.shared.providers import PROVIDER_REGISTRY
+            import importlib
+
+            body = await request.json()
+            provider = str(body.get("provider") or "").strip()
+            api_key = str(body.get("api_key") or "").strip()
+            base_url = str(body.get("base_url") or "").strip()
+            known = {"deepseek", "openai", "anthropic", "google"}
+            if provider not in known:
+                return {"status": "error", "error": f"暂不支持供应商 {provider}"}
+            if not api_key:
+                return {"status": "error", "error": "API Key 不能为空"}
+
+            defaults = {
+                "deepseek": "https://api.deepseek.com",
+                "openai": "https://api.openai.com/v1",
+                "anthropic": "https://api.anthropic.com",
+                "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            }
+            target_base = base_url or defaults[provider]
+
+            # 验证 Key（不落库）
+            try:
+                if provider == "anthropic":
+                    from anthropic import AsyncAnthropic
+                    client = AsyncAnthropic(api_key=api_key, base_url=target_base)
+                    await asyncio.wait_for(
+                        client.messages.create(
+                            model="claude-haiku-4-6",
+                            max_tokens=1,
+                            messages=[{"role": "user", "content": "hi"}],
+                        ),
+                        timeout=15,
+                    )
+                else:
+                    from openai import AsyncOpenAI
+                    client = AsyncOpenAI(api_key=api_key, base_url=target_base)
+                    await asyncio.wait_for(client.models.list(), timeout=10)
+            except Exception as exc:
+                logger.warning(
+                    "api.models.provider_validate_failed",
+                    provider=provider, error=str(exc)[:200],
+                )
+                return {"status": "error", "error": str(exc)[:300]}
+
+            entry = PROVIDER_REGISTRY.get(provider)
+            models: list[dict] = []
+            if entry:
+                module_path, class_name, _lazy = entry
+                try:
+                    mod = importlib.import_module(module_path)
+                    cls = getattr(mod, class_name)
+                    for m in cls.get_available_models():
+                        caps = []
+                        if m.supports_tools:
+                            caps.append("tools")
+                        if m.supports_streaming:
+                            caps.append("streaming")
+                        if m.supports_thinking:
+                            caps.append("thinking")
+                        if "image" in (m.input_modalities or []):
+                            caps.append("vision")
+                        models.append({
+                            "model_id": m.id,
+                            "display_name": m.name,
+                            "capabilities": caps,
+                            "context_window": m.context_window,
+                            "max_output_tokens": m.max_output_tokens,
+                            "source": "builtin",
+                        })
+                except Exception as exc:
+                    logger.warning(
+                        "api.models.catalog_import_failed",
+                        provider=provider, error=str(exc)[:160],
+                    )
+
+            try:
+                await agent_ref._db.upsert_model_provider(
+                    provider=provider,
+                    api_key=api_key,
+                    base_url=base_url,
+                    key_source="db",
+                )
+                if models:
+                    await agent_ref._db.replace_model_catalog(provider, models)
+                os.environ[f"{provider.upper()}_API_KEY"] = api_key
+                if base_url:
+                    os.environ[f"{provider.upper()}_BASE_URL"] = base_url
+                await agent_ref.router.reload_config()
+            except Exception as exc:
+                logger.warning(
+                    "api.models.provider_save_failed",
+                    provider=provider, error=str(exc)[:200],
+                )
+                return {"status": "error", "error": str(exc)[:300]}
+
+            return {
+                "status": "ok",
+                "provider": provider,
+                "models": models,
+                "key_source": "db",
+            }
+
+        # ── 删除供应商（M2-5）──
+        @self.app.delete("/api/models/providers/{provider}")
+        async def delete_model_provider(provider: str):
+            agent_ref = self._agent
+            if not agent_ref or not agent_ref._db:
+                return {"error": "agent not ready"}
+
+            router = agent_ref.router
+            router_cfg = getattr(router, "routing_config", None)
+            if router_cfg is not None:
+                used = []
+                for name, profile in router_cfg.profiles.items():
+                    for model in (profile.model, *profile.fallbacks):
+                        spec = router_cfg.models.get(model)
+                        if spec is not None and spec.provider == provider:
+                            used.append(f"{name}:{model}")
+                if used:
+                    return {
+                        "status": "error",
+                        "error": f"仍有 profile 引用该供应商模型: {', '.join(used)}",
+                    }
+
+            try:
+                await agent_ref._db.delete_model_provider(provider)
+                os.environ.pop(f"{provider.upper()}_API_KEY", None)
+                await agent_ref.router.reload_config()
+            except Exception as exc:
+                return {"status": "error", "error": str(exc)[:300]}
+            return {"status": "ok", "provider": provider}
 
         # ── 当前模型配置 ──
         @self.app.get("/api/models/config")

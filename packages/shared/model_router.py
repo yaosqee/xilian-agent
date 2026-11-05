@@ -29,6 +29,7 @@ from .providers import (
 )
 from .providers.base import ProviderAdapter
 from .model_stats import ModelStatsRegistry
+from .credentials import CredentialResolver
 
 # tool 相关错误先重试一次；只有连续失败才临时禁用 tools
 TOOL_DEGRADE_SECONDS = 900  # 15 分钟
@@ -72,6 +73,9 @@ class ModelRouter:
                 If None, uses env-vars only (backward compat).
         """
         self._db = db
+
+        # ── 统一凭据：DB UI Key 优先，.env fallback ──
+        self._credentials = CredentialResolver(db)
 
         # ── M2: 声明式路由（默认关闭，保持旧 tier 路径不变）──
         self._routing_v2 = _env_flag("MODEL_ROUTING_V2", False)
@@ -135,6 +139,42 @@ class ModelRouter:
             profiles=sorted(config.profiles),
         )
 
+    def _apply_provider_catalog(
+        self,
+        provider_rows: list[dict],
+        model_rows: list[dict],
+    ) -> None:
+        """把 DB 的供应商/模型目录合入 V2 配置。"""
+        if not self._routing_v2:
+            return
+        base = self._routing_file or self._routing_config
+        if base is None:
+            return
+        providers = {
+            str(row.get("provider")): row
+            for row in provider_rows if row.get("provider")
+        }
+        models = {
+            str(row.get("model_id")): row
+            for row in model_rows if row.get("model_id")
+        }
+        if not providers and not models:
+            return
+        try:
+            self._routing_config = base.with_catalog(providers, models)
+            logger.info(
+                "model_router.catalog_loaded",
+                providers=sorted(providers),
+                models=len(models),
+            )
+        except Exception as exc:
+            self._routing_config = base
+            logger.warning(
+                "model_router.catalog_ignored",
+                error=f"{type(exc).__name__}: {exc}"[:300],
+            )
+        self._model_policies.clear()
+
     def _apply_routing_overrides(self, rows: list[dict]) -> None:
         """把 DB `source='ui'` 的 `profile:*` 行合入文件基线。
 
@@ -163,12 +203,13 @@ class ModelRouter:
             }
 
         if not overrides:
-            self._routing_config = self._routing_file
+            self._routing_config = self._routing_config or self._routing_file
             self._model_policies.clear()
             return
 
+        base = self._routing_config or self._routing_file
         try:
-            self._routing_config = self._routing_file.with_profile_overrides(overrides)
+            self._routing_config = base.with_profile_overrides(overrides)
             logger.info(
                 "model_router.routing_overrides_loaded",
                 profiles=sorted(overrides),
@@ -268,6 +309,12 @@ class ModelRouter:
             logger.info("model_router.no_db — using env-var defaults")
             return
 
+        await self._credentials.load()
+        self._credentials.apply_to_env()
+        # DB 里配置过 Key 的 provider，重建 adapter 以使用 DB 凭据
+        for provider in self._credentials.configured_providers():
+            self._adapters.pop(provider, None)
+
         try:
             # 加载 tier 配置
             db_configs = await self._db.get_model_configs()
@@ -309,6 +356,15 @@ class ModelRouter:
                 await self._auto_seed_db()
 
             if self._routing_v2:
+                try:
+                    provider_rows = await self._db.get_model_providers()
+                    model_rows = await self._db.get_model_catalog()
+                    self._apply_provider_catalog(provider_rows, model_rows)
+                except Exception as exc:
+                    logger.warning(
+                        "model_router.catalog_load_failed",
+                        error=f"{type(exc).__name__}: {exc}"[:200],
+                    )
                 self._apply_routing_overrides(db_configs)
 
             # 加载 embed 配置
@@ -415,6 +471,10 @@ class ModelRouter:
         try:
             mod = importlib.import_module(module_path)
             cls = getattr(mod, class_name)
+            if api_key is None or base_url is None:
+                cred = self._credentials.resolve(provider)
+                api_key = api_key if api_key is not None else cred.api_key
+                base_url = base_url if base_url is not None else cred.base_url
             kwargs = {}
             if api_key:
                 kwargs["api_key"] = api_key

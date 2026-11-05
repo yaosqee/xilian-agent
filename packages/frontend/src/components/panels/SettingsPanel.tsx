@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { resetSession, fetchBackground, uploadBackground, validateApiKey } from '../../services/api';
-import type { RoutingProfileInfo, RoutingModelInfo } from '../../services/api';
+import type { RoutingProfileInfo, RoutingModelInfo, ProviderInfo } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 import { useAutonomyStore } from '../../stores/autonomyStore';
 import { useModelStore } from '../../stores/modelStore';
@@ -546,12 +546,135 @@ const ProfileEditor: React.FC<{
   );
 };
 
+const ProviderAddForm: React.FC<{
+  providers: ProviderInfo[];
+  saving: boolean;
+  onAdd: (provider: string, apiKey: string, baseUrl?: string) => Promise<boolean>;
+}> = ({ providers, saving, onAdd }) => {
+  const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [message, setMessage] = useState('');
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => {
+          setProvider(providers[0]?.id || '');
+          setOpen(true);
+        }}
+        style={{
+          width: '100%', padding: '7px 10px', borderRadius: 8,
+          border: '1px dashed rgba(216, 180, 226, 0.35)',
+          background: 'rgba(255,255,255,0.35)',
+          color: 'var(--color-purple-dark)', cursor: 'pointer',
+          fontSize: 11, fontFamily: 'inherit',
+        }}
+      >+ 添加供应商</button>
+    );
+  }
+
+  return (
+    <div style={{ ...routingCardStyle, marginTop: 6 }}>
+      <div style={{ fontWeight: 600, color: 'var(--color-text)', marginBottom: 5 }}>
+        添加供应商
+      </div>
+      <select
+        value={provider}
+        onChange={(e) => setProvider(e.target.value)}
+        disabled={saving}
+        style={{
+          width: '100%', padding: '5px 7px', borderRadius: 6,
+          border: '1px solid rgba(216, 180, 226, 0.25)',
+          background: 'rgba(255,255,255,0.6)',
+          fontSize: 11, fontFamily: 'inherit', color: '#5E4B66',
+          marginBottom: 5,
+        }}
+      >
+        {providers.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}{p.connected ? '（已连接，可更新 Key）' : ''}
+          </option>
+        ))}
+      </select>
+      <input
+        type="password"
+        placeholder="API Key"
+        value={apiKey}
+        onChange={(e) => setApiKey(e.target.value)}
+        disabled={saving}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '5px 7px',
+          borderRadius: 6, border: '1px solid rgba(216, 180, 226, 0.25)',
+          background: 'rgba(255,255,255,0.6)', fontSize: 11,
+          fontFamily: 'inherit', color: '#5E4B66', marginBottom: 5,
+        }}
+      />
+      <input
+        type="text"
+        placeholder="Base URL（可选，代理/兼容端点）"
+        value={baseUrl}
+        onChange={(e) => setBaseUrl(e.target.value)}
+        disabled={saving}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '5px 7px',
+          borderRadius: 6, border: '1px solid rgba(216, 180, 226, 0.25)',
+          background: 'rgba(255,255,255,0.6)', fontSize: 11,
+          fontFamily: 'inherit', color: '#5E4B66', marginBottom: 6,
+        }}
+      />
+      {message && (
+        <p style={{ fontSize: 10, color: '#c56b86', margin: '0 0 6px' }}>{message}</p>
+      )}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          onClick={async () => {
+            if (!provider || !apiKey.trim()) {
+              setMessage('请选择供应商并填写 API Key');
+              return;
+            }
+            setMessage('');
+            const ok = await onAdd(provider, apiKey.trim(), baseUrl.trim() || undefined);
+            if (ok) {
+              setApiKey(''); setBaseUrl(''); setOpen(false);
+            } else {
+              setMessage('验证或保存失败，请检查 Key / 地址');
+            }
+          }}
+          disabled={saving}
+          style={{
+            flex: 1, padding: '5px 8px', borderRadius: 7, border: 'none',
+            background: 'linear-gradient(135deg, var(--color-pink), var(--color-purple))',
+            color: '#fff', cursor: saving ? 'default' : 'pointer',
+            fontSize: 11, fontFamily: 'inherit',
+          }}
+        >{saving ? '验证中...' : '验证并连接'}</button>
+        <button
+          onClick={() => { setOpen(false); setMessage(''); }}
+          disabled={saving}
+          style={{
+            padding: '5px 8px', borderRadius: 7, border: 'none',
+            background: 'transparent', color: 'var(--color-text-muted)',
+            cursor: 'pointer', fontSize: 10, fontFamily: 'inherit',
+          }}
+        >取消</button>
+      </div>
+    </div>
+  );
+};
+
 const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ sectionStyle }) => {
   const {
-    routing, loading, saving, error,
+    routing, loading, saving, error, providers,
+    loadProviders, addProvider,
     saveRoutingProfile, resetRoutingProfile,
   } = useModelStore();
   const [tab, setTab] = useState<'profiles' | 'providers' | 'models' | 'routing' | 'embedding'>('profiles');
+
+  useEffect(() => {
+    loadProviders();
+  }, []);
 
   if (loading && !routing) {
     return (
@@ -588,7 +711,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
           color: 'var(--color-purple-dark)',
           background: 'rgba(216, 180, 226, 0.18)',
         }}>
-          M2-3b · Profiles 可编辑
+          M2-5 · 供应商 / 模型 / 用途
         </span>
       </div>
       <p style={{
@@ -629,17 +752,29 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
 
       <div style={{ display: tab === 'providers' ? 'block' : 'none' }}>
         <RoutingBlock title="Providers">
-          {Object.entries(routing.providers).map(([name, p]) => (
-            <div key={name} style={routingCardStyle}>
-              <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</div>
-              <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
-                {p.base_url || '默认地址'} · key: {p.api_key_env}
+          {Object.entries(routing.providers).map(([name, p]) => {
+            const info = providers.find((item) => item.id === name);
+            return (
+              <div key={name} style={routingCardStyle}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</span>
+                  <span style={{
+                    fontSize: 9, color: info?.connected ? 'var(--color-purple-dark)' : 'var(--color-text-muted)',
+                  }}>
+                    {info?.connected ? `已连接 · ${info.key_source || 'db'}` : '未连接'}
+                  </span>
+                </div>
+                <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
+                  {p.base_url || '默认地址'} · key: {p.api_key_env}
+                </div>
               </div>
-            </div>
-          ))}
-          <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: '4px 0 0' }}>
-            新增供应商/模型暂未开放；当前由 config/model_routing.toml 定义。
-          </p>
+            );
+          })}
+          <ProviderAddForm
+            providers={providers}
+            saving={saving}
+            onAdd={(provider, apiKey, baseUrl) => addProvider(provider, apiKey, baseUrl)}
+          />
         </RoutingBlock>
       </div>
 
@@ -760,7 +895,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
       </div>
 
       <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: 0 }}>
-        Profiles 可编辑（写 DB source='ui'）；Models / Routing / Embedding 仍只读。路由变更在保存后立即生效。
+        供应商可添加/更新 Key；用途可编辑；路由与 Embedding 仅高级查看。
       </p>
     </div>
   );

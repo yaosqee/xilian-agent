@@ -399,6 +399,86 @@ class ModelRoutingConfig:
             capability_fallback=selected_index > 0,
         )
 
+    def with_catalog(
+        self,
+        providers: Mapping[str, Mapping[str, Any]],
+        models: Mapping[str, Mapping[str, Any]],
+    ) -> "ModelRoutingConfig":
+        """把 DB 供应商/模型目录合入配置（不覆盖已有 profile/routing）。"""
+        merged_providers = dict(self.providers)
+        for name, data in providers.items():
+            if not name:
+                continue
+            existing = merged_providers.get(name)
+            merged_providers[name] = ProviderSpec(
+                name=name,
+                base_url=_as_str(
+                    data.get("base_url"), f"provider:{name}.base_url",
+                    default=existing.base_url if existing else "",
+                ),
+                api_key_env=(
+                    existing.api_key_env if existing
+                    else f"{name.upper()}_API_KEY"
+                ),
+            )
+
+        merged_models = dict(self.models)
+        for name, data in models.items():
+            if not name:
+                continue
+            provider = _as_str(
+                data.get("provider"), f"model:{name}.provider",
+                default=(merged_models[name].provider if name in merged_models else ""),
+            )
+            if not provider:
+                raise ModelConfigError(f"model:{name}.provider 不能为空")
+            caps_raw = data.get("capabilities", [])
+            if isinstance(caps_raw, str):
+                import json as _json
+                try:
+                    caps_raw = _json.loads(caps_raw)
+                except (TypeError, ValueError):
+                    caps_raw = []
+            capabilities = tuple(str(item) for item in caps_raw)
+            unknown = set(capabilities) - SUPPORTED_CAPABILITIES
+            if unknown:
+                raise ModelConfigError(
+                    f"model:{name}.capabilities 包含未知能力: {sorted(unknown)}"
+                )
+            merged_models[name] = ModelSpec(
+                name=name,
+                provider=provider,
+                capabilities=frozenset(capabilities),
+                context_window=_as_int(
+                    data.get("context_window"), f"model:{name}.context_window",
+                    default=(merged_models[name].context_window if name in merged_models else 128_000),
+                ),
+                max_output_tokens=_as_int(
+                    data.get("max_output_tokens"), f"model:{name}.max_output_tokens",
+                    default=(merged_models[name].max_output_tokens if name in merged_models else 8_000),
+                ),
+                cost_per_1k_in=_as_float(
+                    data.get("cost_per_1k_in"), f"model:{name}.cost",
+                    default=(merged_models[name].cost_per_1k_in if name in merged_models else 0.0),
+                ),
+                cost_per_1k_out=_as_float(
+                    data.get("cost_per_1k_out"), f"model:{name}.cost_out",
+                    default=(merged_models[name].cost_per_1k_out if name in merged_models else 0.0),
+                ),
+            )
+
+        return ModelRoutingConfig(
+            version=self.version,
+            providers=merged_providers,
+            models=merged_models,
+            profiles=self.profiles,
+            routing=self.routing,
+            routing_groups=self.routing_groups,
+            embedding=self.embedding,
+            source_path=self.source_path,
+            raw=self.raw,
+        )
+
     def with_profile_overrides(
         self,
         overrides: Mapping[str, Mapping[str, Any]],

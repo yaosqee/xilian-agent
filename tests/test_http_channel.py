@@ -351,6 +351,32 @@ def test_model_config_reset_deletes_ui_profiles(client, http_channel):
     router.reload_config.assert_awaited_once()
 
 
+def test_add_model_provider_validates_and_saves(client, http_channel):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    db = SimpleNamespace(
+        upsert_model_provider=AsyncMock(),
+        replace_model_catalog=AsyncMock(),
+    )
+    router = SimpleNamespace(reload_config=AsyncMock())
+    http_channel._agent = SimpleNamespace(_db=db, router=router)
+
+    mock_client = MagicMock()
+    mock_client.models.list = AsyncMock()
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        resp = client.post("/api/models/providers", json={
+            "provider": "deepseek",
+            "api_key": "sk-test",
+        })
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    db.upsert_model_provider.assert_awaited_once()
+    assert db.replace_model_catalog.await_count == 1
+    router.reload_config.assert_awaited_once()
+
+
 class TestCORS:
     def test_cors_headers(self, client):
         """CORS 预检请求应有正确的头部"""

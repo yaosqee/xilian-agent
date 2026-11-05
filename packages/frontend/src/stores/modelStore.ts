@@ -7,6 +7,8 @@ import {
   fetchModelConfig,
   saveModelConfig,
   resetModelOverrides,
+  addModelProvider,
+  deleteModelProvider,
   validateApiKey,
 } from '../services/api';
 
@@ -33,6 +35,8 @@ interface ModelState {
   loadConfig: () => Promise<void>;
   updateConfig: (tier: string, provider: string, model: string) => Promise<boolean>;
   addProviderKey: (provider: string, apiKey: string, baseUrl?: string) => Promise<boolean>;
+  addProvider: (provider: string, apiKey: string, baseUrl?: string) => Promise<boolean>;
+  removeProvider: (provider: string) => Promise<boolean>;
   saveRoutingProfile: (
     name: string,
     patch: {
@@ -145,6 +149,42 @@ export const useModelStore = create<ModelState>((set, get) => ({
       return false;
     } catch (e: any) {
       set({ error: e.message || '验证失败' });
+      return false;
+    }
+  },
+
+  addProvider: async (provider, apiKey, baseUrl) => {
+    set({ saving: true, error: null });
+    try {
+      const result = await addModelProvider(provider, apiKey, baseUrl);
+      if (result.status === 'ok') {
+        await get().loadProviders();
+        await get().loadConfig();
+        set({ saving: false });
+        return true;
+      }
+      set({ saving: false, error: result.error || '添加供应商失败' });
+      return false;
+    } catch (e: any) {
+      set({ saving: false, error: e.message || '添加供应商失败' });
+      return false;
+    }
+  },
+
+  removeProvider: async (provider) => {
+    set({ saving: true, error: null });
+    try {
+      const result = await deleteModelProvider(provider);
+      if (result.status === 'ok') {
+        await get().loadProviders();
+        await get().loadConfig();
+        set({ saving: false });
+        return true;
+      }
+      set({ saving: false, error: result.error || '删除供应商失败' });
+      return false;
+    } catch (e: any) {
+      set({ saving: false, error: e.message || '删除供应商失败' });
       return false;
     }
   },

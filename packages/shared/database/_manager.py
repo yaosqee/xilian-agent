@@ -302,8 +302,36 @@ CREATE TABLE IF NOT EXISTS embed_config (
 );
 """
 
-_CREATE_UPLOADED_IMAGES = """
-CREATE TABLE IF NOT EXISTS uploaded_images (
+_CREATE_MODEL_PROVIDERS = """
+CREATE TABLE IF NOT EXISTS model_providers (
+    provider    TEXT PRIMARY KEY,
+    base_url    TEXT DEFAULT '',
+    api_key     TEXT DEFAULT '',
+    key_source  TEXT DEFAULT 'db',
+    enabled     INTEGER DEFAULT 1,
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+);
+"""
+
+_CREATE_MODEL_CATALOG = """
+CREATE TABLE IF NOT EXISTS model_catalog (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider            TEXT NOT NULL,
+    model_id            TEXT NOT NULL,
+    display_name        TEXT DEFAULT '',
+    capabilities        TEXT DEFAULT '[]',
+    context_window      INTEGER DEFAULT 128000,
+    max_output_tokens   INTEGER DEFAULT 8000,
+    source              TEXT DEFAULT 'builtin',
+    enabled             INTEGER DEFAULT 1,
+    created_at          REAL NOT NULL,
+    updated_at          REAL NOT NULL,
+    UNIQUE(provider, model_id)
+);
+"""
+
+_CREATE_UPLOADED_IMAGES = """CREATE TABLE IF NOT EXISTS uploaded_images (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL,
     original_name   TEXT DEFAULT '',
@@ -353,6 +381,8 @@ _CREATE_INDEXES_SQL = [
     # model_configs
     "CREATE INDEX IF NOT EXISTS idx_model_config_key ON model_configs(config_key);",
     "CREATE INDEX IF NOT EXISTS idx_model_config_provider ON model_configs(provider, is_active);",
+    # model_catalog
+    "CREATE INDEX IF NOT EXISTS idx_model_catalog_provider ON model_catalog(provider, enabled);",
     # embed_config
     "CREATE INDEX IF NOT EXISTS idx_embed_config_provider ON embed_config(provider, is_active);",
 ]
@@ -510,6 +540,8 @@ class DatabaseManager:
         await self._conn.execute(_CREATE_CRON_RUNS)
         await self._conn.execute(_CREATE_MODEL_CONFIGS)
         await self._conn.execute(_CREATE_EMBED_CONFIG)
+        await self._conn.execute(_CREATE_MODEL_PROVIDERS)
+        await self._conn.execute(_CREATE_MODEL_CATALOG)
         await self._conn.execute(_CREATE_UPLOADED_IMAGES)
         for idx_sql in _CREATE_INDEXES_SQL:
             await self._conn.execute(idx_sql)
@@ -2293,6 +2325,137 @@ class DatabaseManager:
         await self._conn.execute(
             "UPDATE model_configs SET is_active = 0, updated_at = ? WHERE config_key = ?",
             (time.time(), config_key),
+        )
+        await self._conn.commit()
+
+    # ── Model providers / catalog（M2-5）──────────────────────
+
+    async def upsert_model_provider(
+        self, provider: str, api_key: str = "", base_url: str = "",
+        key_source: str = "db", enabled: int = 1,
+    ) -> None:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        now = time.time()
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO model_providers
+               (provider, base_url, api_key, key_source, enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (provider, base_url, api_key, key_source, enabled, now, now),
+        )
+        await self._conn.commit()
+
+    async def get_model_providers(self, include_disabled: bool = False) -> list[dict]:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        sql = "SELECT * FROM model_providers"
+        if not include_disabled:
+            sql += " WHERE enabled = 1"
+        cursor = await self._conn.execute(sql + " ORDER BY provider")
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_model_provider(self, provider: str) -> dict | None:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        cursor = await self._conn.execute(
+            "SELECT * FROM model_providers WHERE provider = ? AND enabled = 1",
+            (provider,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def delete_model_provider(self, provider: str) -> None:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        await self._conn.execute(
+            "DELETE FROM model_catalog WHERE provider = ?", (provider,)
+        )
+        await self._conn.execute(
+            "DELETE FROM model_providers WHERE provider = ?", (provider,)
+        )
+        await self._conn.commit()
+
+    async def upsert_model_catalog(
+        self, provider: str, model_id: str, display_name: str = "",
+        capabilities: str | list[str] = "[]", context_window: int = 128000,
+        max_output_tokens: int = 8000, source: str = "builtin",
+        enabled: int = 1,
+    ) -> None:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        caps = (
+            capabilities if isinstance(capabilities, str)
+            else json.dumps(capabilities, ensure_ascii=False)
+        )
+        now = time.time()
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO model_catalog
+               (provider, model_id, display_name, capabilities, context_window,
+                max_output_tokens, source, enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (provider, model_id, display_name, caps, context_window,
+             max_output_tokens, source, enabled, now, now),
+        )
+        await self._conn.commit()
+
+    async def replace_model_catalog(self, provider: str, models: list[dict]) -> None:
+        """用给定模型列表替换某供应商的目录（用于添加供应商后导入静态 catalog）。"""
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        await self._conn.execute(
+            "DELETE FROM model_catalog WHERE provider = ?", (provider,)
+        )
+        now = time.time()
+        for model in models:
+            caps = model.get("capabilities", [])
+            caps_json = (
+                caps if isinstance(caps, str)
+                else json.dumps(caps, ensure_ascii=False)
+            )
+            await self._conn.execute(
+                """INSERT OR REPLACE INTO model_catalog
+                   (provider, model_id, display_name, capabilities, context_window,
+                    max_output_tokens, source, enabled, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    provider,
+                    model.get("model_id") or model.get("id") or "",
+                    model.get("display_name") or model.get("name") or "",
+                    caps_json,
+                    int(model.get("context_window", 128000)),
+                    int(model.get("max_output_tokens", 8000)),
+                    model.get("source", "builtin"),
+                    1, now, now,
+                ),
+            )
+        await self._conn.commit()
+
+    async def get_model_catalog(
+        self, provider: str | None = None, include_disabled: bool = False,
+    ) -> list[dict]:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        sql = "SELECT * FROM model_catalog"
+        clauses = []
+        params: list = []
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if not include_disabled:
+            clauses.append("enabled = 1")
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        cursor = await self._conn.execute(
+            sql + " ORDER BY provider, model_id", params
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def delete_model_catalog(self, provider: str, model_id: str) -> None:
+        if not self._conn:
+            raise RuntimeError("DatabaseManager.init() 未调用")
+        await self._conn.execute(
+            "DELETE FROM model_catalog WHERE provider = ? AND model_id = ?",
+            (provider, model_id),
         )
         await self._conn.commit()
 
