@@ -1,7 +1,7 @@
 # M2 · 声明式模型路由（计划）
 
 > 日期：2026-11-04
-> 状态：M2-0 **已定稿**（2026-11-04）；M2-1/M2-2/M2-3a **已实施**（2026-11-05），V2 默认关闭
+> 状态：M2-0 **已定稿**（2026-11-04）；M2-1/M2-2/M2-3a/M2-3b **已实施**（2026-11-05），V2 默认关闭
 > 目标：把「任务 → 模型」从散落在代码/DB/env 的隐式规则，收敛成一份可校验、可解释、可回退的声明式配置。
 > 范围：只改模型路由与配置层，不动人格、记忆、工具实现、评测用例。
 
@@ -230,7 +230,7 @@ Embedding 第一版**只读**：换向量模型会让已有向量失效，必须
 | **M2-1** | `packages/shared/model_config.py`：TOML 加载、schema 校验、env 插值、profile 解析 | 纯函数 + 单测；**不接 router** | 不改路由行为 | ✅ 2026-11-05（12 tests） |
 | **M2-2** | `ModelRouter` 接入 V2，`MODEL_ROUTING_V2=0` 开关；golden route tests | 默认配置下路由与今天一致 | 不改 UI | ✅ 2026-11-05（19 tests） |
 | **M2-3a** | `/api/models/config` 返回解析结果 + 来源；面板重做为只读五块（Models/Profiles/Routing/Effective/Embedding） | 能看到「现在用谁」 | 不做编辑 | ✅ 2026-11-05 |
-| **M2-3b** | 可编辑：切换模型、fallback 增删、保存写 DB `source='ui'`、恢复文件默认 | UI 能改且立即生效 | 不动文件基线 | 待开始 |
+| **M2-3b** | 可编辑：切换模型、fallback 增删、保存写 DB `source='ui'`、恢复文件默认 | UI 能改且立即生效 | 不动文件基线 | ✅ 2026-11-05 |
 | **M2-4** | 打开默认、迁移旧 DB、更新文档、重跑 P3 | 默认启用 + 回归 | 不删旧路径 | 待开始 |
 
 建议 M2-1/M2-2 合并验收：只有 pure loader 通过、且 golden route 全绿，才允许打开开关。
@@ -383,3 +383,35 @@ uv run pytest -q --ignore=tests/test_personality_regression.py  # 708 passed / 8
 - `effective.source` 目前固定 `file`，DB `source='ui'` 尚未接。
 - V2=0 时仍显示原 tier/override 编辑面板，不受影响。
 - 前端没有新增 API 请求，复用 `/api/models/config`。
+
+---
+
+## 14. M2-3b 可编辑 Profiles（2026-11-05）
+
+已完成：V2=1 时 Profiles 可编辑，写 DB `source='ui'`；Models/Routing/Embedding 仍只读。
+
+| 文件 | 内容 |
+|---|---|
+| `alembic/versions/007_model_routing_overrides.py` | `model_configs` 新增 `source` / `fallbacks`；已有行默认 `legacy` |
+| `packages/shared/database/_manager.py` | `insert_model_config(source=..., fallbacks=...)`；`update_model_config` 白名单扩展 |
+| `packages/shared/model_config.py` | `ProfileSpec.source`；`with_profile_overrides()` 合并 UI 覆盖并重算 fallback/source |
+| `packages/shared/model_router.py` | `_apply_routing_overrides()`：只消费 `source='ui'` 的 `profile:*` 行；坏覆盖告警并回退文件 |
+| `gateway/channels/http_channel.py` | `PUT /api/models/config` 支持 `profiles`；`POST /api/models/config/reset` 删除 UI 覆盖 |
+| 前端 | Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑、单 profile/全部恢复默认 |
+
+验证：
+
+```bash
+uv run alembic upgrade head   # 006 -> 007（真实库已执行）
+uv run pytest tests/test_http_channel.py tests/test_model_config.py tests/test_model_router.py -q  # 66 passed
+uv run pytest tests/test_database_model_config.py -q                    # 1 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py            # 714 passed / 8 skipped
+cd packages/frontend && npm run build                                      # tsc + vite build 通过
+```
+
+边界：
+
+- V2 仍默认关闭；要看到可编辑面板需 `.env` 设 `MODEL_ROUTING_V2=1` 并重启。
+- 只编辑 profile 的主模型/fallback/温度/token；task → profile 的 routing 仍由文件定义。
+- DB `tier:*` / `override:*` 在 V2 下仍被忽略（只认 `profile:*` + `source='ui'`）。
+- API 失败后的 provider 级 fallback、配置 `base_url` 注入、打包 `config/` 仍是 M2-4/后续。
