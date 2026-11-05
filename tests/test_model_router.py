@@ -310,10 +310,17 @@ class TestRoutingV2:
     )
     async def test_golden_routes_match_current_config(self, task_type, expected_model):
         router, adapter = self._router_with_fake_adapter()
+        tools = (
+            [{"type": "function", "function": {"name": "query_weather"}}]
+            if task_type == "tool_decision" else None
+        )
 
-        await router.route(task_type, [{"role": "user", "content": "hi"}])
+        await router.route(task_type, [{"role": "user", "content": "hi"}], tools=tools)
 
-        assert adapter.chat.await_args.kwargs["model"] == expected_model
+        kwargs = adapter.chat.await_args.kwargs
+        assert kwargs["model"] == expected_model
+        if task_type == "tool_decision":
+            assert kwargs["tools"] == tools
 
     @pytest.mark.asyncio
     async def test_v2_ignores_legacy_tier_rows(self):
