@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 721 passed / 27s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 723 passed / 28s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -37,6 +37,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/shared/model_router.py` — V1 Tier + V2 声明式路由（`MODEL_ROUTING_V2` 默认 0）+ tool 重试/降级 + stats
 - `config/model_routing.toml` — 当前路由默认基线（TOML）
 - `packages/shared/credentials.py` — M2-5 凭据解析（DB Key 优先，`.env` fallback）
+- `packages/shared/provider_service.py` — 供应商验 Key / 静态模型目录导入（设置面板 + Onboarding 共用）
 - `docs/design/model-routing-m2.md` — M2 计划与 M2-1~M2-5 实施记录
 - `packages/shared/events.py` — InternalEvent（含 `user_id` / `session_id`）
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点 + SSE（工具事件 + 真 token 流转发）
@@ -55,12 +56,12 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - Python 3.12+ async/await，uv 包管理
 - DeepSeek 纯云端路由：对话 `deepseek-flash`，`tier:reasoning` 保留 `deepseek-v4-pro`（ModelRouter）
 - Agent 循环：**本机 `.env` 已设 `LOOP_V2=1`**（走 `packages/agent/loop/`：预算/结构化回填/会话确认/真 token 流）；代码默认 0，回滚删掉该项即可
-- 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；`MODEL_ROUTING_V2=1` 可切声明式 TOML；M2-5 供应商 Key 存 DB（DB > env），Onboarding 仍写 `.env`
+- 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；`MODEL_ROUTING_V2=1` 可切声明式 TOML；供应商 Key 存 DB（DB > env），Onboarding 已改为写 DB
 - SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
 - loguru 结构化日志：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`
 - 测试：pytest + pytest-asyncio，asyncio_mode = "strict"
-- 环境变量：.env 管理 API Key，.gitignore 排除
+- 环境变量：`.env` 保留运行开关 / bootstrap Key；UI/Onboarding 添加的供应商 Key 存 SQLite（DB > env）
 - 人格提示词纳入 Git 版本管理：`prompts/personality_v4.md`（当前 v4.1）
 - 工具系统：LLM function calling 驱动，4 工具 autodiscover 注册，README_ONLY 自主 / EXECUTE 需确认
 - 外部 API Key（QWeather / Zhipu）仅存储在 .env，不入 git，不写入文档

@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **721 passed / 8 skipped / ~27s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-5a/b 完成；**V2 由 `.env` 开启**；评测集 v1 冻结；下一步 M2-5c Onboarding 改 DB |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **723 passed / 8 skipped / ~28s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-5c 完成；**V2 由 `.env` 开启**；评测集 v1 冻结；下一步自定义模型/删除 UI 或时间稳定化 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -319,6 +319,20 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 测试 | **721 passed / 8 skipped / 27s**；前端 build 通过 |
 
 边界：只支持 4 个已知供应商；模型来自 adapter 静态目录；自定义模型/动态发现未做；删除按钮未上 UI；**Onboarding 仍写 `.env`，M2-5c 必须改**。
+
+---
+
+## M2-5c：Onboarding 写 DB（2026-11-05）
+
+| 项 | 实现 |
+|---|---|
+| 共用服务 | `provider_service.py`：验证 / 静态目录 / `save_provider`，设置面板与引导共用 |
+| 启动检测 | `main.py` 同时检查 env + DB `model_providers` Key |
+| 首次引导 | `_start_onboarding()` 初始化 DB；`/api/config/save` 写 provider/catalog/embed，不再写 `.env` |
+| 检查接口 | `/api/config/check` 查 DB |
+| 测试 | `test_provider_service.py` + 全量 **723 passed / 8 skipped / 28s** |
+
+边界：Onboarding 会验证 Key（网络失败会报错）；`.env` 仅保留 bootstrap/运行开关；DB 优先。
 
 ---
 

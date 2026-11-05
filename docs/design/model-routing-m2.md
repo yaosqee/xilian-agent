@@ -493,4 +493,40 @@ cd packages/frontend && npm run build                            # tsc + vite bu
 - 只支持 DeepSeek / OpenAI / Anthropic / Google 四个已知供应商；自定义供应商未开放。
 - 模型目录来自 adapter 静态 `get_available_models()`；动态 list models / 手动自定义模型未做。
 - 删除供应商 API 已有，UI 删除按钮未做。
-- **Onboarding 仍写 `.env`**，尚未改为写 DB；这是下一步 M2-5c，必须改。
+- **Onboarding 仍写 `.env`**（M2-5a/b 时）→ M2-5c 已改为写 DB，见 §17。
+
+---
+
+## 17. M2-5c Onboarding 写 DB（2026-11-05）
+
+首次引导不再写 `.env`，改为写 `model_providers` / `model_catalog` / `embed_config`。
+
+| 文件 | 内容 |
+|---|---|
+| `packages/shared/provider_service.py` | 设置面板与 Onboarding 共用 `validate_provider_key` / `static_model_catalog` / `save_provider` |
+| `main.py` | 启动时同时检查 env + DB 供应商 Key；Onboarding 初始化 `DatabaseManager`，`/api/config/save` 写 DB；`/api/config/check` 查 DB；关闭时 close |
+| `gateway/channels/http_channel.py` | `POST /api/models/providers` 改用 `save_provider`，避免两套逻辑 |
+| `tests/test_provider_service.py` | 保存路径 + 未知供应商拒绝 |
+
+流程：
+
+```text
+首次启动（env 无 Key）
+  → 打开 DatabaseManager
+  → Onboarding 选供应商 + 填 Key
+  → 验证 → 写 DB provider/catalog
+  → 可选 embedding Key → embed_config
+  → 重启 → main 查 DB 有 Key → AgentCore 正常启动
+```
+
+验证：
+
+```bash
+uv run pytest -q --ignore=tests/test_personality_regression.py  # 723 passed / 8 skipped
+```
+
+边界：
+
+- Onboarding 现在会验证 Key；网络不可用时会提示失败，而不是先写文件。
+- `.env` 仍保留，作为 CI/无头 bootstrap 和运行开关；UI/Onboarding 写 DB 后 DB 优先。
+- 删除供应商 UI、动态模型发现、自定义模型仍未做。
