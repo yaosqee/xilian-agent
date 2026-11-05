@@ -378,6 +378,7 @@ xilian-v3/
 | `DEEPSEEK_API_KEY_2` | 备用 Key（可选） | - |
 | `EMBED_API_KEY` | 嵌入 API Key | 复用 DEEPSEEK_API_KEY_2 |
 | `LOOP_V2` | 1 = 启用新 Agent 循环（含 SSE 工具事件/确认状态机/真 token 流） | 0 |
+| `INTENT_ROUTER` | 0 = 关闭关键词强制工具，交给模型 auto（A/B 用） | 1 |
 | `MODEL_ROUTING_V2` | 1 = 启用 `config/model_routing.toml` 声明式路由（M2，试验） | 0 |
 | `MODEL_ROUTING_CONFIG` | 覆盖模型路由配置路径 | `config/model_routing.toml` |
 | `HTTP_PORT` | HTTP 服务端口 | 8000 |

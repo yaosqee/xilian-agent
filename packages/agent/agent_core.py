@@ -294,6 +294,8 @@ class AgentCore:
 
         # 打磨期 P1: Agent 循环 v2 开关（默认 0，老路径行为不变）
         self._loop_v2: bool = _env_flag("LOOP_V2", False)
+        # 旧关键词强制路由：默认保留；INTENT_ROUTER=0 交给模型 auto
+        self._intent_router: bool = _env_flag("INTENT_ROUTER", True)
         self._loop_budget = LoopBudget(
             max_steps=_env_int("LOOP_V2_MAX_STEPS", 6),
             max_tokens=_env_int("LOOP_V2_MAX_TOKENS", 20_000),
@@ -777,7 +779,8 @@ class AgentCore:
             tools = self.tool_registry.to_openai_tools()
 
         # ── 4a. 意图路由：确定性查询强制指定工具（Layer 1 治幻觉）──
-        forced_tool = self._route_intent(event.payload)
+        # INTENT_ROUTER=0 时不强制，交给模型的 tool_choice="auto"。
+        forced_tool = self._route_intent(event.payload) if self._intent_router else None
         if forced_tool and tools and any(
             t.get("function", {}).get("name") == forced_tool for t in tools
         ):
