@@ -15,7 +15,7 @@
 
 ```bash
 cd D:\xilian-v3
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 676 passed / 8 skipped
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 688 passed / 8 skipped
 uv run python main.py                                            # 打开 http://127.0.0.1:8000
 ```
 
@@ -34,10 +34,10 @@ uv run python main.py                                            # 打开 http:/
 
 ### 1.3 知道现在在哪（10 分钟）
 
-- 测试基线：**676 passed / 8 skipped / ~32s**（真模型人格测试默认排除）。
+- 测试基线：**688 passed / 8 skipped / ~26s**（真模型人格测试默认排除）。
 - 新循环 `LOOP_V2` **本机已开启**（`.env` 里 `LOOP_V2=1`）；代码默认 0，只有回滚时才需要动它。老路径 `_handle_tool_calls` 仍保留作回退。
-- P0–P3 + X + M1 + P1.5 已完成：新循环骨架、接线、SSE 工具事件、会话级确认状态机、40 条评测基线、时间保真 + 多步提示、ModelPolicy/重试降级/stats、真 token 流。
-- 下一步：M 二阶段 DSH 风格声明式路由配置；评测侧剩 `memory` 长尾口语变体与 `weather-01` 关键词类失败观察。
+- P0–P3 + X + M1 + P1.5 已完成；M2-1 已完成（`packages/shared/model_config.py` + `config/model_routing.toml`，未接 router）。
+- 下一步：M2-2 把声明式配置接入 `ModelRouter`，用 `MODEL_ROUTING_V2` 开关 + golden route tests 锁住现有行为。
 
 ## 2. 2 小时版（能动手改）
 
@@ -46,7 +46,7 @@ uv run python main.py                                            # 打开 http:/
 ```
 packages/
   agent/        # 大脑：agent_core(主流程) context_builder(上下文) memory/notebook/portrait(长期状态)
-    loop/       # 新：预算式工具循环（P0–P2）
+    loop/       # 新：预算式工具循环（P0–P3 + P1.5）
     tools/      # 4 个工具：search_memory / query_weather / search_web / coding_delegate
     pipeline/   # 感知 / 多模态 / 记忆检索
   shared/       # 基建：model_router(多供应商) database/(6 个 repo) vector_store providers/
@@ -70,7 +70,7 @@ codegraph impact ToolExecutor.execute
 1. `agent_core.py::process()` —— 一条消息的完整生命周期（感知 → 上下文 → 模型 → 工具 → 副作用）。
 2. `packages/agent/loop/runner.py` —— 新循环（每步带 tools、结构化回填、预算）。
 3. `packages/agent/context_builder.py` —— 上下文里到底有什么。
-4. `packages/shared/model_router.py` —— 模型怎么选（tier → provider → adapter）。
+4. `packages/shared/model_router.py` + `model_config.py` —— 模型怎么选（声明式配置 / tier → provider → adapter）。
 5. `gateway/channels/http_channel.py` —— 前端能看到什么（SSE 事件）。
 
 ### 2.4 改一个小东西验证理解（20 分钟）
@@ -101,7 +101,7 @@ codegraph impact ToolExecutor.execute
 ## 4. 快速自检（确认项目没坏）
 
 ```bash
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 676 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 688 passed
 uv run python -c "import main"                                    # 导入无副作用
 uv run python main.py                                             # 本机已是新循环（LOOP_V2=1）
 # 需要对比老路径时：LOOP_V2=0 uv run python main.py

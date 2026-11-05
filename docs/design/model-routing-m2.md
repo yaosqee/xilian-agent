@@ -1,7 +1,7 @@
 # M2 · 声明式模型路由（计划）
 
 > 日期：2026-11-04
-> 状态：M2-0 **已定稿**（2026-11-04），未实施
+> 状态：M2-0 **已定稿**（2026-11-04）；M2-1 **已实施**（2026-11-05），未接 `ModelRouter`
 > 目标：把「任务 → 模型」从散落在代码/DB/env 的隐式规则，收敛成一份可校验、可解释、可回退的声明式配置。
 > 范围：只改模型路由与配置层，不动人格、记忆、工具实现、评测用例。
 
@@ -224,14 +224,14 @@ Embedding 第一版**只读**：换向量模型会让已有向量失效，必须
 
 ## 6. 分阶段实施
 
-| 阶段 | 内容 | 产出 | 不改什么 |
-|---|---|---|---|
-| **M2-0** | 本文档：schema、优先级、迁移、验收 | 计划确认 | 不改代码 |
-| **M2-1** | `packages/shared/model_config.py`：TOML 加载、schema 校验、env 插值、profile 解析 | 纯函数 + 单测；**不接 router** | 不改路由行为 |
-| **M2-2** | `ModelRouter` 接入 V2，`MODEL_ROUTING_V2=0` 开关；golden route tests | 默认配置下路由与今天一致 | 不改 UI |
-| **M2-3a** | `/api/models/config` 返回解析结果 + 来源；面板重做为只读五块（Models/Profiles/Routing/Effective/Embedding） | 能看到「现在用谁」 | 不做编辑 |
-| **M2-3b** | 可编辑：切换模型、fallback 增删、保存写 DB `source='ui'`、恢复文件默认 | UI 能改且立即生效 | 不动文件基线 |
-| **M2-4** | 打开默认、迁移旧 DB、更新文档、重跑 P3 | 默认启用 + 回归 | 不删旧路径 |
+| 阶段 | 内容 | 产出 | 不改什么 | 状态 |
+|---|---|---|---|---|
+| **M2-0** | 本文档：schema、优先级、迁移、验收 | 计划确认 | 不改代码 | ✅ 2026-11-04 |
+| **M2-1** | `packages/shared/model_config.py`：TOML 加载、schema 校验、env 插值、profile 解析 | 纯函数 + 单测；**不接 router** | 不改路由行为 | ✅ 2026-11-05（12 tests） |
+| **M2-2** | `ModelRouter` 接入 V2，`MODEL_ROUTING_V2=0` 开关；golden route tests | 默认配置下路由与今天一致 | 不改 UI | ⏳ 下一步 |
+| **M2-3a** | `/api/models/config` 返回解析结果 + 来源；面板重做为只读五块（Models/Profiles/Routing/Effective/Embedding） | 能看到「现在用谁」 | 不做编辑 | 待开始 |
+| **M2-3b** | 可编辑：切换模型、fallback 增删、保存写 DB `source='ui'`、恢复文件默认 | UI 能改且立即生效 | 不动文件基线 | 待开始 |
+| **M2-4** | 打开默认、迁移旧 DB、更新文档、重跑 P3 | 默认启用 + 回归 | 不删旧路径 | 待开始 |
 
 建议 M2-1/M2-2 合并验收：只有 pure loader 通过、且 golden route 全绿，才允许打开开关。
 
@@ -302,3 +302,25 @@ Embedding 第一版**只读**：换向量模型会让已有向量失效，必须
 - `packages/frontend/src/components/panels/SettingsPanel.tsx` — 设置面板
 - `packages/frontend/src/stores/modelStore.ts` — 前端模型状态
 - `evals/runner.py` — 评测用临时 DB，默认模型播种
+
+---
+
+## 11. M2-1 实施记录（2026-11-05）
+
+已落地，未接 `ModelRouter`，现有路由行为不变。
+
+| 文件 | 内容 |
+|---|---|
+| `packages/shared/model_config.py` | `ModelRoutingConfig` / `ProviderSpec` / `ModelSpec` / `ProfileSpec` / `EmbeddingSpec` / `ResolvedRoute`；TOML 加载、schema 校验、`${ENV}` 插值、明文密钥拒绝、能力 fallback |
+| `config/model_routing.toml` | 按当前实际路由导出的默认基线：dialogue/tool_decision/background = Flash，reasoning = Pro，embedding 独立段 |
+| `packages/shared/providers/__init__.py` | `TASK_GROUPS` 新增 `reasoning` 组；`TASK_GROUP_TIERS` 同步 |
+| `tests/test_model_config.py` | 12 条：默认路由、effective routes、组默认、reasoning 组、能力 fallback、非法引用、未知能力、明文密钥、env 插值、缺文件、embedding |
+
+验证：
+
+```bash
+uv run pytest tests/test_model_config.py -q   # 12 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py  # 688 passed / 8 skipped
+```
+
+尚未做：`ModelRouter` 接入、`MODEL_ROUTING_V2` 开关、DB `source='ui'`、API/UI。

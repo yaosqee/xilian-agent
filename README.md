@@ -342,11 +342,12 @@ xilian-v3/
 │   └── channels/                 #   通道（HTTP/Console）
 │
 ├── evals/                        # 🧪 P3 评测集 (40 条 + runner/metrics)
+├── config/                       # ⚙️ 模型路由 TOML（M2）
 ├── prompts/                      # 📝 人格提示词
 ├── photo/                        # 🖼️ 背景图片 + 风格参考
 ├── alembic/                      # 🗄️ 数据库迁移
 ├── skills/manual/                # 🛠️ 4 个技能文件
-└── tests/                        # 🧪 676+ 条测试
+└── tests/                        # 🧪 688+ 条测试
 ```
 
 ---

@@ -1,8 +1,8 @@
 # 昔涟 V3.7 · 代码导航
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
-> 📅 最后更新：2026-11-04
-> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **676 passed / 8 skipped**。
+> 📅 最后更新：2026-11-05
+> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；M2-1 配置加载器已落地；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **688 passed / 8 skipped**。
 
 ## 📚 文档导航
 
@@ -12,6 +12,7 @@
 | **[现状导读](docs/PROJECT-TOUR.md)** | 🔰 30 分钟 / 2 小时两条路线，先读这个 |
 | **[架构总览](docs/architecture-overview.md)** | 系统全景 + 端到端请求追踪 |
 | [Agent 循环 v2 方案/验收](docs/plans/agent-loop-v2.md) | 本地文档（gitignore）：P0–P3、M、X、P1.5 |
+| [M2 声明式模型路由计划](docs/design/model-routing-m2.md) | TOML baseline / DB ui 覆盖 / provider-model-profile-routing 四层 |
 | [P3 评测基线](docs/evals/agent-loop-v2-baseline-2026-11-04.md) | loop 97.5% / legacy 82.5% 等数字 |
 | [记忆系统架构](docs/design/memory-system-architecture.md) | 情景记忆 / Portrait / 笔记本 / 角色记忆 / 自传体 |
 | [情感系统架构](docs/design/emotion-system-architecture.md) | PAD引擎 / EmotionModule / 好感度 |
@@ -60,7 +61,8 @@ xilian-v3/
 │   ├── design/
 │   │   ├── memory-system-architecture.md   # 记忆系统全景
 │   │   ├── emotion-system-architecture.md  # 情感系统全景
-│   │   └── tool-system-architecture.md     # 工具系统全景
+│   │   ├── tool-system-architecture.md     # 工具系统全景
+│   │   └── model-routing-m2.md             # M2 声明式路由计划/实施记录
 │   └── agents/                        # Agent skills 配置
 │
 ├── evals/                           # 🧪 P3 评测集
@@ -69,9 +71,13 @@ xilian-v3/
 │   ├── runner.py                     #   fake / legacy / loop / all；split/category/limit
 │   └── reports/                      #   本地报告（gitignore）
 │
+├── config/
+│   └── model_routing.toml            # M2 声明式模型路由基线（providers/models/profiles/routing）
+│
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
 │   ├── model_router.py              # ModelRouter：多供应商 Tier 路由 + ModelPolicy + tool 重试降级 + stats
+│   ├── model_config.py              # M2-1：TOML 声明式路由加载/校验/解析（未接 router）
 │   ├── model_stats.py               # ModelStats：按模型 calls/errors/timeout/p50/p95（内存）
 │   ├── providers/                    # 供应商适配器（deepseek / openai / anthropic / google / mimo）
 │   │   ├── model_policy.py           # ModelPolicy 能力矩阵（tools/vision/context/cost）
@@ -311,6 +317,7 @@ AttentionScheduler 任务提醒流程：
 |------|---------|---------|
 | `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, session_id, payload, is_owner)` |
 | `model_router.py` | Tier 路由 + 显式能力矩阵 + tool 重试/降级 + 观测 | `route()` / `get_model_policy()` / `stats` / `reload_config()` |
+| `model_config.py` | M2-1 声明式配置加载/校验/解析（未接 router） | `load_model_routing()`, `ModelRoutingConfig.resolve()` |
 | `providers/model_policy.py` | ModelPolicy 能力矩阵（tools/vision/context/cost） | `ModelPolicy.from_model_info()`, `policy_from_adapter()` |
 | `model_stats.py` | 按模型内存统计（calls/errors/p50/p95/degraded） | `ModelStats.record_*()`, `ModelStatsRegistry.snapshot()` |
 | `database.py` | SQLite 13 张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |

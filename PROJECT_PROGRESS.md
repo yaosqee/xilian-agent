@@ -2,22 +2,22 @@
 
 > 📍 新 AI 窗口第一口粮。读完这个你就知道：这是什么、做到哪了、怎么继续。
 > 🔖 当前阶段：打磨期（V3.7 审查修复完成；Agent 循环 v2 **P0–P3 + X + M1 + P1.5 完成，LOOP_V2 已转正**：Flash 下 loop 97.5% / legacy 82.5%）
-> 📅 最后更新：2026-11-04
+> 📅 最后更新：2026-11-05
 
 ## 📌 当前状态速查（压缩上下文前先看这里）
 
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **676 passed / 8 skipped / ~32s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 完成；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2 或评测扩类 |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **688 passed / 8 skipped / ~26s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 完成；M2-1（声明式路由加载器）完成；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2-2 接入 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
 | 搜索 | `SEARCH_PROVIDER=deepseek` → `POST https://api.deepseek.com/v1/tools/search`，复用 DeepSeek Key，5 元/1000 次成功请求 |
 | thinking | 生产与评测**已对齐**：`.env` 设 `DEEPSEEK_DISABLE_THINKING=1`（关闭）；快 ~1.9×、省 2–6×，人设 A/B 无差异 |
 | 流式 | SSE 工具事件真流；LOOP_V2 下正文也已是真 token 流（P1.5），老路径仍为 3 字符/50ms 假切片 |
-| 关键本地文档 | `docs/PROJECT-TOUR.md`、`docs/evals/agent-loop-v2-baseline-2026-11-04.md`、`docs/plans/HANDOFF-2026-11-04.md`（`docs/plans/` 被 gitignore） |
+| 关键本地文档 | `docs/PROJECT-TOUR.md`、`docs/evals/agent-loop-v2-baseline-2026-11-04.md`、`docs/design/model-routing-m2.md`、`docs/plans/HANDOFF-2026-11-04.md`（`docs/plans/` 被 gitignore） |
 | 关键风险 | 老路径在 Flash 下会漏出 DSML 工具协议文本（multi 类 0%）；`model_stats` 内存不持久；确认 pending 重启丢失；memory 词表已补（`906a49a`，6 条单次 100%）但长尾口语变体仍待观察 |
 
 ---
@@ -224,6 +224,24 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 测试 | **644 passed / 8 skipped / 36s**；新增 ModelPolicy、重试恢复、连续失败降级、tool_choice auto、stats、TTL 测试 |
 
 限制：模型配置仍在 `model_configs` + 环境变量，多模型/多供应商的配置体验未重做；DSH 风格配置（能力矩阵 + 任务 profile 的声明式配置）留作 M 二阶段。
+
+---
+
+## M2-1：声明式路由配置加载器（2026-11-05）
+
+按 `docs/design/model-routing-m2.md` 执行，先做纯加载/校验层，不接 `ModelRouter`。
+
+| 项 | 实现 |
+|---|---|
+| 配置模型 | `packages/shared/model_config.py`：`ModelRoutingConfig` / `ProviderSpec` / `ModelSpec` / `ProfileSpec` / `EmbeddingSpec` / `ResolvedRoute` |
+| 加载 | `tomllib` 读取 `config/model_routing.toml`；支持 `MODEL_ROUTING_CONFIG` 覆盖路径 |
+| 校验 | 未知模型/供应商/profile/task/能力、非法温度/token、缺失环境变量、明文密钥均报错 |
+| 解析 | `task → routing → profile → 主模型 + fallbacks → 能力断言`；不满足能力时沿 fallback 找 |
+| 默认基线 | `config/model_routing.toml` 按当前实际路由导出：dialogue/tool_decision/background=Flash，reasoning=Pro，embedding 独立段 |
+| 任务组 | `TASK_GROUPS` 新增 `reasoning` 组（reasoning/code/planning），避免归到 dialogue |
+| 测试 | 新增 `tests/test_model_config.py` 12 条；全量 **688 passed / 8 skipped / 25s** |
+
+未做：接入 router、`MODEL_ROUTING_V2` 开关、DB `source='ui'`、API/UI。
 
 ---
 
