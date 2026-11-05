@@ -726,7 +726,6 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
           ['profiles', 'Profiles'],
           ['providers', '供应商'],
           ['models', '模型'],
-          ['routing', '路由'],
           ['embedding', 'Embedding'],
         ] as const).map(([id, label]) => {
           const active = tab === id;
@@ -895,7 +894,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
       </div>
 
       <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: 0 }}>
-        供应商可添加/更新 Key；用途可编辑；路由与 Embedding 仅高级查看。
+        供应商可添加/更新 Key；用途可编辑；路由详情不在此展示（通过 API/日志查看）。
       </p>
     </div>
   );

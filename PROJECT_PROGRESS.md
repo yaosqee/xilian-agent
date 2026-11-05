@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **715 passed / 8 skipped / ~27s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-4（代码）完成；**V2 仍默认 0**；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步决定 M2 是否转正 |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **721 passed / 8 skipped / ~27s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-5a/b 完成；**V2 由 `.env` 开启**；评测集 v1 冻结；下一步 M2-5c Onboarding 改 DB |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -285,7 +285,7 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 写入 | `PUT /api/models/config` 支持 `profiles`；只写 `source='ui'` 的 `profile:<name>` 行 |
 | 恢复 | `POST /api/models/config/reset`：删 profile UI 覆盖，回到文件默认 |
 | 解析 | V2 只认 `source='ui'` 的 `profile:*`；`tier:*`/`override:*` 在 V2 下仍忽略 |
-| 面板 | 五块 tab（默认 Profiles）；Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑；单条/全部恢复 |
+| 面板 | 4 个 tab（Profiles / 供应商 / 模型 / Embedding，默认 Profiles）；Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑；单条/全部恢复 |
 | 测试 | 新增 6 条；全量 **714 passed / 8 skipped / 27s**；前端 build 通过 |
 
 边界：V2 默认关闭；task→profile 的 routing 仍由文件定义；provider 级失败 fallback / base_url 注入 / 打包 config 留到 M2-4。
@@ -304,6 +304,21 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 测试 | **715 passed / 8 skipped / 27s**；前端 build 通过 |
 
 **默认仍为 0**，没有擅自切生产；要启用需 `.env` 设 `MODEL_ROUTING_V2=1` 并重启。M2 是否转正、时间类是否另行加固，待决策。
+
+---
+
+## M2-5a/b：供应商目录与添加供应商（2026-11-05）
+
+| 项 | 实现 |
+|---|---|
+| 数据 | `model_providers` + `model_catalog`（migration 008，真实库已执行） |
+| 凭据 | `CredentialResolver`：DB Key 优先，`.env` fallback；DB Key 同步到进程 env |
+| 路由 | V2 合并 DB 供应商/模型；adapter 创建统一走 resolver |
+| API | GET 供应商连接状态；POST 添加供应商并验证/导入模型；DELETE 删除并检查 profile 引用 |
+| UI | 设置面板改为 4 tab（Profiles / 供应商 / 模型 / Embedding）；供应商 tab 可添加 Key |
+| 测试 | **721 passed / 8 skipped / 27s**；前端 build 通过 |
+
+边界：只支持 4 个已知供应商；模型来自 adapter 静态目录；自定义模型/动态发现未做；删除按钮未上 UI；**Onboarding 仍写 `.env`，M2-5c 必须改**。
 
 ---
 

@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > 📅 最后更新：2026-11-05
-> 🔖 当前：P0–P3 + X + M1 + P1.5 + M2-1~M2-4（代码）完成；V2 默认 0；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **715 passed / 8 skipped**。
+> 🔖 当前：P0–P3 + X + M1 + P1.5 + M2-1~M2-5a/b 完成；V2 由 `.env` 开启；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **721 passed / 8 skipped**。
 
 ## 📚 文档导航
 
@@ -318,6 +318,7 @@ AttentionScheduler 任务提醒流程：
 | `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, session_id, payload, is_owner)` |
 | `model_router.py` | V1 Tier 路由 / V2 声明式路由 + 能力矩阵 + tool 重试/降级 + 观测 | `route()` / `get_model_policy()` / `stats` / `reload_config()` |
 | `model_config.py` | M2-1 声明式配置加载/校验/解析 | `load_model_routing()`, `ModelRoutingConfig.resolve()` |
+| `credentials.py` | M2-5 凭据解析：DB Key 优先，`.env` fallback | `CredentialResolver.load()/resolve()` |
 | `providers/model_policy.py` | ModelPolicy 能力矩阵（tools/vision/context/cost） | `ModelPolicy.from_model_info()`, `policy_from_adapter()` |
 | `model_stats.py` | 按模型内存统计（calls/errors/p50/p95/degraded） | `ModelStats.record_*()`, `ModelStatsRegistry.snapshot()` |
 | `database.py` | SQLite 13 张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
@@ -373,7 +374,7 @@ AttentionScheduler 任务提醒流程：
 
 | 位置 | 说明 |
 |------|------|
-| M2 | M2-1~M2-4 代码完成（V2 默认 0）：TOML / DB ui 覆盖 / 可编辑 Profiles / base_url / provider fallback / 打包；是否转正待决策 |
+| M2 | M2-1~M2-5a/b 完成：TOML / DB ui 覆盖 / 可编辑 Profiles / 供应商目录 / 凭据 resolver；M2-5c Onboarding 仍写 `.env`，需改 DB |
 | `model_stats` | 内存统计，重启清零，未持久化 |
 | `evals` | 40 条用例已冻结（`cases_sha256` 指纹）；含 `tool_success_rate`；搜索已切 DeepSeek Search |
 | `ConfirmationStore` | 进程内内存，重启丢 pending；跨会话隔离已做 |

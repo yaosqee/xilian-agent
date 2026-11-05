@@ -1,7 +1,7 @@
 # M2 · 声明式模型路由（计划）
 
 > 日期：2026-11-04
-> 状态：M2-0 **已定稿**（2026-11-04）；M2-1/M2-2/M2-3a/M2-3b 已实施（2026-11-05）；M2-4 代码就绪，V2 仍默认关闭
+> 状态：M2-0 定稿；M2-1~M2-4 已实施；M2-5a/b 供应商目录与添加供应商已实施（V2 默认仍 0）
 > 目标：把「任务 → 模型」从散落在代码/DB/env 的隐式规则，收敛成一份可校验、可解释、可回退的声明式配置。
 > 范围：只改模型路由与配置层，不动人格、记忆、工具实现、评测用例。
 
@@ -397,7 +397,7 @@ uv run pytest -q --ignore=tests/test_personality_regression.py  # 708 passed / 8
 | `packages/shared/model_config.py` | `ProfileSpec.source`；`with_profile_overrides()` 合并 UI 覆盖并重算 fallback/source |
 | `packages/shared/model_router.py` | `_apply_routing_overrides()`：只消费 `source='ui'` 的 `profile:*` 行；坏覆盖告警并回退文件 |
 | `gateway/channels/http_channel.py` | `PUT /api/models/config` 支持 `profiles`；`POST /api/models/config/reset` 删除 UI 覆盖 |
-| 前端 | 五块改为 tab（默认 Profiles）；Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑、单 profile/全部恢复默认 |
+| 前端 | 五块改为 4 个 tab（Profiles / 供应商 / 模型 / Embedding，默认 Profiles；Routing 不再展示）；Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑、单 profile/全部恢复默认 |
 
 验证：
 
@@ -452,3 +452,45 @@ MODEL_ROUTING_V2=1
 ```
 
 未做：真正的 exe 打包冒烟、V2 多次评测取稳定值、时间类回答的提示词加固。
+
+---
+
+## 16. M2-5a/b 供应商目录与添加供应商（2026-11-05）
+
+目标：向 DSH 靠拢——选供应商、填 API Key，模型自动进入目录；用户看不到 17 行路由表。
+
+### 数据
+
+- migration `008_model_provider_catalog`：`model_providers` + `model_catalog`（真实库已执行）
+- `packages/shared/credentials.py`：`CredentialResolver`，**DB Key 优先，`.env` fallback**
+- `ModelRouter`：
+  - `initialize()` 加载 DB 供应商/模型目录并合入 V2 config；
+  - adapter 创建统一走 resolver；
+  - DB Key 会同步到进程环境，供 `search_web` 等旧模块使用。
+
+### API
+
+- `GET /api/models/providers`：增加 `connected` / `key_source`，DB catalog 覆盖静态列表
+- `POST /api/models/providers`：provider + api_key + base_url，验证后写 DB + 导入静态模型目录
+- `DELETE /api/models/providers/{provider}`：有 profile 引用时拒绝删除
+
+### UI
+
+- 设置面板改为 4 个 tab：**Profiles / 供应商 / 模型 / Embedding**（Routing 不再展示）
+- 供应商 tab：已连接状态 + “+ 添加供应商”表单（供应商 / API Key / 可选 base_url）
+- 模型 tab：显示该供应商目录
+- Profiles：下拉自动包含 DB catalog 模型
+
+验证：
+
+```bash
+uv run pytest -q --ignore=tests/test_personality_regression.py  # 721 passed / 8 skipped
+cd packages/frontend && npm run build                            # tsc + vite build 通过
+```
+
+已知边界：
+
+- 只支持 DeepSeek / OpenAI / Anthropic / Google 四个已知供应商；自定义供应商未开放。
+- 模型目录来自 adapter 静态 `get_available_models()`；动态 list models / 手动自定义模型未做。
+- 删除供应商 API 已有，UI 删除按钮未做。
+- **Onboarding 仍写 `.env`**，尚未改为写 DB；这是下一步 M2-5c，必须改。
