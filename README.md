@@ -201,10 +201,12 @@ EMBED_API_KEY=sk-你的硅基流动key
 EMBED_BASE_URL=https://api.siliconflow.cn/v1
 EMBED_MODEL=BAAI/bge-m3
 
-# 可选（和风天气）
-QWEATHER_API_KEY=你的和风天气key
+# 天气：默认使用 Open-Meteo，无需 Key
+# 可选（和风天气，有 Key 时优先使用）
+# QWEATHER_API_KEY=你的和风天气key
+# WEATHER_PROVIDER=open-meteo   # 可选：qweather | open-meteo | search
 
-# 可选（智谱搜索）
+# 可选（智谱搜索；天气兜底/通用搜索）
 ZHIPU_SEARCH_API_KEY=你的智谱key
 ```
 

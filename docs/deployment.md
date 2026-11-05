@@ -78,9 +78,10 @@ EMBED_API_KEY=sk-xxx             # 硅基流动 bge-m3 嵌入 API（通常与 DE
 EMBED_BASE_URL=https://api.siliconflow.cn/v1  # 嵌入 API 地址
 
 # ── 可选 ──
-QWEATHER_API_KEY=xxx             # 和风天气 API（query_weather 工具）
-QWEATHER_API_HOST=devapi.qweather.com  # 和风天气接口地址
-ZHIPU_API_KEY=xxx                # 智谱 API（search_web 工具 + 天气 fallback）
+# 天气默认 Open-Meteo，无需 Key；有和风 Key 时优先和风
+QWEATHER_API_KEY=xxx             # 可选：和风天气 API（query_weather 工具）
+WEATHER_PROVIDER=open-meteo      # 可选：qweather | open-meteo | search
+ZHIPU_SEARCH_API_KEY=xxx         # 可选：智谱搜索（search_web + 天气兜底）
 ```
 
 **获取 API Key**：
