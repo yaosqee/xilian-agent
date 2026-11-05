@@ -530,3 +530,18 @@ uv run pytest -q --ignore=tests/test_personality_regression.py  # 723 passed / 8
 - Onboarding 现在会验证 Key；网络不可用时会提示失败，而不是先写文件。
 - `.env` 仍保留，作为 CI/无头 bootstrap 和运行开关；UI/Onboarding 写 DB 后 DB 优先。
 - 删除供应商 UI、动态模型发现、自定义模型仍未做。
+
+---
+
+## 18. M2-6 自定义模型与删除 UI（2026-11-05）
+
+| 项 | 实现 |
+|---|---|
+| 自定义模型 API | `POST /api/models/catalog`：provider + model_id + capabilities + context/max_output，`source='manual'` |
+| 删除模型 API | `DELETE /api/models/catalog`：profile 引用检查；只允许删除 DB 模型 |
+| 删除供应商 UI | 供应商卡片上“删除本地 Key”（仅 `key_source='db'`） |
+| 自定义模型 UI | 模型 tab “+ 自定义模型”：能力勾选 + context/max_output |
+| 模型来源 | `ModelSpec.source`（file/db/manual）随 API 返回；只有非 file 模型显示删除按钮 |
+| 测试 | 新增 1 条 API 测试；全量 **724 passed / 8 skipped**；前端 build 通过 |
+
+边界：自定义模型只做目录登记，不验证模型是否真实存在；动态发现仍未做。

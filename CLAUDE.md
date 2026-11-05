@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 723 passed / 28s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 724 passed / 26s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -38,7 +38,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `config/model_routing.toml` — 当前路由默认基线（TOML）
 - `packages/shared/credentials.py` — M2-5 凭据解析（DB Key 优先，`.env` fallback）
 - `packages/shared/provider_service.py` — 供应商验 Key / 静态模型目录导入（设置面板 + Onboarding 共用）
-- `docs/design/model-routing-m2.md` — M2 计划与 M2-1~M2-5 实施记录
+- `docs/design/model-routing-m2.md` — M2 计划与 M2-1~M2-6 实施记录
 - `packages/shared/events.py` — InternalEvent（含 `user_id` / `session_id`）
 - `gateway/channels/http_channel.py` — FastAPI 所有 API 端点 + SSE（工具事件 + 真 token 流转发）
 - `evals/` — P3 评测集（40 条 JSONL + runner/metrics）；报告在 `docs/evals/`

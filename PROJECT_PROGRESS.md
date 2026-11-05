@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **723 passed / 8 skipped / ~28s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-5c 完成；**V2 由 `.env` 开启**；评测集 v1 冻结；下一步自定义模型/删除 UI 或时间稳定化 |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **724 passed / 8 skipped / ~26s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 完成；**V2 由 `.env` 开启**；评测集 v1 冻结；下一步时间稳定化或真实多供应商冒烟 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -333,6 +333,20 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 测试 | `test_provider_service.py` + 全量 **723 passed / 8 skipped / 28s** |
 
 边界：Onboarding 会验证 Key（网络失败会报错）；`.env` 仅保留 bootstrap/运行开关；DB 优先。
+
+---
+
+## M2-6：自定义模型与删除 UI（2026-11-05）
+
+| 项 | 实现 |
+|---|---|
+| 自定义模型 | 模型 tab “+ 自定义模型”：provider/model_id/display_name/capabilities/context/max_output |
+| API | `POST /api/models/catalog`（source='manual'）；`DELETE /api/models/catalog` 带 profile 引用检查 |
+| 删除供应商 | 供应商卡片“删除本地 Key”（仅 source='db'）；API 已有引用检查 |
+| 模型来源 | `ModelSpec.source` 返回 file/db/manual；只有非 file 模型显示删除按钮 |
+| 测试 | **724 passed / 8 skipped / 26s**；前端 build 通过 |
+
+边界：自定义模型只登记目录，不验证真实存在；动态模型发现未做。
 
 ---
 

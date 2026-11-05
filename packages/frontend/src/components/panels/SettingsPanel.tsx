@@ -900,6 +900,9 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
             saving={saving}
             onAdd={(provider, apiKey, baseUrl) => addProvider(provider, apiKey, baseUrl)}
           />
+          {error && (
+            <p style={{ fontSize: 10, color: '#c56b86', margin: '4px 0 0' }}>{error}</p>
+          )}
         </RoutingBlock>
       </div>
 
@@ -949,6 +952,9 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
               addModel(provider, modelId, displayName, capabilities, contextWindow, maxOutputTokens)
             }
           />
+          {error && (
+            <p style={{ fontSize: 10, color: '#c56b86', margin: '4px 0 0' }}>{error}</p>
+          )}
         </RoutingBlock>
       </div>
 
