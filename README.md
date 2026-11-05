@@ -212,6 +212,8 @@ ZHIPU_SEARCH_API_KEY=你的智谱key
 
 > 只需要 DEEPSEEK_API_KEY 就能启动昔涟。其余都是增强功能的。
 
+> 天气数据默认来自 [Open-Meteo](https://open-meteo.com/)，按 [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) 署名。非商业使用免费；商业使用需遵守 Open-Meteo 条款。
+
 ---
 
 ### 第 6 步：安装依赖

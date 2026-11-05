@@ -1050,6 +1050,26 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
       <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: 0 }}>
         供应商可添加/更新 Key；用途可编辑；路由详情不在此展示（通过 API/日志查看）。
       </p>
+      <p style={{ fontSize: 9, color: 'var(--color-text-muted)', margin: '3px 0 0' }}>
+        天气数据：
+        <a
+          href="https://open-meteo.com/"
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: 'var(--color-purple-dark)', textDecoration: 'none' }}
+        >
+          Open-Meteo
+        </a>
+        {' · '}
+        <a
+          href="https://creativecommons.org/licenses/by/4.0/"
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: 'var(--color-purple-dark)', textDecoration: 'none' }}
+        >
+          CC-BY 4.0
+        </a>
+      </p>
     </div>
   );
 };

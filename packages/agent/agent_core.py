@@ -881,6 +881,8 @@ class AgentCore:
 
         # ── 6c. 语音兜底：确保每次回复都有实际对话 ──
         reply = self._enforce_speech_rule(reply)
+        # 天气工具结果必须带上城市名，避免「明天不用带伞」这种无主语气候回答
+        reply = self._ensure_weather_city(reply, tool_results)
 
         # ── P1-③: 存储本轮数据供下轮反馈评估 ──
         strategy = self.context.last_emotion_strategy
@@ -1749,6 +1751,27 @@ class AgentCore:
     # ============================================================
     # 工具方法
     # ============================================================
+
+    @staticmethod
+    def _ensure_weather_city(reply: str, tool_results: list) -> str:
+        """天气工具调用后，回复里没有城市名就补在最前面。
+
+        模型现在能正确用工具，但仍会省略主语（「明天不用带伞」）。
+        这是 tool-result 的展示兜底，不改变工具数据本身。
+        """
+        city = ""
+        for name, result in tool_results or []:
+            if name != "query_weather":
+                continue
+            data = getattr(result, "data", None)
+            if isinstance(data, dict) and data.get("city"):
+                city = str(data["city"])
+                break
+        if not city or not reply:
+            return reply
+        if city in reply or city.rstrip("市") in reply:
+            return reply
+        return f"{city}这边，{reply}"
 
     def _clean_reply(self, raw: str) -> str:
         """清洗模型输出：去首尾空白 + 兜底语音检测。

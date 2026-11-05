@@ -166,3 +166,27 @@ def test_time_hint_skipped_for_normal_messages():
         messages, "今天好累啊", now=datetime(2026, 11, 4, 19, 54)
     )
     assert out is messages
+
+
+def test_weather_reply_gets_city_when_missing():
+    result = SimpleNamespace(data={"city": "杭州", "temp": "14"})
+    reply = AgentCore._ensure_weather_city(
+        "明天不用带伞哦。", [("query_weather", result)]
+    )
+    assert reply.startswith("杭州这边，")
+    assert "明天不用带伞" in reply
+
+
+def test_weather_reply_keeps_existing_city():
+    result = SimpleNamespace(data={"city": "杭州", "temp": "14"})
+    reply = "杭州明天多云，不用带伞。"
+    assert AgentCore._ensure_weather_city(
+        reply, [("query_weather", result)]
+    ) == reply
+
+
+def test_weather_city_ignores_non_weather_tools():
+    reply = "明天不用带伞哦。"
+    assert AgentCore._ensure_weather_city(
+        reply, [("search_web", SimpleNamespace(data={"city": "杭州"}))]
+    ) == reply
