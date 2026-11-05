@@ -1315,6 +1315,18 @@ class HTTPChannel(Channel):
                         if any(fb not in routing_config.models for fb in fallbacks):
                             errors.append(f"profile:{name}: fallbacks 含未知模型")
                             continue
+                        candidates = (model, *fallbacks)
+                        if not any(
+                            all(
+                                cap in routing_config.models[item].capabilities
+                                for cap in profile.requires
+                            )
+                            for item in candidates
+                        ):
+                            errors.append(
+                                f"profile:{name}: 没有满足 {list(profile.requires)} 的候选模型"
+                            )
+                            continue
                         try:
                             temperature = float(info.get("temperature", profile.temperature))
                             max_tokens = int(info.get("max_tokens", profile.max_tokens))

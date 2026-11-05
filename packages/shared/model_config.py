@@ -429,6 +429,15 @@ class ModelRoutingConfig:
             if max_tokens <= 0:
                 raise ModelConfigError(f"profile:{name}.max_tokens 必须大于 0")
 
+            candidates = (model, *fallbacks)
+            if not any(
+                all(self.models[item].supports(cap) for cap in base.requires)
+                for item in candidates
+            ):
+                raise ModelConfigError(
+                    f"profile:{name} 没有满足能力 {list(base.requires)} 的候选模型"
+                )
+
             profiles[name] = ProfileSpec(
                 name=name,
                 model=model,
