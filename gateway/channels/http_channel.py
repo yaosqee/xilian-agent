@@ -1202,98 +1202,32 @@ class HTTPChannel(Channel):
             if not agent_ref or not agent_ref._db:
                 return {"error": "agent not ready"}
 
-            from packages.shared.providers import PROVIDER_REGISTRY
-            import importlib
+            from packages.shared.provider_service import save_provider
 
             body = await request.json()
             provider = str(body.get("provider") or "").strip()
             api_key = str(body.get("api_key") or "").strip()
             base_url = str(body.get("base_url") or "").strip()
-            known = {"deepseek", "openai", "anthropic", "google"}
-            if provider not in known:
-                return {"status": "error", "error": f"暂不支持供应商 {provider}"}
-            if not api_key:
-                return {"status": "error", "error": "API Key 不能为空"}
 
-            defaults = {
-                "deepseek": "https://api.deepseek.com",
-                "openai": "https://api.openai.com/v1",
-                "anthropic": "https://api.anthropic.com",
-                "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
-            }
-            target_base = base_url or defaults[provider]
-
-            # 验证 Key（不落库）
             try:
-                if provider == "anthropic":
-                    from anthropic import AsyncAnthropic
-                    client = AsyncAnthropic(api_key=api_key, base_url=target_base)
-                    await asyncio.wait_for(
-                        client.messages.create(
-                            model="claude-haiku-4-6",
-                            max_tokens=1,
-                            messages=[{"role": "user", "content": "hi"}],
-                        ),
-                        timeout=15,
-                    )
-                else:
-                    from openai import AsyncOpenAI
-                    client = AsyncOpenAI(api_key=api_key, base_url=target_base)
-                    await asyncio.wait_for(client.models.list(), timeout=10)
+                models = await save_provider(
+                    agent_ref._db, provider, api_key, base_url
+                )
             except Exception as exc:
                 logger.warning(
-                    "api.models.provider_validate_failed",
+                    "api.models.provider_save_failed",
                     provider=provider, error=str(exc)[:200],
                 )
                 return {"status": "error", "error": str(exc)[:300]}
 
-            entry = PROVIDER_REGISTRY.get(provider)
-            models: list[dict] = []
-            if entry:
-                module_path, class_name, _lazy = entry
-                try:
-                    mod = importlib.import_module(module_path)
-                    cls = getattr(mod, class_name)
-                    for m in cls.get_available_models():
-                        caps = []
-                        if m.supports_tools:
-                            caps.append("tools")
-                        if m.supports_streaming:
-                            caps.append("streaming")
-                        if m.supports_thinking:
-                            caps.append("thinking")
-                        if "image" in (m.input_modalities or []):
-                            caps.append("vision")
-                        models.append({
-                            "model_id": m.id,
-                            "display_name": m.name,
-                            "capabilities": caps,
-                            "context_window": m.context_window,
-                            "max_output_tokens": m.max_output_tokens,
-                            "source": "builtin",
-                        })
-                except Exception as exc:
-                    logger.warning(
-                        "api.models.catalog_import_failed",
-                        provider=provider, error=str(exc)[:160],
-                    )
-
             try:
-                await agent_ref._db.upsert_model_provider(
-                    provider=provider,
-                    api_key=api_key,
-                    base_url=base_url,
-                    key_source="db",
-                )
-                if models:
-                    await agent_ref._db.replace_model_catalog(provider, models)
                 os.environ[f"{provider.upper()}_API_KEY"] = api_key
                 if base_url:
                     os.environ[f"{provider.upper()}_BASE_URL"] = base_url
                 await agent_ref.router.reload_config()
             except Exception as exc:
                 logger.warning(
-                    "api.models.provider_save_failed",
+                    "api.models.provider_reload_failed",
                     provider=provider, error=str(exc)[:200],
                 )
                 return {"status": "error", "error": str(exc)[:300]}

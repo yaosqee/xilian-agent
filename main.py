@@ -41,7 +41,7 @@ from loguru import logger
 # 确保项目根目录在 sys.path
 sys.path.insert(0, str(_get_base_dir()))
 
-from packages.shared import BackupManager
+from packages.shared import BackupManager, DatabaseManager
 from packages.shared.logging_config import setup_logging
 from packages.agent import (
     AgentCore, NudgeEngine, TokenBucket, AutonomyConfig,
@@ -79,6 +79,19 @@ async def main():
     has_api_key = any(os.getenv(k) for k in (
         "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
     ))
+    if not has_api_key:
+        # UI 添加的供应商 Key 存在 SQLite；此时 .env 可以是空的
+        try:
+            db_probe = DatabaseManager(str(_get_env_dir() / "data" / "xilian.db"))
+            await db_probe.init()
+            try:
+                rows = await db_probe.get_model_providers()
+                has_api_key = any(row.get("api_key") for row in rows)
+            finally:
+                await db_probe.close()
+        except Exception as exc:
+            logger.warning("env_check.db_probe_failed", error=str(exc)[:200])
+
     if not has_api_key:
         logger.info("引导模式：未检测到 API Key，等待用户配置")
         await _start_onboarding()
@@ -536,8 +549,11 @@ async def main():
 
 async def _start_onboarding():
     """引导模式：仅启动 HTTP 服务 + 静态文件，等待用户配置 API Key。
-    配置保存后通过 asyncio.Event 通知，优雅关闭服务器，然后由 main() 重启进程。"""
+    配置保存到 SQLite（model_providers），然后由 main() 重启进程。"""
     security = SecurityFilter(owner_id="hezi")
+
+    db = DatabaseManager(str(_get_env_dir() / "data" / "xilian.db"))
+    await db.init()
 
     http_port = int(os.getenv("HTTP_PORT", "8000"))
     bind_host = os.getenv("BIND_HOST", "127.0.0.1")
@@ -552,7 +568,6 @@ async def _start_onboarding():
     @http.app.post("/api/config/save")
     async def save_config(request: Request):
         body = await request.json()
-        # 新增：支持多供应商选择（V3.4+）
         provider = (body.get("provider") or "deepseek").strip()
         api_key = (body.get("deepseek_key") or body.get("api_key") or "").strip()
         siliconflow_key = (body.get("siliconflow_key") or "").strip()
@@ -560,55 +575,45 @@ async def _start_onboarding():
         if not api_key:
             return JSONResponse({"status": "error", "message": "API Key 不能为空"}, status_code=400)
 
-        # Provider → env var mapping
-        env_var_map = {
-            "deepseek": "DEEPSEEK_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "google": "GOOGLE_API_KEY",
-        }
-        target_env_var = env_var_map.get(provider, "DEEPSEEK_API_KEY")
+        from packages.shared.provider_service import save_provider
 
-        env_path = _get_env_dir() / ".env"
-        env_lines: list[str] = []
-        if env_path.exists():
-            env_lines = env_path.read_text(encoding="utf-8").splitlines()
+        try:
+            models = await save_provider(db, provider, api_key)
+        except Exception as exc:
+            logger.warning(
+                "config.save_failed", provider=provider, error=str(exc)[:200],
+            )
+            return JSONResponse(
+                {"status": "error", "message": f"验证失败：{str(exc)[:200]}"},
+                status_code=400,
+            )
 
-        updated_main = False
-        updated_embed = False
-        for i, line in enumerate(env_lines):
-            if line.startswith(f"{target_env_var}="):
-                env_lines[i] = f"{target_env_var}={api_key}"
-                updated_main = True
-            elif line.startswith("EMBED_API_KEY=") and siliconflow_key:
-                env_lines[i] = f"EMBED_API_KEY={siliconflow_key}"
-                updated_embed = True
-
-        if not updated_main:
-            env_lines.append(f"{target_env_var}={api_key}")
-        if siliconflow_key and not updated_embed:
-            env_lines.append(f"EMBED_API_KEY={siliconflow_key}")
         if siliconflow_key:
-            has_base_url = any(l.startswith("EMBED_BASE_URL=") for l in env_lines)
-            if not has_base_url:
-                env_lines.append("EMBED_BASE_URL=https://api.siliconflow.cn/v1")
+            try:
+                await db.insert_embed_config(
+                    provider="siliconflow",
+                    model_name="BAAI/bge-m3",
+                    api_key=siliconflow_key,
+                    base_url="https://api.siliconflow.cn/v1",
+                    dimensions=1024,
+                )
+                os.environ["EMBED_API_KEY"] = siliconflow_key
+            except Exception as exc:
+                logger.warning("config.embed_save_failed", error=str(exc)[:200])
 
-        content = "\n".join(env_lines) + "\n"
-        env_path.write_text(content, encoding="utf-8")
-        logger.info("config.saved",
-            env_path=str(env_path),
+        logger.info(
+            "config.saved_db",
             provider=provider,
-            wrote_bytes=len(content),
-            verify_exists=env_path.exists(),
-            verify_size=env_path.stat().st_size if env_path.exists() else -1,
+            models=len(models),
+            embed=bool(siliconflow_key),
         )
-
-        os.environ[target_env_var] = api_key
-        if siliconflow_key:
-            os.environ["EMBED_API_KEY"] = siliconflow_key
-
         _done.set()
-        return {"status": "ok", "message": "配置已保存", "provider": provider}
+        return {
+            "status": "ok",
+            "message": "配置已保存",
+            "provider": provider,
+            "models": len(models),
+        }
 
     @http.app.get("/api/config/debug")
     async def debug_config():
@@ -625,13 +630,19 @@ async def _start_onboarding():
 
     @http.app.get("/api/config/check")
     async def check_config():
-        # V3.4+: 检查任意供应商的 API Key
+        # 环境变量 + SQLite 供应商都算已配置
         has_key = bool(
             os.getenv("DEEPSEEK_API_KEY") or
             os.getenv("OPENAI_API_KEY") or
             os.getenv("ANTHROPIC_API_KEY") or
             os.getenv("GOOGLE_API_KEY")
         )
+        if not has_key:
+            try:
+                rows = await db.get_model_providers()
+                has_key = any(row.get("api_key") for row in rows)
+            except Exception:
+                pass
         return {"has_api_key": has_key}
 
     # 静态文件挂载
@@ -664,6 +675,8 @@ async def _start_onboarding():
         await _serve_until_done()
     except KeyboardInterrupt:
         logger.info("引导模式中断")
+    finally:
+        await db.close()
 
 
 if __name__ == "__main__":
