@@ -37,7 +37,7 @@ uv run python main.py                                            # 打开 http:/
 - 测试基线：**725 passed / 8 skipped / ~29s**（真模型人格测试默认排除）。
 - 新循环 `LOOP_V2` **本机已开启**（`.env` 里 `LOOP_V2=1`）；代码默认 0，只有回滚时才需要动它。老路径 `_handle_tool_calls` 仍保留作回退。
 - P0–P3 + X + M1 + P1.5 已完成；M2-1~M2-6 + 时间时段词修复完成（声明式配置 + V2 路由 + 供应商/模型管理 + Onboarding DB + 时间 100%）。
-- 下一步：weather 关键词波动、真实多供应商冒烟、动态模型发现。
+- `INTENT_ROUTER` A/B：关闭后 memory 66.7%（漏调工具），暂保持默认 1；下一步 weather 关键词波动、真实多供应商冒烟。
 
 ## 2. 2 小时版（能动手改）
 

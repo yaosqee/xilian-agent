@@ -375,6 +375,7 @@ AttentionScheduler 任务提醒流程：
 | 位置 | 说明 |
 |------|------|
 | M2 | M2-1~M2-6 完成：TOML / DB ui 覆盖 / 可编辑 Profiles / 供应商目录 / 凭据 resolver / Onboarding 写 DB / 自定义模型 / 删除 UI；动态模型发现待做 |
+| 时间/意图 | `DatetimeModule` 已移除时段词；`INTENT_ROUTER=0` 可关闭关键词硬路由（A/B 显示 memory 会掉，默认仍 1） |
 | `model_stats` | 内存统计，重启清零，未持久化 |
 | `evals` | 40 条用例已冻结（`cases_sha256` 指纹）；含 `tool_success_rate`；搜索已切 DeepSeek Search |
 | `ConfirmationStore` | 进程内内存，重启丢 pending；跨会话隔离已做 |

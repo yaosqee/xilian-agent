@@ -56,6 +56,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - Python 3.12+ async/await，uv 包管理
 - DeepSeek 纯云端路由：对话 `deepseek-flash`，`tier:reasoning` 保留 `deepseek-v4-pro`（ModelRouter）
 - Agent 循环：**本机 `.env` 已设 `LOOP_V2=1`**（走 `packages/agent/loop/`：预算/结构化回填/会话确认/真 token 流）；代码默认 0，回滚删掉该项即可
+- 意图路由：`INTENT_ROUTER=1` 默认保留关键词强制工具；`=0` 交给模型 auto（A/B 用，memory 类会掉）
 - 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；`MODEL_ROUTING_V2=1` 可切声明式 TOML；供应商 Key 存 DB（DB > env），Onboarding 已改为写 DB
 - SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
