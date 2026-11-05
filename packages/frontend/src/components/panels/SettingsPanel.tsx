@@ -551,6 +551,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
     routing, loading, saving, error,
     saveRoutingProfile, resetRoutingProfile,
   } = useModelStore();
+  const [tab, setTab] = useState<'profiles' | 'providers' | 'models' | 'routing' | 'embedding'>('profiles');
 
   if (loading && !routing) {
     return (
@@ -597,41 +598,79 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
         来源：{routing.source_path || 'config/model_routing.toml'}
       </p>
 
-      <RoutingBlock title="Providers">
-        {Object.entries(routing.providers).map(([name, p]) => (
-          <div key={name} style={routingCardStyle}>
-            <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</div>
-            <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
-              {p.base_url || '默认地址'} · key: {p.api_key_env}
-            </div>
-          </div>
-        ))}
-      </RoutingBlock>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 12 }}>
+        {([
+          ['profiles', 'Profiles'],
+          ['providers', '供应商'],
+          ['models', '模型'],
+          ['routing', '路由'],
+          ['embedding', 'Embedding'],
+        ] as const).map(([id, label]) => {
+          const active = tab === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              style={{
+                padding: '5px 9px', borderRadius: 8,
+                border: active
+                  ? '1px solid rgba(216, 180, 226, 0.45)'
+                  : '1px solid rgba(216, 180, 226, 0.16)',
+                background: active
+                  ? 'linear-gradient(135deg, rgba(255,183,197,0.35), rgba(216,180,226,0.35))'
+                  : 'rgba(255,255,255,0.35)',
+                color: active ? 'var(--color-pink-dark)' : 'var(--color-text-muted)',
+                cursor: 'pointer', fontSize: 10, fontFamily: 'inherit',
+              }}
+            >{label}</button>
+          );
+        })}
+      </div>
 
-      <RoutingBlock title="Models">
-        {Object.entries(routing.models).map(([name, m]) => (
-          <div key={name} style={routingCardStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</span>
-              <span style={{ color: 'var(--color-text-muted)' }}>{m.provider}</span>
+      <div style={{ display: tab === 'providers' ? 'block' : 'none' }}>
+        <RoutingBlock title="Providers">
+          {Object.entries(routing.providers).map(([name, p]) => (
+            <div key={name} style={routingCardStyle}>
+              <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</div>
+              <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
+                {p.base_url || '默认地址'} · key: {p.api_key_env}
+              </div>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-              {m.capabilities.map((cap) => (
-                <span key={cap} style={{
-                  fontSize: 10, padding: '1px 6px', borderRadius: 999,
-                  background: 'rgba(255, 183, 197, 0.16)',
-                  color: 'var(--color-pink-dark)',
-                }}>
-                  {CAP_LABELS[cap] || cap}
+          ))}
+          <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: '4px 0 0' }}>
+            新增供应商/模型暂未开放；当前由 config/model_routing.toml 定义。
+          </p>
+        </RoutingBlock>
+      </div>
+
+      <div style={{ display: tab === 'models' ? 'block' : 'none' }}>
+        <RoutingBlock title="Models">
+          {Object.entries(routing.models).map(([name, m]) => (
+            <div key={name} style={routingCardStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</span>
+                <span style={{ color: 'var(--color-text-muted)' }}>{m.provider}</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                {m.capabilities.map((cap) => (
+                  <span key={cap} style={{
+                    fontSize: 10, padding: '1px 6px', borderRadius: 999,
+                    background: 'rgba(255, 183, 197, 0.16)',
+                    color: 'var(--color-pink-dark)',
+                  }}>
+                    {CAP_LABELS[cap] || cap}
+                  </span>
+                ))}
+                <span style={{ fontSize: 10, color: 'var(--color-text-muted)', alignSelf: 'center' }}>
+                  ctx {Math.round(m.context_window / 1000)}k
                 </span>
-              ))}
-              <span style={{ fontSize: 10, color: 'var(--color-text-muted)', alignSelf: 'center' }}>
-                ctx {Math.round(m.context_window / 1000)}k
-              </span>
+              </div>
             </div>
-          </div>
-        ))}
-      </RoutingBlock>
+          ))}
+        </RoutingBlock>
+      </div>
+
+      <div style={{ display: tab === 'profiles' ? 'block' : 'none' }}>
 
       <RoutingBlock title="Profiles（可编辑）">
         {Object.entries(routing.profiles).map(([name, p]) => (
@@ -660,7 +699,9 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
           }}
         >恢复全部文件默认</button>
       </RoutingBlock>
+      </div>
 
+      <div style={{ display: tab === 'routing' ? 'block' : 'none' }}>
       <RoutingBlock title="Routing（task → profile → effective）">
         <div style={{
           display: 'grid', gridTemplateColumns: '1.1fr 0.9fr 1.5fr',
@@ -696,7 +737,9 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
           </div>
         ))}
       </RoutingBlock>
+      </div>
 
+      <div style={{ display: tab === 'embedding' ? 'block' : 'none' }}>
       <RoutingBlock title="Embedding">
         {routing.embedding ? (
           <div style={routingCardStyle}>
@@ -714,6 +757,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
           <p style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>未配置</p>
         )}
       </RoutingBlock>
+      </div>
 
       <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: 0 }}>
         Profiles 可编辑（写 DB source='ui'）；Models / Routing / Embedding 仍只读。路由变更在保存后立即生效。

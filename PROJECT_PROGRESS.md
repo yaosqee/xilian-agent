@@ -285,7 +285,7 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 写入 | `PUT /api/models/config` 支持 `profiles`；只写 `source='ui'` 的 `profile:<name>` 行 |
 | 恢复 | `POST /api/models/config/reset`：删 profile UI 覆盖，回到文件默认 |
 | 解析 | V2 只认 `source='ui'` 的 `profile:*`；`tier:*`/`override:*` 在 V2 下仍忽略 |
-| 面板 | Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑；单条/全部恢复 |
+| 面板 | 五块 tab（默认 Profiles）；Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑；单条/全部恢复 |
 | 测试 | 新增 6 条；全量 **714 passed / 8 skipped / 27s**；前端 build 通过 |
 
 边界：V2 默认关闭；task→profile 的 routing 仍由文件定义；provider 级失败 fallback / base_url 注入 / 打包 config 留到 M2-4。

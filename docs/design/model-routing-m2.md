@@ -397,7 +397,7 @@ uv run pytest -q --ignore=tests/test_personality_regression.py  # 708 passed / 8
 | `packages/shared/model_config.py` | `ProfileSpec.source`；`with_profile_overrides()` 合并 UI 覆盖并重算 fallback/source |
 | `packages/shared/model_router.py` | `_apply_routing_overrides()`：只消费 `source='ui'` 的 `profile:*` 行；坏覆盖告警并回退文件 |
 | `gateway/channels/http_channel.py` | `PUT /api/models/config` 支持 `profiles`；`POST /api/models/config/reset` 删除 UI 覆盖 |
-| 前端 | Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑、单 profile/全部恢复默认 |
+| 前端 | 五块改为 tab（默认 Profiles）；Profiles 主模型下拉、fallback 增删、temperature/max_tokens 编辑、单 profile/全部恢复默认 |
 
 验证：
 
