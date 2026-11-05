@@ -349,7 +349,7 @@ xilian-v3/
 ├── photo/                        # 🖼️ 背景图片 + 风格参考
 ├── alembic/                      # 🗄️ 数据库迁移
 ├── skills/manual/                # 🛠️ 4 个技能文件
-└── tests/                        # 🧪 725+ 条测试
+└── tests/                        # 🧪 729+ 条测试
 ```
 
 ---
@@ -382,6 +382,7 @@ xilian-v3/
 | `LOOP_V2` | 1 = 启用新 Agent 循环（含 SSE 工具事件/确认状态机/真 token 流） | 0 |
 | `INTENT_ROUTER` | 0 = 关闭关键词强制工具，交给模型 auto（A/B 用） | 1 |
 | `WEATHER_INTENT_ROUTER` | 0 = 仅天气交给模型 auto，memory/search 仍强制 | 1 |
+| `WEATHER_PROVIDER` | 天气数据源：auto / qweather / open-meteo / search | auto |
 | `MODEL_ROUTING_V2` | 1 = 启用 `config/model_routing.toml` 声明式路由（M2，试验） | 0 |
 | `MODEL_ROUTING_CONFIG` | 覆盖模型路由配置路径 | `config/model_routing.toml` |
 | `HTTP_PORT` | HTTP 服务端口 | 8000 |
