@@ -693,6 +693,7 @@ class HTTPChannel(Channel):
                 "vec_ok": vec_ok,
                 "encoding_state": self._agent.memory_manager.encoding_state,
                 "loop_v2": bool(getattr(self._agent, "_loop_v2", False)),
+                "routing_v2": bool(getattr(self._agent.router, "routing_v2", False)),
                 "model_stats": (
                     self._agent.router.stats
                     if hasattr(self._agent.router, "stats") else {}

@@ -324,8 +324,18 @@ class ModelRoutingConfig:
             raise ModelConfigError(f"未知模型: {model_name}")
         return model.to_policy()
 
-    def resolve(self, task_type: str, *, source: str = "file") -> ResolvedRoute:
-        """按 task → profile → 主模型/fallback 解析出实际路由。"""
+    def resolve(
+        self,
+        task_type: str,
+        *,
+        source: str = "file",
+        extra_requires: tuple[str, ...] | list[str] = (),
+    ) -> ResolvedRoute:
+        """按 task → profile → 主模型/fallback 解析出实际路由。
+
+        `extra_requires` 用于运行时追加硬性能力（如调用方传了 tools 时要求 tools），
+        不影响配置文件里的 profile.requires。
+        """
         profile_name = self.routing.get(task_type)
         if profile_name is None:
             group = _group_for_task(task_type)
@@ -342,6 +352,7 @@ class ModelRoutingConfig:
                 f"task_type={task_type!r} 引用了未知 profile {profile_name!r}"
             )
 
+        required = tuple(dict.fromkeys((*profile.requires, *extra_requires)))
         candidates = profile.candidates
         selected_index: int | None = None
         for index, model_name in enumerate(candidates):
@@ -350,13 +361,13 @@ class ModelRoutingConfig:
                 raise ModelConfigError(
                     f"profile {profile_name!r} 的模型 {model_name!r} 未在 [models] 定义"
                 )
-            if all(model.supports(cap) for cap in profile.requires):
+            if all(model.supports(cap) for cap in required):
                 selected_index = index
                 break
 
         if selected_index is None:
             raise ModelConfigError(
-                f"profile {profile_name!r} 没有满足能力 {list(profile.requires)} 的模型"
+                f"profile {profile_name!r} 没有满足能力 {list(required)} 的模型"
             )
 
         selected = candidates[selected_index]
@@ -369,7 +380,7 @@ class ModelRoutingConfig:
             temperature=profile.temperature,
             max_tokens=profile.max_tokens,
             fallbacks=candidates[selected_index + 1:],
-            requires=profile.requires,
+            requires=required,
             source=source,
             capability_fallback=selected_index > 0,
         )

@@ -3,7 +3,8 @@
 V3.3 → V3.4 升级：硬编码 DeepSeek Pro/Flash 二分 → Tier 系统 + Provider Adapter 委派。
 
 路由流程:
-    task_type → tier (TASK_TIER_MAP) → TierConfig (provider + model) → adapter.chat()
+    V1（默认）: task_type → tier (TASK_TIER_MAP) → TierConfig → adapter.chat()
+    V2（MODEL_ROUTING_V2=1）: task_type → profile → model + fallbacks → adapter.chat()
 
 向后兼容:
     仅设置 DEEPSEEK_API_KEY 的用户自动使用 DeepSeekAdapter，行为完全不变。
@@ -43,6 +44,13 @@ class ToolRelatedError(Exception):
     pass
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 class ModelRouter:
     """多供应商模型路由器。
 
@@ -62,6 +70,10 @@ class ModelRouter:
                 If None, uses env-vars only (backward compat).
         """
         self._db = db
+
+        # ── M2: 声明式路由（默认关闭，保持旧 tier 路径不变）──
+        self._routing_v2 = _env_flag("MODEL_ROUTING_V2", False)
+        self._routing_config = None
 
         # ── Adapter cache: provider_name → ProviderAdapter ──
         self._adapters: dict[str, ProviderAdapter] = {}
@@ -87,12 +99,44 @@ class ModelRouter:
 
         # ── Lazy init: create default DeepSeek adapter immediately ──
         self._init_default_adapter()
+        if self._routing_v2:
+            self._load_routing_config()
 
         logger.info(
             "ModelRouter 就绪 (multi-provider mode)",
             adapters=list(self._adapters.keys()),
             tiers=list(self._tier_configs.keys()),
+            routing_v2=self._routing_v2,
         )
+
+    @property
+    def routing_v2(self) -> bool:
+        return self._routing_v2
+
+    @property
+    def routing_config(self):
+        return self._routing_config
+
+    def _load_routing_config(self) -> None:
+        """加载并校验 `config/model_routing.toml`；失败直接抛出，不静默回退。"""
+        from .model_config import load_model_routing
+
+        config = load_model_routing()
+        self._routing_config = config
+        self._model_policies.clear()
+        logger.info(
+            "model_router.routing_v2_loaded",
+            path=str(config.source_path) if config.source_path else "",
+            models=sorted(config.models),
+            profiles=sorted(config.profiles),
+        )
+
+    def _resolve_routing_v2(self, task_type: str, tools: list | None = None):
+        """解析 M2 路由；tools 非空时把 tools 能力加入硬性要求。"""
+        if self._routing_config is None:
+            raise RuntimeError("MODEL_ROUTING_V2=1 但路由配置未加载")
+        extra = ("tools",) if tools else ()
+        return self._routing_config.resolve(task_type, extra_requires=extra)
 
     def _init_default_adapter(self):
         """Create default DeepSeek adapter from env vars (backward compat).
@@ -152,6 +196,10 @@ class ModelRouter:
         若 DB 无配置，fallback 到 _init_default_adapter() 的结果。
         调用时机：agent.startup() 完成后（DB 已初始化）。
         """
+        if self._routing_v2:
+            # 配置文件可能在热重载时被修改；先重新校验，失败则保留旧配置。
+            self._load_routing_config()
+
         if not self._db:
             logger.info("model_router.no_db — using env-var defaults")
             return
@@ -322,14 +370,16 @@ class ModelRouter:
         asyncio 下原子引用替换，线程安全。
         """
         if not self._db:
-            logger.warning("model_router.reload_no_db")
-            return
+            if not self._routing_v2:
+                logger.warning("model_router.reload_no_db")
+                return
 
         # 保存旧配置供回退（dict() 值拷贝，避免 initialize() 的 .clear() 清空引用）
         old_adapters = dict(self._adapters)
         old_tiers = dict(self._tier_configs)
         old_overrides = dict(self._task_overrides)
         old_embed = dict(self._embed_config) if self._embed_config else None
+        old_routing = self._routing_config
 
         try:
             await self.initialize()
@@ -340,6 +390,7 @@ class ModelRouter:
             self._tier_configs = old_tiers
             self._task_overrides = old_overrides
             self._embed_config = old_embed
+            self._routing_config = old_routing
             logger.error("model_router.reload_failed", error=str(e))
             raise
 
@@ -357,31 +408,73 @@ class ModelRouter:
     ) -> ProviderResponse | object:
         """路由主入口。
 
-        1. 解析 task_type → tier
-        2. 检查 task_type 覆盖
-        3. 解析 tier → provider + model
-        4. 调用 adapter.chat()
+        V1（默认）:
+          1. 解析 task_type → tier
+          2. 检查 task_type 覆盖
+          3. 解析 tier → provider + model
+          4. 调用 adapter.chat()
+
+        V2（MODEL_ROUTING_V2=1）:
+          1. 从声明式配置解析 task → profile → model + fallbacks
+          2. 创建/复用 provider adapter
+          3. 调用 adapter.chat()；显式参数优先于 profile 默认值
 
         Returns:
             ProviderResponse (normal) or raw stream object (when stream=True)
         """
-        # ── 1. 解析 tier ──
+        # ── 1. 解析 tier（V2 用声明式配置，V1 保持旧 tier 路径）──
         tier = TASK_TIER_MAP.get(task_type, "powerful")
         tier_cfg = self._tier_configs.get(tier)
+        v2_route = None
 
-        # ── 2. 检查 task_type 覆盖（高级设置）──
-        override = self._task_overrides.get(task_type)
-        if override:
+        if self._routing_v2:
+            v2_route = self._resolve_routing_v2(task_type, tools)
+            tier = v2_route.profile
             tier_cfg = TierConfig(
-                tier=tier,
-                provider=override.provider,
-                model_name=override.model_name,
-                temperature=kwargs.get("temperature", 0.7),
-                max_tokens=kwargs.get("max_tokens", 800),
+                tier=v2_route.profile,
+                provider=v2_route.provider,
+                model_name=v2_route.model,
+                temperature=v2_route.temperature,
+                max_tokens=v2_route.max_tokens,
             )
+        else:
+            # ── 2. 检查 task_type 覆盖（高级设置）──
+            override = self._task_overrides.get(task_type)
+            if override:
+                tier_cfg = TierConfig(
+                    tier=tier,
+                    provider=override.provider,
+                    model_name=override.model_name,
+                    temperature=kwargs.get("temperature", 0.7),
+                    max_tokens=kwargs.get("max_tokens", 800),
+                )
 
         # ── 3. 获取 adapter ──
-        if tier_cfg is None:
+        if v2_route is not None:
+            provider = v2_route.provider
+            adapter = self._adapters.get(provider)
+            if adapter is None:
+                adapter = self._create_adapter(provider)
+                if adapter is not None:
+                    self._adapters[provider] = adapter
+            if adapter is None:
+                raise RuntimeError(
+                    f"MODEL_ROUTING_V2 选中的供应商 '{provider}' 不可用；"
+                    "请检查对应 API Key。"
+                )
+            model = v2_route.model
+            # 显式传入的温度/max_tokens 优先；否则用 profile 默认值。
+            kwargs.setdefault("temperature", v2_route.temperature)
+            kwargs.setdefault("max_tokens", v2_route.max_tokens)
+            logger.debug(
+                "model_router.routing_v2",
+                task=task_type,
+                profile=v2_route.profile,
+                provider=provider,
+                model=model,
+                fallback=v2_route.capability_fallback,
+            )
+        elif tier_cfg is None:
             # 无配置 → fallback 到第一个可用 adapter
             if self._adapters:
                 provider = next(iter(self._adapters.keys()))
@@ -663,6 +756,14 @@ class ModelRouter:
         key = f"{provider}:{model}"
         if key in self._model_policies:
             return self._model_policies[key]
+        if self._routing_v2 and self._routing_config is not None:
+            try:
+                policy = self._routing_config.policy_for(model)
+            except Exception:
+                policy = None
+            if policy is not None:
+                self._model_policies[key] = policy
+                return policy
         adapter = self._adapters.get(provider)
         if adapter is not None:
             policy = policy_from_adapter(adapter, provider, model)
@@ -730,6 +831,10 @@ class ModelRouter:
             self._tools_support_cache.pop(model_key, None)
             logger.info("model_router.tools_reenabled", model=model_key)
 
+        # V2: 配置文件是能力事实，不再让旧缓存覆盖它。
+        if self._routing_v2:
+            return True
+
         # 兼容旧缓存字段（测试/旧调用方可能直接写入）
         return self._tools_support_cache.get(model_key, True)
 
@@ -739,6 +844,11 @@ class ModelRouter:
 
     def supports_vision(self, provider: str, model: str) -> bool:
         """检查指定模型是否支持视觉输入（image）。"""
+        if self._routing_v2 and self._routing_config is not None:
+            try:
+                return self._routing_config.policy_for(model).supports_vision
+            except Exception:
+                pass
         adapter = self._adapters.get(provider)
         if adapter is None:
             return False
@@ -758,6 +868,13 @@ class ModelRouter:
         否则返回 powerful tier 配置。
         """
         # ── 1. 检查 chat task override（与 route() 行为保持一致）──
+        if self._routing_v2 and self._routing_config is not None:
+            try:
+                route = self._routing_config.resolve("chat")
+                return route.provider, route.model
+            except Exception:
+                pass
+
         override = self._task_overrides.get("chat")
         if override:
             return override.provider, override.model_name

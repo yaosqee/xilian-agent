@@ -141,6 +141,39 @@ tool_decision = "tool"
     assert route.fallbacks == ()
 
 
+def test_extra_tools_requirement_uses_fallback(tmp_path):
+    path = _write_config(
+        tmp_path,
+        """
+version = 1
+
+[providers.mock]
+api_key_env = "MOCK_KEY"
+
+[models.no_tools]
+provider = "mock"
+capabilities = ["streaming"]
+
+[models.with_tools]
+provider = "mock"
+capabilities = ["tools"]
+
+[profiles.dialogue]
+model = "no_tools"
+fallbacks = ["with_tools"]
+
+[routing]
+chat = "dialogue"
+""",
+    )
+    config = load_model_routing(path)
+
+    route = config.resolve("chat", extra_requires=("tools",))
+    assert route.model == "with_tools"
+    assert route.requires == ("tools",)
+    assert route.capability_fallback is True
+
+
 def test_invalid_model_reference_is_rejected(tmp_path):
     path = _write_config(
         tmp_path,

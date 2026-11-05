@@ -8,11 +8,17 @@ import sys
 sys.path.insert(0, ".")
 
 import os
+from pathlib import Path
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from packages.shared.model_config import ModelConfigError
 from packages.shared.model_router import ModelRouter, ToolRelatedError
 from packages.shared.providers import TierConfig, ProviderResponse, PROVIDER_REGISTRY
+
+
+DEFAULT_ROUTING_CONFIG = Path(__file__).resolve().parent.parent / "config" / "model_routing.toml"
 
 
 class TestModelRouter:
@@ -243,3 +249,124 @@ class TestModelRouter:
         # M2: reasoning/code/planning 不再落回 dialogue
         assert task_group("reasoning") == "reasoning"
         assert task_group("code") == "reasoning"
+
+
+class TestRoutingV2:
+    """M2-2：声明式路由接入（默认关闭）。"""
+
+    @staticmethod
+    def _router_with_fake_adapter():
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_ROUTING_V2": "1",
+                "MODEL_ROUTING_CONFIG": str(DEFAULT_ROUTING_CONFIG),
+            },
+            clear=True,
+        ):
+            router = ModelRouter()
+
+        adapter = MagicMock()
+        adapter.chat = AsyncMock(
+            return_value=ProviderResponse(content="ok", tool_calls=None)
+        )
+        adapter.get_available_models.return_value = []
+        router._adapters["deepseek"] = adapter
+        return router, adapter
+
+    def test_flag_defaults_off(self):
+        with patch.dict(os.environ, {}, clear=True):
+            router = ModelRouter()
+            assert router.routing_v2 is False
+            assert router.routing_config is None
+
+    def test_missing_config_fails_fast(self, tmp_path):
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_ROUTING_V2": "1",
+                "MODEL_ROUTING_CONFIG": str(tmp_path / "missing.toml"),
+            },
+            clear=True,
+        ):
+            with pytest.raises(ModelConfigError, match="不存在"):
+                ModelRouter()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("task_type", "expected_model"),
+        [
+            ("chat", "deepseek-flash"),
+            ("empathy", "deepseek-flash"),
+            ("memory_encoding", "deepseek-flash"),
+            ("autobiography", "deepseek-flash"),
+            ("reasoning", "deepseek-v4-pro"),
+            ("code", "deepseek-v4-pro"),
+            ("planning", "deepseek-v4-pro"),
+            ("personality_check", "deepseek-flash"),
+            ("tool_result_wrap", "deepseek-flash"),
+            ("tool_decision", "deepseek-flash"),
+        ],
+    )
+    async def test_golden_routes_match_current_config(self, task_type, expected_model):
+        router, adapter = self._router_with_fake_adapter()
+
+        await router.route(task_type, [{"role": "user", "content": "hi"}])
+
+        assert adapter.chat.await_args.kwargs["model"] == expected_model
+
+    @pytest.mark.asyncio
+    async def test_v2_ignores_legacy_tier_rows(self):
+        router, adapter = self._router_with_fake_adapter()
+        router._tier_configs["powerful"] = TierConfig(
+            tier="powerful", provider="deepseek", model_name="deepseek-v4-pro",
+            temperature=0.65, max_tokens=800,
+        )
+
+        await router.route("chat", [{"role": "user", "content": "hi"}])
+
+        assert adapter.chat.await_args.kwargs["model"] == "deepseek-flash"
+
+    @pytest.mark.asyncio
+    async def test_v2_uses_profile_defaults_when_not_passed(self):
+        router, adapter = self._router_with_fake_adapter()
+
+        await router.route("chat", [{"role": "user", "content": "hi"}])
+        chat_kwargs = adapter.chat.await_args.kwargs
+        assert chat_kwargs["temperature"] == 0.65
+        assert chat_kwargs["max_tokens"] == 800
+
+        await router.route("reasoning", [{"role": "user", "content": "hi"}])
+        reasoning_kwargs = adapter.chat.await_args.kwargs
+        assert reasoning_kwargs["temperature"] == 0.3
+        assert reasoning_kwargs["max_tokens"] == 2000
+
+    @pytest.mark.asyncio
+    async def test_v2_explicit_params_override_profile(self):
+        router, adapter = self._router_with_fake_adapter()
+
+        await router.route(
+            "chat",
+            [{"role": "user", "content": "hi"}],
+            temperature=0.2,
+            max_tokens=123,
+        )
+
+        kwargs = adapter.chat.await_args.kwargs
+        assert kwargs["temperature"] == 0.2
+        assert kwargs["max_tokens"] == 123
+
+    def test_v2_current_model_info(self):
+        router, _ = self._router_with_fake_adapter()
+        assert router.get_current_model_info() == ("deepseek", "deepseek-flash")
+
+    def test_v2_policy_comes_from_config(self):
+        router, _ = self._router_with_fake_adapter()
+        policy = router.get_model_policy("deepseek", "deepseek-v4-pro")
+        assert policy.supports_tools is True
+        assert policy.supports_thinking is True
+
+    def test_v2_config_policy_wins_over_legacy_tool_cache(self):
+        router, _ = self._router_with_fake_adapter()
+        router._tools_support_cache["deepseek:deepseek-flash"] = False
+        assert router._supports_tools("deepseek:deepseek-flash") is True
