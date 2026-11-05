@@ -160,3 +160,26 @@
 - multi_step 两者都 100%。
 
 `INTENT_ROUTER=0` 保留为 A/B/回滚开关，默认 1。
+
+---
+
+## 第七轮：天气单独 auto（2026-11-05）
+
+只把天气交给模型，memory/search 继续强制：
+
+```bash
+INTENT_ROUTER=1 WEATHER_INTENT_ROUTER=0
+```
+
+| 指标 | 天气强制（默认） | 天气 auto |
+|---|---:|---:|
+| 通过率 | **87.5%** | 75% / 50% |
+| 工具调用率 | 100% | 100% |
+| 正确工具率 | 100% | 87.5% |
+
+天气 auto 的问题：
+
+- weather-06 模型选了 `search_web` 而不是 `query_weather`；
+- 其余失败仍是回复没重复城市名/关键词，不是工具执行失败。
+
+结论：**天气仍保留强制路由**；`WEATHER_INTENT_ROUTER=0` 保留作实验开关。
