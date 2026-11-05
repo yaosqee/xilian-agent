@@ -296,6 +296,8 @@ class AgentCore:
         self._loop_v2: bool = _env_flag("LOOP_V2", False)
         # 旧关键词强制路由：默认保留；INTENT_ROUTER=0 交给模型 auto
         self._intent_router: bool = _env_flag("INTENT_ROUTER", True)
+        # 天气可以单独改 auto，memory/search 仍由 INTENT_ROUTER 控制
+        self._weather_intent_router: bool = _env_flag("WEATHER_INTENT_ROUTER", True)
         self._loop_budget = LoopBudget(
             max_steps=_env_int("LOOP_V2_MAX_STEPS", 6),
             max_tokens=_env_int("LOOP_V2_MAX_TOKENS", 20_000),
@@ -1806,7 +1808,9 @@ class AgentCore:
         模型物理上不可能不调，从根上杜绝「偷懒编造」。
         """
         # 天气意图：天气触发词 +（城市名 或 泛指时间/位置）
-        if any(t in payload for t in self._WEATHER_TRIGGERS):
+        if getattr(self, "_weather_intent_router", True) and any(
+            t in payload for t in self._WEATHER_TRIGGERS
+        ):
             if self._CITY_PATTERN.search(payload) or any(
                 t in payload for t in ("今天", "明天", "后天", "现在", "外面")
             ):
