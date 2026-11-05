@@ -325,11 +325,68 @@ export interface TierModelConfig {
   max_tokens?: number;
 }
 
+export interface RoutingProviderInfo {
+  base_url: string;
+  api_key_env: string;
+}
+
+export interface RoutingModelInfo {
+  provider: string;
+  capabilities: string[];
+  context_window: number;
+  max_output_tokens: number;
+  cost_per_1k_in: number;
+  cost_per_1k_out: number;
+  known_failures: string[];
+}
+
+export interface RoutingProfileInfo {
+  model: string;
+  fallbacks: string[];
+  temperature: number;
+  max_tokens: number;
+  requires: string[];
+}
+
+export interface RoutingEmbeddingInfo {
+  provider: string;
+  model: string;
+  dimensions: number;
+  base_url: string;
+  api_key_env: string;
+}
+
+export interface EffectiveRoute {
+  task_type?: string;
+  profile?: string;
+  model?: string;
+  provider?: string;
+  temperature?: number;
+  max_tokens?: number;
+  fallbacks?: string[];
+  requires?: string[];
+  source?: string;
+  capability_fallback?: boolean;
+  error?: string;
+}
+
+export interface RoutingConfigData {
+  version: number;
+  source_path: string;
+  providers: Record<string, RoutingProviderInfo>;
+  models: Record<string, RoutingModelInfo>;
+  profiles: Record<string, RoutingProfileInfo>;
+  embedding: RoutingEmbeddingInfo | null;
+  effective: Record<string, EffectiveRoute>;
+}
+
 export interface ModelConfigResponse {
   tiers: Record<string, TierModelConfig>;
   overrides: Record<string, TierModelConfig>;
   embed: { provider: string; model: string; base_url?: string } | null;
   adapters: string[];
+  routing_v2?: boolean;
+  routing?: RoutingConfigData | null;
 }
 
 export interface ModelConfigPatch {

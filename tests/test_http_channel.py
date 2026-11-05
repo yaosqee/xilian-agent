@@ -265,6 +265,34 @@ def test_tool_result_frame_marks_confirmation():
     assert result["error"] == ""
 
 
+def test_model_config_exposes_effective_routing(client, http_channel):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from packages.shared.model_config import load_model_routing
+
+    config = load_model_routing()
+    db = SimpleNamespace(
+        get_model_configs=AsyncMock(return_value=[]),
+        get_embed_config=AsyncMock(return_value=None),
+    )
+    router = SimpleNamespace(
+        _tier_configs={},
+        _adapters={"deepseek": object()},
+        _embed_config=None,
+        routing_v2=True,
+        routing_config=config,
+    )
+    http_channel._agent = SimpleNamespace(_db=db, router=router)
+
+    resp = client.get("/api/models/config")
+    data = resp.json()
+
+    assert data["routing_v2"] is True
+    assert data["routing"]["effective"]["chat"]["model"] == "deepseek-flash"
+    assert data["routing"]["source_path"].endswith("model_routing.toml")
+    assert "api_key_env" in data["routing"]["providers"]["deepseek"]
+
+
 class TestCORS:
     def test_cors_headers(self, client):
         """CORS 预检请求应有正确的头部"""

@@ -1188,11 +1188,42 @@ class HTTPChannel(Channel):
                         "base_url": rc.get("base_url", ""),
                     }
 
+                routing_v2 = bool(getattr(http._agent.router, "routing_v2", False))
+                routing_info = None
+                routing_config = getattr(http._agent.router, "routing_config", None)
+                if routing_v2 and routing_config is not None:
+                    routing_info = {
+                        "version": routing_config.version,
+                        "source_path": (
+                            str(routing_config.source_path)
+                            if routing_config.source_path else ""
+                        ),
+                        "providers": {
+                            name: item.to_dict()
+                            for name, item in routing_config.providers.items()
+                        },
+                        "models": {
+                            name: item.to_dict()
+                            for name, item in routing_config.models.items()
+                        },
+                        "profiles": {
+                            name: item.to_dict()
+                            for name, item in routing_config.profiles.items()
+                        },
+                        "embedding": (
+                            routing_config.embedding.to_dict()
+                            if routing_config.embedding else None
+                        ),
+                        "effective": routing_config.effective_routes(source="file"),
+                    }
+
                 return {
                     "tiers": tiers,
                     "overrides": overrides,
                     "embed": embed_info,
                     "adapters": list(http._agent.router._adapters.keys()),
+                    "routing_v2": routing_v2,
+                    "routing": routing_info,
                 }
             except Exception as e:
                 logger.warning("api.models.config_error", error=str(e))

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
-import type { ProviderInfo, TierModelConfig, ModelConfigResponse } from '../services/api';
+import type {
+  ProviderInfo, TierModelConfig, ModelConfigResponse, RoutingConfigData,
+} from '../services/api';
 import {
   fetchModelProviders,
   fetchModelConfig,
@@ -17,6 +19,8 @@ interface ModelState {
   overrides: Record<string, TierModelConfig>;
   embedConfig: { provider: string; model: string; base_url?: string } | null;
   adapters: string[];
+  routingV2: boolean;
+  routing: RoutingConfigData | null;
 
   // UI state
   loading: boolean;
@@ -37,6 +41,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
   overrides: {},
   embedConfig: null,
   adapters: [],
+  routingV2: false,
+  routing: null,
   loading: false,
   saving: false,
   error: null,
@@ -61,6 +67,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
           overrides: data.overrides || {},
           embedConfig: data.embed || null,
           adapters: data.adapters || [],
+          routingV2: data.routing_v2 === true,
+          routing: data.routing || null,
           loading: false,
           error: null,
         });

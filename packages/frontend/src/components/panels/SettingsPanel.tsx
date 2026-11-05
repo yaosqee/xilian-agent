@@ -333,10 +333,201 @@ const ModelSettingsSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({
 
 // ═══════════════════════════════════════════════════════════
 
+const CAP_LABELS: Record<string, string> = {
+  tools: '工具',
+  vision: '视觉',
+  streaming: '流式',
+  thinking: '思考',
+};
+
+const RoutingBlock: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div style={{ marginBottom: 16 }}>
+    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text)', marginBottom: 6 }}>
+      {title}
+    </div>
+    {children}
+  </div>
+);
+
+const routingCardStyle: React.CSSProperties = {
+  padding: '8px 10px',
+  borderRadius: 9,
+  background: 'rgba(255, 255, 255, 0.45)',
+  border: '1px solid rgba(216, 180, 226, 0.18)',
+  marginBottom: 6,
+  fontSize: 11,
+};
+
+const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ sectionStyle }) => {
+  const { routing, loading, error } = useModelStore();
+
+  if (loading && !routing) {
+    return (
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 10 }}>
+          模型路由
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>加载中...</p>
+      </div>
+    );
+  }
+
+  if (!routing) {
+    return (
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 10 }}>
+          模型路由
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+          {error || 'V2 路由配置未加载'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)' }}>
+          模型路由
+        </div>
+        <span style={{
+          fontSize: 10, padding: '1px 6px', borderRadius: 999,
+          color: 'var(--color-purple-dark)',
+          background: 'rgba(216, 180, 226, 0.18)',
+        }}>
+          M2 只读
+        </span>
+      </div>
+      <p style={{
+        fontSize: 10, color: 'var(--color-text-muted)', margin: '0 0 12px',
+        wordBreak: 'break-all',
+      }}>
+        来源：{routing.source_path || 'config/model_routing.toml'}
+      </p>
+
+      <RoutingBlock title="Providers">
+        {Object.entries(routing.providers).map(([name, p]) => (
+          <div key={name} style={routingCardStyle}>
+            <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</div>
+            <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
+              {p.base_url || '默认地址'} · key: {p.api_key_env}
+            </div>
+          </div>
+        ))}
+      </RoutingBlock>
+
+      <RoutingBlock title="Models">
+        {Object.entries(routing.models).map(([name, m]) => (
+          <div key={name} style={routingCardStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</span>
+              <span style={{ color: 'var(--color-text-muted)' }}>{m.provider}</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+              {m.capabilities.map((cap) => (
+                <span key={cap} style={{
+                  fontSize: 10, padding: '1px 6px', borderRadius: 999,
+                  background: 'rgba(255, 183, 197, 0.16)',
+                  color: 'var(--color-pink-dark)',
+                }}>
+                  {CAP_LABELS[cap] || cap}
+                </span>
+              ))}
+              <span style={{ fontSize: 10, color: 'var(--color-text-muted)', alignSelf: 'center' }}>
+                ctx {Math.round(m.context_window / 1000)}k
+              </span>
+            </div>
+          </div>
+        ))}
+      </RoutingBlock>
+
+      <RoutingBlock title="Profiles">
+        {Object.entries(routing.profiles).map(([name, p]) => (
+          <div key={name} style={routingCardStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</span>
+              <span style={{ color: 'var(--color-text-muted)' }}>{p.model}</span>
+            </div>
+            <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
+              temp {p.temperature} · max {p.max_tokens}
+              {p.requires.length > 0 ? ` · 需要 ${p.requires.map(c => CAP_LABELS[c] || c).join('/')}` : ''}
+            </div>
+            {p.fallbacks.length > 0 && (
+              <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
+                fallback: {p.fallbacks.join(' → ')}
+              </div>
+            )}
+          </div>
+        ))}
+      </RoutingBlock>
+
+      <RoutingBlock title="Routing（task → profile → effective）">
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1.1fr 0.9fr 1.5fr',
+          gap: 6, fontSize: 10, color: 'var(--color-text-muted)',
+          padding: '0 2px 4px',
+        }}>
+          <span>task</span>
+          <span>profile</span>
+          <span>effective</span>
+        </div>
+        {Object.entries(routing.effective).map(([task, r]) => (
+          <div
+            key={task}
+            style={{
+              display: 'grid', gridTemplateColumns: '1.1fr 0.9fr 1.5fr',
+              gap: 6, padding: '5px 2px',
+              borderTop: '1px solid rgba(216, 180, 226, 0.12)',
+            }}
+          >
+            <code style={{ fontSize: 10, color: 'var(--color-text)' }}>{task}</code>
+            <span style={{ color: 'var(--color-text-muted)' }}>{r.profile || '—'}</span>
+            <span
+              title={r.error || ''}
+              style={{
+                color: r.error ? '#c56b86' : 'var(--color-text-dim)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              {r.error ? '配置错误' : `${r.provider} / ${r.model}${r.source ? ` · ${r.source}` : ''}`}
+              {!r.error && r.fallbacks && r.fallbacks.length > 0
+                ? ` (→ ${r.fallbacks.join(' → ')})` : ''}
+            </span>
+          </div>
+        ))}
+      </RoutingBlock>
+
+      <RoutingBlock title="Embedding">
+        {routing.embedding ? (
+          <div style={routingCardStyle}>
+            <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
+              {routing.embedding.provider} / {routing.embedding.model}
+            </div>
+            <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
+              {routing.embedding.dimensions} 维 · {routing.embedding.base_url || '默认地址'}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>
+              换向量模型需要重新索引，M2-3a 只读
+            </div>
+          </div>
+        ) : (
+          <p style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>未配置</p>
+        )}
+      </RoutingBlock>
+
+      <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: 0 }}>
+        可编辑面板在 M2-3b；当前只展示生效路由与来源。
+      </p>
+    </div>
+  );
+};
+
 // ═══════════════════════════════════════════════════════════
 
 export const SettingsPanel: React.FC = () => {
   const clearMessages = useChatStore((s) => s.clearMessages);
+  const routingV2 = useModelStore((s) => s.routingV2);
   const {
     status, loading, refreshStatus,
     doPause, doResume, updateSettings,
@@ -568,8 +759,10 @@ export const SettingsPanel: React.FC = () => {
         </button>
       </div>
 
-      {/* ── 模型设置（V3.4: 多供应商）── */}
-      <ModelSettingsSection sectionStyle={sectionStyle} />
+      {/* ── 模型设置（V3.4: 多供应商 / M2: 声明式路由只读）── */}
+      {routingV2
+        ? <ModelRoutingSection sectionStyle={sectionStyle} />
+        : <ModelSettingsSection sectionStyle={sectionStyle} />}
 
       {/* ── 会话重置 ── */}
       <div>
