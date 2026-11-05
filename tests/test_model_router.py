@@ -399,3 +399,17 @@ class TestRoutingV2:
         route = router.routing_config.resolve("chat")
         assert route.source == "ui"
         assert route.fallbacks == ("deepseek-flash",)
+
+    @pytest.mark.asyncio
+    async def test_v2_non_tool_error_uses_fallback(self):
+        router, adapter = self._router_with_fake_adapter()
+        adapter.chat = AsyncMock(side_effect=[
+            RuntimeError("timeout"),
+            ProviderResponse(content="fallback-ok", tool_calls=None),
+        ])
+
+        result = await router.route("chat", [{"role": "user", "content": "hi"}])
+
+        assert result.content == "fallback-ok"
+        assert adapter.chat.await_count == 2
+        assert adapter.chat.await_args.kwargs["model"] == "deepseek-v4-pro"

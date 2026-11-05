@@ -64,10 +64,12 @@ class GoogleAdapter:
     supports_prefix_cache = False
     supports_embedding = True
 
-    def __init__(self):
-        api_key = os.getenv("GOOGLE_API_KEY", "")
-        base_url = os.getenv("GOOGLE_BASE_URL",
-                             "https://generativelanguage.googleapis.com/v1beta/openai/")
+    def __init__(self, api_key: str | None = None, base_url: str | None = None):
+        api_key = api_key or os.getenv("GOOGLE_API_KEY", "")
+        base_url = base_url or os.getenv(
+            "GOOGLE_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
 
         _api_timeout = httpx.Timeout(connect=15.0, read=120.0, write=120.0, pool=30.0)
 

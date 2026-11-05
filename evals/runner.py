@@ -119,14 +119,17 @@ class LiveAgentAdapter:
     simulated = False
 
     def __init__(self, loop_v2: bool, *, timeout: float = 120.0,
-                 db_dir: Path | None = None, thinking: bool = False):
+                 db_dir: Path | None = None, thinking: bool = False,
+                 routing_v2: bool = False):
         self.loop_v2 = loop_v2
+        self.routing_v2 = routing_v2
         self.timeout = timeout
         self.db_dir = db_dir
         self.thinking = thinking
         self.agent = None
         self._tmp: tempfile.TemporaryDirectory | None = None
         self._old_loop_v2: str | None = None
+        self._old_routing_v2: str | None = None
         self._old_thinking: str | None = None
         self.available_tools: list[str] = []
         self._tool_calls: list[dict[str, Any]] = []
@@ -136,8 +139,10 @@ class LiveAgentAdapter:
     async def start(self) -> None:
         # AgentCore.__init__ / DeepSeekAdapter 会读环境变量，必须在构造前设置
         self._old_loop_v2 = os.environ.get("LOOP_V2")
+        self._old_routing_v2 = os.environ.get("MODEL_ROUTING_V2")
         self._old_thinking = os.environ.get("DEEPSEEK_DISABLE_THINKING")
         os.environ["LOOP_V2"] = "1" if self.loop_v2 else "0"
+        os.environ["MODEL_ROUTING_V2"] = "1" if self.routing_v2 else "0"
         # thinking 开启时 DeepSeek 不接受 tool_choice 强制指定，P3 默认关闭
         os.environ["DEEPSEEK_DISABLE_THINKING"] = "0" if self.thinking else "1"
 
@@ -287,6 +292,10 @@ class LiveAgentAdapter:
                 os.environ.pop("DEEPSEEK_DISABLE_THINKING", None)
             else:
                 os.environ["DEEPSEEK_DISABLE_THINKING"] = self._old_thinking
+            if self._old_routing_v2 is None:
+                os.environ.pop("MODEL_ROUTING_V2", None)
+            else:
+                os.environ["MODEL_ROUTING_V2"] = self._old_routing_v2
             if self._tmp is not None:
                 self._tmp.cleanup()
 
@@ -403,13 +412,15 @@ async def run_mode(
     timeout: float,
     db_dir: Path | None,
     thinking: bool = False,
+    routing_v2: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     if mode == "fake":
         adapter: Any = ScriptedAdapter()
     else:
         adapter = LiveAgentAdapter(
-            mode == "loop", timeout=timeout, db_dir=db_dir, thinking=thinking
+            mode == "loop", timeout=timeout, db_dir=db_dir, thinking=thinking,
+            routing_v2=routing_v2,
         )
         try:
             await adapter.start()
@@ -426,6 +437,7 @@ async def run_mode(
         "mode": mode,
         "simulated": adapter.simulated,
         "thinking": getattr(adapter, "thinking", None),
+        "routing_v2": bool(getattr(adapter, "routing_v2", False)),
         "available_tools": list(getattr(adapter, "available_tools", [])),
         "duration_sec": round(time.perf_counter() - started, 2),
         **result,
@@ -458,6 +470,7 @@ async def main_async(args: argparse.Namespace) -> int:
         results[mode] = await run_mode(
             mode, cases, timeout=args.timeout, db_dir=db_dir,
             thinking=args.thinking == "on",
+            routing_v2=args.routing_v2 and mode == "loop",
         )
         logger.info(
             "evals.mode_done", mode=mode,
@@ -505,6 +518,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--thinking", default="off", choices=["on", "off"],
         help="DeepSeek thinking；默认 off（thinking 开启时强制 tool_choice 会 400）",
+    )
+    parser.add_argument(
+        "--routing-v2", action="store_true",
+        help="loop 模式使用 MODEL_ROUTING_V2=1（legacy 仍用 V1）",
     )
     parser.add_argument(
         "--cases", default=str(DEFAULT_CASES),

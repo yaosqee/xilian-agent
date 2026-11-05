@@ -73,26 +73,31 @@ class DeepSeekAdapter:
     supports_prefix_cache = True
     supports_embedding = True
 
-    def __init__(self):
+    def __init__(self, api_key: str | None = None, base_url: str | None = None):
         _api_timeout = httpx.Timeout(connect=15.0, read=120.0, write=120.0, pool=30.0)
+        _base_url = base_url or "https://api.deepseek.com"
 
         # === Pro clients (dual-key round-robin) ===
-        self._pro_keys = [
-            k for k in [
-                os.getenv("DEEPSEEK_API_KEY"),
-                os.getenv("DEEPSEEK_API_KEY_2"),
-            ] if k
-        ]
+        if api_key:
+            pro_keys = [api_key]
+        else:
+            pro_keys = [
+                k for k in [
+                    os.getenv("DEEPSEEK_API_KEY"),
+                    os.getenv("DEEPSEEK_API_KEY_2"),
+                ] if k
+            ]
+        self._pro_keys = pro_keys
         self._pro_clients = [
-            AsyncOpenAI(api_key=k, base_url="https://api.deepseek.com",
+            AsyncOpenAI(api_key=k, base_url=_base_url,
                         timeout=_api_timeout, max_retries=1)
             for k in self._pro_keys
         ] if self._pro_keys else []
 
         # === Flash client ===
-        flash_key = os.getenv("DEEPSEEK_API_KEY_2") or os.getenv("DEEPSEEK_API_KEY")
+        flash_key = api_key or os.getenv("DEEPSEEK_API_KEY_2") or os.getenv("DEEPSEEK_API_KEY")
         self._flash_client = AsyncOpenAI(
-            api_key=flash_key, base_url="https://api.deepseek.com",
+            api_key=flash_key, base_url=_base_url,
             timeout=_api_timeout, max_retries=1,
         ) if flash_key else None
 

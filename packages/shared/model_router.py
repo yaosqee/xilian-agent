@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import time as _time_module
+from dataclasses import replace
 
 from loguru import logger
 
@@ -186,6 +187,20 @@ class ModelRouter:
             raise RuntimeError("MODEL_ROUTING_V2=1 但路由配置未加载")
         extra = ("tools",) if tools else ()
         return self._routing_config.resolve(task_type, extra_requires=extra)
+
+    def _next_v2_route(self, route):
+        """返回 fallback 链上的下一个 ResolvedRoute；没有则 None。"""
+        if route is None or not route.fallbacks:
+            return None
+        next_model = route.fallbacks[0]
+        spec = self._routing_config.models[next_model]
+        return replace(
+            route,
+            model=next_model,
+            provider=spec.provider,
+            fallbacks=route.fallbacks[1:],
+            capability_fallback=True,
+        )
 
     def _init_default_adapter(self):
         """Create default DeepSeek adapter from env vars (backward compat).
@@ -378,9 +393,16 @@ class ModelRouter:
                 if adapter:
                     self._adapters[provider] = adapter
 
-    def _create_adapter(self, provider: str) -> ProviderAdapter | None:
+    def _create_adapter(
+        self,
+        provider: str,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> ProviderAdapter | None:
         """创建指定供应商的 adapter。从 PROVIDER_REGISTRY 懒导入。
 
+        可选传入配置里的 api_key/base_url；旧调用不传时行为不变。
         创建后自动从 ModelInfo 预热 _tools_support_cache，
         避免依赖运行时 tool error 检测（节省一次 API 往返）。
         """
@@ -393,7 +415,16 @@ class ModelRouter:
         try:
             mod = importlib.import_module(module_path)
             cls = getattr(mod, class_name)
-            adapter = cls()
+            kwargs = {}
+            if api_key:
+                kwargs["api_key"] = api_key
+            if base_url:
+                kwargs["base_url"] = base_url
+            try:
+                adapter = cls(**kwargs)
+            except TypeError:
+                # 兼容不接受这些参数的专用 adapter（如 MiMo）
+                adapter = cls()
 
             # ── 预热 tool compatibility cache ──
             try:
@@ -458,6 +489,7 @@ class ModelRouter:
         messages: list,
         tools: list | None = None,
         tool_choice: str | None = None,
+        _v2_route=None,
         **kwargs,
     ) -> ProviderResponse | object:
         """路由主入口。
@@ -482,7 +514,7 @@ class ModelRouter:
         v2_route = None
 
         if self._routing_v2:
-            v2_route = self._resolve_routing_v2(task_type, tools)
+            v2_route = _v2_route or self._resolve_routing_v2(task_type, tools)
             tier = v2_route.profile
             tier_cfg = TierConfig(
                 tier=v2_route.profile,
@@ -508,7 +540,17 @@ class ModelRouter:
             provider = v2_route.provider
             adapter = self._adapters.get(provider)
             if adapter is None:
-                adapter = self._create_adapter(provider)
+                provider_spec = (
+                    self._routing_config.providers.get(provider)
+                    if self._routing_config is not None else None
+                )
+                adapter = self._create_adapter(
+                    provider,
+                    api_key=(
+                        provider_spec.resolve_api_key() if provider_spec else None
+                    ),
+                    base_url=provider_spec.base_url if provider_spec else None,
+                )
                 if adapter is not None:
                     self._adapters[provider] = adapter
             if adapter is None:
@@ -602,6 +644,25 @@ class ModelRouter:
                 result, adapter, model_key, model, messages, tools, tool_choice, kwargs,
             )
         except Exception as e:
+            # V2: 非 tool 类错误（超时/限流/鉴权等）先尝试 fallback 链。
+            next_route = self._next_v2_route(v2_route) if self._routing_v2 else None
+            if next_route is not None and not _is_tool_error(e):
+                logger.warning(
+                    "model_router.v2_fallback",
+                    task=task_type,
+                    from_model=model_key,
+                    to_model=f"{next_route.provider}:{next_route.model}",
+                    error=f"{type(e).__name__}: {e}"[:200],
+                )
+                return await self.route(
+                    task_type,
+                    messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    _v2_route=next_route,
+                    **kwargs,
+                )
+
             if not tools:
                 raise
 

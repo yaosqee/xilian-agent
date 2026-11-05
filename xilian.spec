@@ -26,6 +26,8 @@ a = Analysis(
         ('alembic', 'alembic'),
         # alembic.ini — migration config
         ('alembic.ini', '.'),
+        # config/ — M2 模型路由默认基线（用户覆盖走 DB）
+        ('config', 'config'),
     ],
     hiddenimports=[
         # sqlite-vec (loads vec0 via sqlite3.load_extension)

@@ -72,9 +72,9 @@ class AnthropicAdapter:
     supports_prefix_cache = True
     supports_embedding = False  # Anthropic doesn't have a dedicated embedding API
 
-    def __init__(self):
-        self._api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        self._base_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    def __init__(self, api_key: str | None = None, base_url: str | None = None):
+        self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
+        self._base_url = base_url or os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
 
         if self._api_key:
             try:

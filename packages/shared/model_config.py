@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,17 @@ from packages.shared.providers import TASK_GROUPS, TASK_TIER_MAP
 from packages.shared.providers.model_policy import ModelPolicy
 
 DEFAULT_CONFIG_PATH = Path("config/model_routing.toml")
+
+
+def default_config_path() -> Path:
+    """开发用项目根；frozen 优先 exe 同级 config，其次 PyInstaller 解包目录。"""
+    if getattr(sys, "frozen", False):
+        external = Path(sys.executable).resolve().parent / "config" / "model_routing.toml"
+        if external.exists():
+            return external
+        bundle_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        return bundle_dir / "config" / "model_routing.toml"
+    return Path(__file__).resolve().parents[2] / "config" / "model_routing.toml"
 CONFIG_VERSION = 1
 
 # 允许的能力名：未知能力应当报错，避免拼写错误被静默忽略。
@@ -698,7 +710,9 @@ def load_model_routing(
 
     `MODEL_ROUTING_CONFIG` 可覆盖路径（测试/打包用）。
     """
-    config_path = Path(path or os.getenv("MODEL_ROUTING_CONFIG") or DEFAULT_CONFIG_PATH)
+    config_path = Path(
+        path or os.getenv("MODEL_ROUTING_CONFIG") or default_config_path()
+    )
     if not config_path.exists():
         raise ModelConfigError(f"模型路由配置不存在: {config_path}")
 

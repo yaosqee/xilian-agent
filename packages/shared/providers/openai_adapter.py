@@ -87,9 +87,9 @@ class OpenAIAdapter:
     supports_prefix_cache = False
     supports_embedding = True
 
-    def __init__(self):
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    def __init__(self, api_key: str | None = None, base_url: str | None = None):
+        api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+        base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
         _api_timeout = httpx.Timeout(connect=15.0, read=120.0, write=120.0, pool=30.0)
 
