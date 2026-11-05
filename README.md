@@ -347,7 +347,7 @@ xilian-v3/
 ├── photo/                        # 🖼️ 背景图片 + 风格参考
 ├── alembic/                      # 🗄️ 数据库迁移
 ├── skills/manual/                # 🛠️ 4 个技能文件
-└── tests/                        # 🧪 688+ 条测试
+└── tests/                        # 🧪 707+ 条测试
 ```
 
 ---
@@ -378,6 +378,8 @@ xilian-v3/
 | `DEEPSEEK_API_KEY_2` | 备用 Key（可选） | - |
 | `EMBED_API_KEY` | 嵌入 API Key | 复用 DEEPSEEK_API_KEY_2 |
 | `LOOP_V2` | 1 = 启用新 Agent 循环（含 SSE 工具事件/确认状态机/真 token 流） | 0 |
+| `MODEL_ROUTING_V2` | 1 = 启用 `config/model_routing.toml` 声明式路由（M2，试验） | 0 |
+| `MODEL_ROUTING_CONFIG` | 覆盖模型路由配置路径 | `config/model_routing.toml` |
 | `HTTP_PORT` | HTTP 服务端口 | 8000 |
 | `BIND_HOST` | 绑定地址 | 127.0.0.1 |
 | `NO_HTTP` | 设为 1 禁用 HTTP | - |

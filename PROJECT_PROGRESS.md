@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **688 passed / 8 skipped / ~26s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 完成；M2-1（声明式路由加载器）完成；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2-2 接入 |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **707 passed / 8 skipped / ~26s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 完成；M2-1/M2-2 已落地（V2 默认关闭）；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2-3 API/UI |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -241,7 +241,26 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 任务组 | `TASK_GROUPS` 新增 `reasoning` 组（reasoning/code/planning），避免归到 dialogue |
 | 测试 | 新增 `tests/test_model_config.py` 12 条；全量 **688 passed / 8 skipped / 25s** |
 
-未做：接入 router、`MODEL_ROUTING_V2` 开关、DB `source='ui'`、API/UI。
+未做：DB `source='ui'`、API/UI（M2-3）。
+
+---
+
+## M2-2：ModelRouter 接入声明式路由（2026-11-05）
+
+`MODEL_ROUTING_V2` 默认 **0**；V1 路径完全不变。V2=1 时 `ModelRouter` 用 `config/model_routing.toml` 解析。
+
+| 项 | 实现 |
+|---|---|
+| 开关 | `MODEL_ROUTING_V2=1`；缺配置启动即报错，不静默回退 |
+| 路由 | `task → profile → model + fallbacks`；`chat` / `reasoning` 等按默认配置解析 |
+| 能力 | `tools` 非空时要求模型支持 tools，不满足走 fallback；`ModelPolicy`/vision 读配置 |
+| 参数 | 显式 `temperature/max_tokens` 优先；未传时用 profile 默认值 |
+| 状态 | `/api/status` 暴露 `routing_v2` |
+| 测试 | 新增 19 条；全量 **707 passed / 8 skipped / 26s**；真实 DeepSeek 小样本冒烟通过 |
+
+已知限制：V2 下暂时忽略 DB `tier:*`/`override:*`（`source='ui'` 在 M2-3 接）；API 失败后的 provider 级 fallback、配置 `base_url` 注入、打包 `config/` 留到后续。
+
+---
 
 ---
 

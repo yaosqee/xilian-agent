@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > 📅 最后更新：2026-11-05
-> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；M2-1 配置加载器已落地；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **688 passed / 8 skipped**。
+> 🔖 当前：P0–P3 + X + M1 + P1.5 完成；M2-1/M2-2 已落地（V2 默认关闭）；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **707 passed / 8 skipped**。
 
 ## 📚 文档导航
 
@@ -76,8 +76,8 @@ xilian-v3/
 │
 ├── packages/shared/                 # 🔗 共享层（被 agent 和 gateway 共同依赖）
 │   ├── events.py                    # InternalEvent dataclass
-│   ├── model_router.py              # ModelRouter：多供应商 Tier 路由 + ModelPolicy + tool 重试降级 + stats
-│   ├── model_config.py              # M2-1：TOML 声明式路由加载/校验/解析（未接 router）
+│   ├── model_router.py              # ModelRouter：V1 Tier + V2 声明式路由 + ModelPolicy + tool 重试降级 + stats
+│   ├── model_config.py              # M2-1：TOML 声明式路由加载/校验/解析
 │   ├── model_stats.py               # ModelStats：按模型 calls/errors/timeout/p50/p95（内存）
 │   ├── providers/                    # 供应商适配器（deepseek / openai / anthropic / google / mimo）
 │   │   ├── model_policy.py           # ModelPolicy 能力矩阵（tools/vision/context/cost）
@@ -316,8 +316,8 @@ AttentionScheduler 任务提醒流程：
 | 模块 | 单句职责 | 关键方法 |
 |------|---------|---------|
 | `events.py` | 全系统统一消息结构 | `InternalEvent(event_id, timestamp, source, user_id, session_id, payload, is_owner)` |
-| `model_router.py` | Tier 路由 + 显式能力矩阵 + tool 重试/降级 + 观测 | `route()` / `get_model_policy()` / `stats` / `reload_config()` |
-| `model_config.py` | M2-1 声明式配置加载/校验/解析（未接 router） | `load_model_routing()`, `ModelRoutingConfig.resolve()` |
+| `model_router.py` | V1 Tier 路由 / V2 声明式路由 + 能力矩阵 + tool 重试/降级 + 观测 | `route()` / `get_model_policy()` / `stats` / `reload_config()` |
+| `model_config.py` | M2-1 声明式配置加载/校验/解析 | `load_model_routing()`, `ModelRoutingConfig.resolve()` |
 | `providers/model_policy.py` | ModelPolicy 能力矩阵（tools/vision/context/cost） | `ModelPolicy.from_model_info()`, `policy_from_adapter()` |
 | `model_stats.py` | 按模型内存统计（calls/errors/p50/p95/degraded） | `ModelStats.record_*()`, `ModelStatsRegistry.snapshot()` |
 | `database.py` | SQLite 13 张表 + 完整CRUD + Alembic优先 | `init()`, `insert_notebook()`, `insert_task()`, `get_due_tasks()` 等 |
@@ -373,7 +373,7 @@ AttentionScheduler 任务提醒流程：
 
 | 位置 | 说明 |
 |------|------|
-| M2 | 模型配置仍是 env + `model_configs` tier/override；DSH 风格声明式配置后移 |
+| M2 | `MODEL_ROUTING_V2=1` 已接配置解析（默认 0）；DB `source='ui'`、API/UI 仍待做 |
 | `model_stats` | 内存统计，重启清零，未持久化 |
 | `evals` | 40 条用例已冻结（`cases_sha256` 指纹）；含 `tool_success_rate`；搜索已切 DeepSeek Search |
 | `ConfirmationStore` | 进程内内存，重启丢 pending；跨会话隔离已做 |
