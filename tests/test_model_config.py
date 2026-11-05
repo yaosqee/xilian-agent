@@ -174,6 +174,34 @@ chat = "dialogue"
     assert route.capability_fallback is True
 
 
+def test_profile_overrides_apply_source_and_fallbacks():
+    config = load_model_routing(DEFAULT_CONFIG)
+    overridden = config.with_profile_overrides({
+        "dialogue": {
+            "model": "deepseek-v4-pro",
+            "fallbacks": ["deepseek-flash"],
+            "temperature": 0.5,
+            "max_tokens": 900,
+        }
+    })
+
+    route = overridden.resolve("chat")
+    assert route.model == "deepseek-v4-pro"
+    assert route.fallbacks == ("deepseek-flash",)
+    assert route.temperature == 0.5
+    assert route.max_tokens == 900
+    assert route.source == "ui"
+    assert overridden.profiles["dialogue"].source == "ui"
+
+
+def test_profile_overrides_reject_unknown_model():
+    config = load_model_routing(DEFAULT_CONFIG)
+    with pytest.raises(ModelConfigError, match="未知模型"):
+        config.with_profile_overrides({
+            "dialogue": {"model": "missing-model", "fallbacks": []}
+        })
+
+
 def test_invalid_model_reference_is_rejected(tmp_path):
     path = _write_config(
         tmp_path,

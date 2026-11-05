@@ -6,6 +6,7 @@ import {
   fetchModelProviders,
   fetchModelConfig,
   saveModelConfig,
+  resetModelOverrides,
   validateApiKey,
 } from '../services/api';
 
@@ -32,6 +33,17 @@ interface ModelState {
   loadConfig: () => Promise<void>;
   updateConfig: (tier: string, provider: string, model: string) => Promise<boolean>;
   addProviderKey: (provider: string, apiKey: string, baseUrl?: string) => Promise<boolean>;
+  saveRoutingProfile: (
+    name: string,
+    patch: {
+      provider?: string;
+      model: string;
+      fallbacks: string[];
+      temperature: number;
+      max_tokens: number;
+    },
+  ) => Promise<boolean>;
+  resetRoutingProfile: (name?: string) => Promise<boolean>;
 }
 
 export const useModelStore = create<ModelState>((set, get) => ({
@@ -133,6 +145,42 @@ export const useModelStore = create<ModelState>((set, get) => ({
       return false;
     } catch (e: any) {
       set({ error: e.message || '验证失败' });
+      return false;
+    }
+  },
+
+  saveRoutingProfile: async (name, patch) => {
+    set({ saving: true, error: null });
+    try {
+      const result = await saveModelConfig({
+        profiles: { [name]: patch },
+      });
+      if (result.status === 'ok' || result.status === 'partial') {
+        await get().loadConfig();
+        set({ saving: false });
+        return true;
+      }
+      set({ saving: false, error: result.errors?.join(', ') || '保存失败' });
+      return false;
+    } catch (e: any) {
+      set({ saving: false, error: e.message || '保存失败' });
+      return false;
+    }
+  },
+
+  resetRoutingProfile: async (name) => {
+    set({ saving: true, error: null });
+    try {
+      const result = await resetModelOverrides(name ? [name] : undefined);
+      if (result.status === 'ok' || result.status === 'partial') {
+        await get().loadConfig();
+        set({ saving: false });
+        return true;
+      }
+      set({ saving: false, error: result.errors?.join(', ') || '恢复失败' });
+      return false;
+    } catch (e: any) {
+      set({ saving: false, error: e.message || '恢复失败' });
       return false;
     }
   },

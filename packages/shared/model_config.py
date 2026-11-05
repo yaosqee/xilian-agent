@@ -183,6 +183,7 @@ class ProfileSpec:
     temperature: float = 0.7
     max_tokens: int = 800
     requires: tuple[str, ...] = ()
+    source: str = "file"
 
     @property
     def candidates(self) -> tuple[str, ...]:
@@ -195,6 +196,7 @@ class ProfileSpec:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "requires": list(self.requires),
+            "source": self.source,
         }
 
 
@@ -328,7 +330,7 @@ class ModelRoutingConfig:
         self,
         task_type: str,
         *,
-        source: str = "file",
+        source: str | None = None,
         extra_requires: tuple[str, ...] | list[str] = (),
     ) -> ResolvedRoute:
         """按 task → profile → 主模型/fallback 解析出实际路由。
@@ -381,11 +383,75 @@ class ModelRoutingConfig:
             max_tokens=profile.max_tokens,
             fallbacks=candidates[selected_index + 1:],
             requires=required,
-            source=source,
+            source=source or profile.source,
             capability_fallback=selected_index > 0,
         )
 
-    def effective_routes(self, *, source: str = "file") -> dict[str, dict[str, Any]]:
+    def with_profile_overrides(
+        self,
+        overrides: Mapping[str, Mapping[str, Any]],
+    ) -> "ModelRoutingConfig":
+        """把 DB `source='ui'` 的 profile 覆盖合入配置，返回新对象。"""
+        if not overrides:
+            return self
+
+        profiles = dict(self.profiles)
+        for name, patch in overrides.items():
+            base = profiles.get(name)
+            if base is None:
+                raise ModelConfigError(f"覆盖引用未知 profile: {name!r}")
+
+            model = _as_str(patch.get("model"), f"profile:{name}.model", default=base.model)
+            if model not in self.models:
+                raise ModelConfigError(f"profile:{name}.model 引用未知模型 {model!r}")
+
+            raw_fallbacks = patch.get("fallbacks", base.fallbacks)
+            if isinstance(raw_fallbacks, (list, tuple)):
+                fallbacks = tuple(str(item) for item in raw_fallbacks)
+            else:
+                raise ModelConfigError(f"profile:{name}.fallbacks 必须是数组")
+            for fallback in fallbacks:
+                if fallback not in self.models:
+                    raise ModelConfigError(
+                        f"profile:{name}.fallbacks 引用未知模型 {fallback!r}"
+                    )
+
+            temperature = _as_float(
+                patch.get("temperature"), f"profile:{name}.temperature",
+                default=base.temperature,
+            )
+            if not 0.0 <= temperature <= 2.0:
+                raise ModelConfigError(f"profile:{name}.temperature 必须在 0..2 之间")
+            max_tokens = _as_int(
+                patch.get("max_tokens"), f"profile:{name}.max_tokens",
+                default=base.max_tokens,
+            )
+            if max_tokens <= 0:
+                raise ModelConfigError(f"profile:{name}.max_tokens 必须大于 0")
+
+            profiles[name] = ProfileSpec(
+                name=name,
+                model=model,
+                fallbacks=fallbacks,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                requires=base.requires,
+                source="ui",
+            )
+
+        return ModelRoutingConfig(
+            version=self.version,
+            providers=self.providers,
+            models=self.models,
+            profiles=profiles,
+            routing=self.routing,
+            routing_groups=self.routing_groups,
+            embedding=self.embedding,
+            source_path=self.source_path,
+            raw=self.raw,
+        )
+
+    def effective_routes(self, *, source: str | None = None) -> dict[str, dict[str, Any]]:
         """返回所有已注册 task 的生效路由，便于 API / 面板展示。"""
         result: dict[str, dict[str, Any]] = {}
         for task_type in sorted(TASK_TIER_MAP):

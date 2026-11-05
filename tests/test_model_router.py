@@ -377,3 +377,25 @@ class TestRoutingV2:
         router, _ = self._router_with_fake_adapter()
         router._tools_support_cache["deepseek:deepseek-flash"] = False
         assert router._supports_tools("deepseek:deepseek-flash") is True
+
+    @pytest.mark.asyncio
+    async def test_v2_profile_override_from_ui_row(self):
+        router, adapter = self._router_with_fake_adapter()
+        router._apply_routing_overrides([{
+            "config_key": "profile:dialogue",
+            "model_name": "deepseek-v4-pro",
+            "fallbacks": '["deepseek-flash"]',
+            "temperature": 0.5,
+            "max_tokens": 900,
+            "source": "ui",
+        }])
+
+        await router.route("chat", [{"role": "user", "content": "hi"}])
+
+        kwargs = adapter.chat.await_args.kwargs
+        assert kwargs["model"] == "deepseek-v4-pro"
+        assert kwargs["temperature"] == 0.5
+        assert kwargs["max_tokens"] == 900
+        route = router.routing_config.resolve("chat")
+        assert route.source == "ui"
+        assert route.fallbacks == ("deepseek-flash",)

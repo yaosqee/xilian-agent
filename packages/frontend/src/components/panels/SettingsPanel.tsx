@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { resetSession, fetchBackground, uploadBackground, validateApiKey } from '../../services/api';
+import type { RoutingProfileInfo, RoutingModelInfo } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 import { useAutonomyStore } from '../../stores/autonomyStore';
 import { useModelStore } from '../../stores/modelStore';
@@ -358,8 +359,198 @@ const routingCardStyle: React.CSSProperties = {
   fontSize: 11,
 };
 
+const ProfileEditor: React.FC<{
+  name: string;
+  profile: RoutingProfileInfo;
+  models: Record<string, RoutingModelInfo>;
+  saving: boolean;
+  onSave: (patch: {
+    provider?: string;
+    model: string;
+    fallbacks: string[];
+    temperature: number;
+    max_tokens: number;
+  }) => Promise<boolean>;
+  onReset: () => Promise<boolean>;
+}> = ({ name, profile, models, saving, onSave, onReset }) => {
+  const [model, setModel] = useState(profile.model);
+  const [fallbacks, setFallbacks] = useState<string[]>(profile.fallbacks);
+  const [temperature, setTemperature] = useState(String(profile.temperature));
+  const [maxTokens, setMaxTokens] = useState(String(profile.max_tokens));
+  const [newFallback, setNewFallback] = useState('');
+
+  const modelEntries = Object.entries(models);
+  const fallbackOptions = modelEntries.filter(
+    ([id]) => id !== model && !fallbacks.includes(id),
+  );
+
+  const addFallback = () => {
+    if (!newFallback || fallbacks.includes(newFallback)) return;
+    setFallbacks([...fallbacks, newFallback]);
+    setNewFallback('');
+  };
+
+  return (
+    <div style={routingCardStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 5 }}>
+        <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</span>
+        <span style={{
+          fontSize: 9, padding: '1px 5px', borderRadius: 999,
+          color: profile.source === 'ui' ? 'var(--color-purple-dark)' : 'var(--color-text-muted)',
+          background: profile.source === 'ui'
+            ? 'rgba(216, 180, 226, 0.2)' : 'rgba(255, 255, 255, 0.35)',
+        }}>
+          {profile.source === 'ui' ? 'UI 覆盖' : '文件默认'}
+        </span>
+      </div>
+
+      <label style={{ display: 'block', color: 'var(--color-text-muted)', marginBottom: 2 }}>主模型</label>
+      <select
+        value={model}
+        onChange={(e) => setModel(e.target.value)}
+        disabled={saving}
+        style={{
+          width: '100%', padding: '5px 7px', borderRadius: 6,
+          border: '1px solid rgba(216, 180, 226, 0.25)',
+          background: 'rgba(255, 255, 255, 0.6)',
+          fontSize: 11, fontFamily: 'inherit', color: '#5E4B66',
+          outline: 'none', marginBottom: 6,
+        }}
+      >
+        {modelEntries.map(([id, m]) => (
+          <option key={id} value={id}>{id} · {m.provider}</option>
+        ))}
+      </select>
+
+      <label style={{ display: 'block', color: 'var(--color-text-muted)', marginBottom: 2 }}>Fallback</label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
+        {fallbacks.length === 0 && (
+          <span style={{ color: 'var(--color-text-muted)' }}>无</span>
+        )}
+        {fallbacks.map((fb) => (
+          <span key={fb} style={{
+            padding: '2px 6px', borderRadius: 999,
+            background: 'rgba(255, 183, 197, 0.15)',
+            color: 'var(--color-pink-dark)',
+          }}>
+            {fb}
+            <button
+              onClick={() => setFallbacks(fallbacks.filter((x) => x !== fb))}
+              disabled={saving}
+              style={{
+                border: 'none', background: 'transparent', cursor: 'pointer',
+                color: 'var(--color-pink-dark)', padding: '0 0 0 4px', fontSize: 11,
+              }}
+              title="移除"
+            >×</button>
+          </span>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+        <select
+          value={newFallback}
+          onChange={(e) => setNewFallback(e.target.value)}
+          disabled={saving || fallbackOptions.length === 0}
+          style={{
+            flex: 1, padding: '4px 6px', borderRadius: 6,
+            border: '1px solid rgba(216, 180, 226, 0.2)',
+            background: 'rgba(255, 255, 255, 0.5)',
+            fontSize: 10, fontFamily: 'inherit', color: '#5E4B66',
+          }}
+        >
+          <option value="">+ 添加 fallback</option>
+          {fallbackOptions.map(([id]) => (
+            <option key={id} value={id}>{id}</option>
+          ))}
+        </select>
+        <button
+          onClick={addFallback}
+          disabled={saving || !newFallback}
+          style={{
+            padding: '3px 8px', borderRadius: 6, border: 'none',
+            background: 'rgba(216, 180, 226, 0.2)',
+            color: 'var(--color-purple-dark)', cursor: 'pointer', fontSize: 10,
+          }}
+        >添加</button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 7 }}>
+        <label style={{ color: 'var(--color-text-muted)' }}>
+          temperature
+          <input
+            type="number" min="0" max="2" step="0.05"
+            value={temperature}
+            onChange={(e) => setTemperature(e.target.value)}
+            disabled={saving}
+            style={{
+              width: '100%', boxSizing: 'border-box', marginTop: 2,
+              padding: '4px 6px', borderRadius: 6,
+              border: '1px solid rgba(216, 180, 226, 0.2)',
+              background: 'rgba(255, 255, 255, 0.5)',
+              fontSize: 10, fontFamily: 'inherit', color: '#5E4B66',
+            }}
+          />
+        </label>
+        <label style={{ color: 'var(--color-text-muted)' }}>
+          max_tokens
+          <input
+            type="number" min="1" step="1"
+            value={maxTokens}
+            onChange={(e) => setMaxTokens(e.target.value)}
+            disabled={saving}
+            style={{
+              width: '100%', boxSizing: 'border-box', marginTop: 2,
+              padding: '4px 6px', borderRadius: 6,
+              border: '1px solid rgba(216, 180, 226, 0.2)',
+              background: 'rgba(255, 255, 255, 0.5)',
+              fontSize: 10, fontFamily: 'inherit', color: '#5E4B66',
+            }}
+          />
+        </label>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          onClick={() => {
+            const t = Number(temperature);
+            const mt = Number(maxTokens);
+            if (!Number.isFinite(t) || !Number.isFinite(mt) || mt <= 0) return;
+            const provider = models[model]?.provider;
+            void onSave({
+              provider, model, fallbacks, temperature: t, max_tokens: mt,
+            });
+          }}
+          disabled={saving}
+          style={{
+            flex: 1, padding: '5px 8px', borderRadius: 7, border: 'none',
+            background: 'linear-gradient(135deg, var(--color-pink), var(--color-purple))',
+            color: '#fff', cursor: saving ? 'default' : 'pointer',
+            fontSize: 11, fontFamily: 'inherit',
+          }}
+        >{saving ? '保存中...' : '保存'}</button>
+        {profile.source === 'ui' && (
+          <button
+            onClick={() => void onReset()}
+            disabled={saving}
+            style={{
+              padding: '5px 8px', borderRadius: 7,
+              border: '1px solid rgba(216, 180, 226, 0.3)',
+              background: 'transparent', color: 'var(--color-text-muted)',
+              cursor: saving ? 'default' : 'pointer', fontSize: 10,
+              fontFamily: 'inherit',
+            }}
+          >恢复默认</button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ sectionStyle }) => {
-  const { routing, loading, error } = useModelStore();
+  const {
+    routing, loading, saving, error,
+    saveRoutingProfile, resetRoutingProfile,
+  } = useModelStore();
 
   if (loading && !routing) {
     return (
@@ -396,7 +587,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
           color: 'var(--color-purple-dark)',
           background: 'rgba(216, 180, 226, 0.18)',
         }}>
-          M2 只读
+          M2-3b · Profiles 可编辑
         </span>
       </div>
       <p style={{
@@ -442,24 +633,32 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
         ))}
       </RoutingBlock>
 
-      <RoutingBlock title="Profiles">
+      <RoutingBlock title="Profiles（可编辑）">
         {Object.entries(routing.profiles).map(([name, p]) => (
-          <div key={name} style={routingCardStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{name}</span>
-              <span style={{ color: 'var(--color-text-muted)' }}>{p.model}</span>
-            </div>
-            <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
-              temp {p.temperature} · max {p.max_tokens}
-              {p.requires.length > 0 ? ` · 需要 ${p.requires.map(c => CAP_LABELS[c] || c).join('/')}` : ''}
-            </div>
-            {p.fallbacks.length > 0 && (
-              <div style={{ color: 'var(--color-text-muted)', marginTop: 2 }}>
-                fallback: {p.fallbacks.join(' → ')}
-              </div>
-            )}
-          </div>
+          <ProfileEditor
+            key={`${name}:${p.model}:${p.fallbacks.join(',')}:${p.temperature}:${p.max_tokens}:${p.source}`}
+            name={name}
+            profile={p}
+            models={routing.models}
+            saving={saving}
+            onSave={(patch) => saveRoutingProfile(name, patch)}
+            onReset={() => resetRoutingProfile(name)}
+          />
         ))}
+        {error && (
+          <p style={{ fontSize: 10, color: '#c56b86', margin: '4px 0 0' }}>{error}</p>
+        )}
+        <button
+          onClick={() => void resetRoutingProfile()}
+          disabled={saving}
+          style={{
+            marginTop: 4, padding: '4px 8px', borderRadius: 7,
+            border: '1px dashed rgba(216, 180, 226, 0.3)',
+            background: 'transparent', color: 'var(--color-text-muted)',
+            cursor: saving ? 'default' : 'pointer', fontSize: 10,
+            fontFamily: 'inherit',
+          }}
+        >恢复全部文件默认</button>
       </RoutingBlock>
 
       <RoutingBlock title="Routing（task → profile → effective）">
@@ -517,7 +716,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
       </RoutingBlock>
 
       <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: 0 }}>
-        可编辑面板在 M2-3b；当前只展示生效路由与来源。
+        Profiles 可编辑（写 DB source='ui'）；Models / Routing / Embedding 仍只读。路由变更在保存后立即生效。
       </p>
     </div>
   );

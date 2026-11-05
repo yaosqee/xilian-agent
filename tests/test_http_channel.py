@@ -293,6 +293,64 @@ def test_model_config_exposes_effective_routing(client, http_channel):
     assert "api_key_env" in data["routing"]["providers"]["deepseek"]
 
 
+def test_model_config_saves_profile_override_as_ui(client, http_channel):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from packages.shared.model_config import load_model_routing
+
+    db = SimpleNamespace(
+        insert_model_config=AsyncMock(),
+    )
+    router = SimpleNamespace(
+        routing_v2=True,
+        routing_config=load_model_routing(),
+        reload_config=AsyncMock(),
+    )
+    http_channel._agent = SimpleNamespace(_db=db, router=router)
+
+    resp = client.put("/api/models/config", json={
+        "profiles": {
+            "dialogue": {
+                "model": "deepseek-v4-pro",
+                "fallbacks": ["deepseek-flash"],
+                "temperature": 0.5,
+                "max_tokens": 900,
+            }
+        }
+    })
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    kwargs = db.insert_model_config.await_args.kwargs
+    assert kwargs["config_key"] == "profile:dialogue"
+    assert kwargs["model_name"] == "deepseek-v4-pro"
+    assert kwargs["source"] == "ui"
+    assert json.loads(kwargs["fallbacks"]) == ["deepseek-flash"]
+    router.reload_config.assert_awaited_once()
+
+
+def test_model_config_reset_deletes_ui_profiles(client, http_channel):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from packages.shared.model_config import load_model_routing
+
+    db = SimpleNamespace(delete_model_config=AsyncMock())
+    router = SimpleNamespace(
+        routing_v2=True,
+        routing_config=load_model_routing(),
+        reload_config=AsyncMock(),
+    )
+    http_channel._agent = SimpleNamespace(_db=db, router=router)
+
+    resp = client.post("/api/models/config/reset", json={})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert db.delete_model_config.await_count == 4
+    db.delete_model_config.assert_any_await("profile:dialogue")
+    router.reload_config.assert_awaited_once()
+
+
 class TestCORS:
     def test_cors_headers(self, client):
         """CORS 预检请求应有正确的头部"""

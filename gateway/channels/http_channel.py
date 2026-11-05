@@ -1156,6 +1156,7 @@ class HTTPChannel(Channel):
                         "model": c["model_name"],
                         "temperature": c.get("temperature", 0.7),
                         "max_tokens": c.get("max_tokens", 800),
+                        "source": c.get("source", "legacy"),
                     }
                     if key.startswith("tier:"):
                         tiers[key.split(":", 1)[1]] = entry
@@ -1214,7 +1215,7 @@ class HTTPChannel(Channel):
                             routing_config.embedding.to_dict()
                             if routing_config.embedding else None
                         ),
-                        "effective": routing_config.effective_routes(source="file"),
+                        "effective": routing_config.effective_routes(),
                     }
 
                 return {
@@ -1238,6 +1239,7 @@ class HTTPChannel(Channel):
 
             body = await request.json()
             tier_updates = body.get("tiers", {})
+            profile_updates = body.get("profiles", {})
             api_keys: dict[str, str] = body.get("api_keys", {})
             base_urls: dict[str, str] = body.get("base_urls", {})
 
@@ -1275,10 +1277,67 @@ class HTTPChannel(Channel):
                         api_key=api_keys.get(provider, ""),
                         temperature=info.get("temperature", 0.7),
                         max_tokens=info.get("max_tokens", 800),
+                        source="ui",
                         created_at=now, updated_at=now,
                     )
                 except Exception as e:
                     errors.append(f"tier:{tier}: {e}")
+
+            # ── M2-3b: profile 覆盖（写入 source='ui'）──
+            router = agent_ref.router
+            if profile_updates:
+                if not getattr(router, "routing_v2", False):
+                    errors.append("profiles: MODEL_ROUTING_V2 未开启")
+                else:
+                    routing_config = getattr(router, "routing_config", None)
+                    for name, info in profile_updates.items():
+                        profile = (
+                            routing_config.profiles.get(name)
+                            if routing_config is not None else None
+                        )
+                        if profile is None:
+                            errors.append(f"profile:{name}: 未知 profile")
+                            continue
+                        model = info.get("model") or profile.model
+                        model_spec = (
+                            routing_config.models.get(model)
+                            if routing_config is not None else None
+                        )
+                        if model_spec is None:
+                            errors.append(f"profile:{name}: 未知模型 {model}")
+                            continue
+                        fallbacks = info.get("fallbacks", list(profile.fallbacks))
+                        if not isinstance(fallbacks, list) or any(
+                            not isinstance(item, str) for item in fallbacks
+                        ):
+                            errors.append(f"profile:{name}: fallbacks 必须是字符串数组")
+                            continue
+                        if any(fb not in routing_config.models for fb in fallbacks):
+                            errors.append(f"profile:{name}: fallbacks 含未知模型")
+                            continue
+                        try:
+                            temperature = float(info.get("temperature", profile.temperature))
+                            max_tokens = int(info.get("max_tokens", profile.max_tokens))
+                        except (TypeError, ValueError):
+                            errors.append(f"profile:{name}: temperature/max_tokens 非法")
+                            continue
+                        if not 0.0 <= temperature <= 2.0 or max_tokens <= 0:
+                            errors.append(f"profile:{name}: temperature/max_tokens 越界")
+                            continue
+                        try:
+                            await agent_ref._db.insert_model_config(
+                                config_key=f"profile:{name}",
+                                provider=info.get("provider") or model_spec.provider,
+                                model_name=model,
+                                api_key="",
+                                temperature=temperature,
+                                max_tokens=max_tokens,
+                                source="ui",
+                                fallbacks=json.dumps(fallbacks, ensure_ascii=False),
+                                created_at=now, updated_at=now,
+                            )
+                        except Exception as e:
+                            errors.append(f"profile:{name}: {e}")
 
             # ── 统一更新 os.environ（仅当 DB 写入全部成功后，reload 前一次性写入）──
             for provider, key in api_keys.items():
@@ -1297,6 +1356,44 @@ class HTTPChannel(Channel):
             if errors:
                 return {"status": "partial", "errors": errors}
             return {"status": "ok"}
+
+        # ── 恢复文件默认：删除 profile source='ui' 覆盖 ──
+        @self.app.post("/api/models/config/reset")
+        async def reset_model_config(request: Request):
+            agent_ref = self._agent
+            if not agent_ref or not agent_ref._db:
+                return {"error": "agent not ready"}
+            router = agent_ref.router
+            if not getattr(router, "routing_v2", False):
+                return {"error": "MODEL_ROUTING_V2 未开启"}
+
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            profiles = body.get("profiles")
+            routing_config = getattr(router, "routing_config", None)
+            available = (
+                list(routing_config.profiles)
+                if routing_config is not None else []
+            )
+            targets = available if profiles is None else [
+                name for name in profiles if name in available
+            ]
+
+            for name in targets:
+                try:
+                    await agent_ref._db.delete_model_config(f"profile:{name}")
+                except Exception as exc:
+                    logger.warning(
+                        "api.models.reset_profile_failed",
+                        profile=name, error=str(exc)[:160],
+                    )
+            try:
+                await router.reload_config()
+            except Exception as exc:
+                return {"status": "partial", "errors": [f"reload: {exc}"]}
+            return {"status": "ok", "reset": targets}
 
         # ── 验证 API Key ──
         @self.app.post("/api/models/validate")

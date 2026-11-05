@@ -280,6 +280,8 @@ CREATE TABLE IF NOT EXISTS model_configs (
     base_url    TEXT DEFAULT '',
     temperature REAL DEFAULT 0.7,
     max_tokens  INTEGER DEFAULT 800,
+    source      TEXT NOT NULL DEFAULT 'legacy',
+    fallbacks   TEXT DEFAULT '',
     is_active   INTEGER DEFAULT 1,
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
@@ -2216,19 +2218,25 @@ class DatabaseManager:
         temperature: float = 0.7, max_tokens: int = 800,
         is_active: int = 1, created_at: float | None = None,
         updated_at: float | None = None,
+        source: str = "legacy", fallbacks: str = "",
     ):
-        """插入或替换一条模型配置。"""
+        """插入或替换一条模型配置。
+
+        source: legacy（迁移前/默认播种）或 ui（设置面板写入）。
+        fallbacks: JSON 数组字符串，仅 profile:* 覆盖使用。
+        """
         if not self._conn:
             raise RuntimeError("DatabaseManager.init() 未调用")
         now = time.time()
         await self._conn.execute(
             """INSERT OR REPLACE INTO model_configs
                (config_key, provider, model_name, api_key, base_url,
-                temperature, max_tokens, is_active, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                temperature, max_tokens, source, fallbacks,
+                is_active, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (config_key, provider, model_name, api_key, base_url,
-             temperature, max_tokens, is_active,
-             created_at or now, updated_at or now),
+             temperature, max_tokens, source, fallbacks,
+             is_active, created_at or now, updated_at or now),
         )
         await self._conn.commit()
 
@@ -2263,7 +2271,7 @@ class DatabaseManager:
         # 列名白名单（防止 SQL 注入）
         ALLOWED_COLS = {
             "provider", "model_name", "api_key", "base_url", "temperature",
-            "max_tokens", "is_active", "updated_at",
+            "max_tokens", "is_active", "updated_at", "source", "fallbacks",
         }
         for k in kwargs:
             if k not in ALLOWED_COLS:

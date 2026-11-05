@@ -346,6 +346,7 @@ export interface RoutingProfileInfo {
   temperature: number;
   max_tokens: number;
   requires: string[];
+  source: string;
 }
 
 export interface RoutingEmbeddingInfo {
@@ -391,6 +392,13 @@ export interface ModelConfigResponse {
 
 export interface ModelConfigPatch {
   tiers?: Record<string, { provider: string; model: string; temperature?: number; max_tokens?: number }>;
+  profiles?: Record<string, {
+    provider?: string;
+    model: string;
+    fallbacks?: string[];
+    temperature?: number;
+    max_tokens?: number;
+  }>;
   api_keys?: Record<string, string>;
   base_urls?: Record<string, string>;
 }
@@ -413,6 +421,18 @@ export async function saveModelConfig(patch: ModelConfigPatch): Promise<{ status
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+/** 删除 profile 的 UI 覆盖，恢复文件默认 */
+export async function resetModelOverrides(
+  profiles?: string[],
+): Promise<{ status: string; reset?: string[]; errors?: string[] }> {
+  const res = await fetch(`${BASE}/models/config/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profiles ? { profiles } : {}),
   });
   return res.json();
 }

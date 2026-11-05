@@ -12,6 +12,7 @@ V3.3 → V3.4 升级：硬编码 DeepSeek Pro/Flash 二分 → Tier 系统 + Pro
 """
 from __future__ import annotations
 
+import json
 import os
 import time as _time_module
 
@@ -74,6 +75,7 @@ class ModelRouter:
         # ── M2: 声明式路由（默认关闭，保持旧 tier 路径不变）──
         self._routing_v2 = _env_flag("MODEL_ROUTING_V2", False)
         self._routing_config = None
+        self._routing_file = None
 
         # ── Adapter cache: provider_name → ProviderAdapter ──
         self._adapters: dict[str, ProviderAdapter] = {}
@@ -122,6 +124,7 @@ class ModelRouter:
         from .model_config import load_model_routing
 
         config = load_model_routing()
+        self._routing_file = config
         self._routing_config = config
         self._model_policies.clear()
         logger.info(
@@ -130,6 +133,52 @@ class ModelRouter:
             models=sorted(config.models),
             profiles=sorted(config.profiles),
         )
+
+    def _apply_routing_overrides(self, rows: list[dict]) -> None:
+        """把 DB `source='ui'` 的 `profile:*` 行合入文件基线。
+
+        坏覆盖只告警并忽略，避免一条脏数据让进程起不来；写入侧会先校验。
+        """
+        if not self._routing_v2 or self._routing_file is None:
+            return
+
+        overrides: dict[str, dict] = {}
+        for row in rows:
+            key = str(row.get("config_key") or "")
+            source = str(row.get("source") or "legacy")
+            if not key.startswith("profile:") or source != "ui":
+                continue
+            name = key.split(":", 1)[1]
+            raw_fallbacks = row.get("fallbacks") or "[]"
+            try:
+                fallbacks = json.loads(raw_fallbacks) if isinstance(raw_fallbacks, str) else raw_fallbacks
+            except (TypeError, ValueError):
+                fallbacks = []
+            overrides[name] = {
+                "model": row.get("model_name"),
+                "fallbacks": fallbacks if isinstance(fallbacks, list) else [],
+                "temperature": row.get("temperature", 0.7),
+                "max_tokens": row.get("max_tokens", 800),
+            }
+
+        if not overrides:
+            self._routing_config = self._routing_file
+            self._model_policies.clear()
+            return
+
+        try:
+            self._routing_config = self._routing_file.with_profile_overrides(overrides)
+            logger.info(
+                "model_router.routing_overrides_loaded",
+                profiles=sorted(overrides),
+            )
+        except Exception as exc:
+            self._routing_config = self._routing_file
+            logger.warning(
+                "model_router.routing_overrides_ignored",
+                error=f"{type(exc).__name__}: {exc}"[:300],
+            )
+        self._model_policies.clear()
 
     def _resolve_routing_v2(self, task_type: str, tools: list | None = None):
         """解析 M2 路由；tools 非空时把 tools 能力加入硬性要求。"""
@@ -243,6 +292,9 @@ class ModelRouter:
             else:
                 # DB 无配置 → auto-seed from env vars
                 await self._auto_seed_db()
+
+            if self._routing_v2:
+                self._apply_routing_overrides(db_configs)
 
             # 加载 embed 配置
             db_embed = await self._db.get_embed_config()
@@ -380,6 +432,7 @@ class ModelRouter:
         old_overrides = dict(self._task_overrides)
         old_embed = dict(self._embed_config) if self._embed_config else None
         old_routing = self._routing_config
+        old_routing_file = self._routing_file
 
         try:
             await self.initialize()
@@ -391,6 +444,7 @@ class ModelRouter:
             self._task_overrides = old_overrides
             self._embed_config = old_embed
             self._routing_config = old_routing
+            self._routing_file = old_routing_file
             logger.error("model_router.reload_failed", error=str(e))
             raise
 
