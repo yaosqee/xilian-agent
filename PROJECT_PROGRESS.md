@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **729 passed / 8 skipped / ~28s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气修复完成；**V2 由 `.env` 开启**；下一步真实多供应商冒烟/打包 |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **732 passed / 8 skipped / ~28s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气修复完成；**V2 由 `.env` 开启**；全量 V2 100%；下一步真实多供应商冒烟/打包 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -274,7 +274,20 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 - Open-Meteo 免费非商业、CC-BY 4.0、限 10k/天；个人项目适用；
 - 仍保留和风（空气质量/生活指数更完整）与搜索兜底；
 - 修掉旧问题：`check_available` 只看和风/智谱，导致只有 DeepSeek Key 时天气工具不可用；
-- 新增 `tests/test_query_weather.py`；全量 **729 passed / 8 skipped**。
+- 新增 `tests/test_query_weather.py`；全量 **732 passed / 8 skipped**。
+
+---
+
+## 天气回复补城市名（2026-11-05）
+
+`AgentCore._ensure_weather_city()`：天气工具返回城市名，但模型常省略主语；回复中没有城市名时补「杭州这边，……」，已有则不动。
+
+| 指标 | 修复前 | 修复后 |
+|---|---:|---:|
+| weather 8 条 | 87.5% | **100%** |
+| 全量 V2 40 条 | 90% | **100%** |
+
+设置页 footer 已加 **Open-Meteo · CC-BY 4.0** 署名；README 同步。
 
 ---
 
