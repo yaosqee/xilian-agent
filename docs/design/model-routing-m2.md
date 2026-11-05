@@ -1,7 +1,7 @@
 # M2 · 声明式模型路由（计划）
 
 > 日期：2026-11-04
-> 状态：M2-0 **已定稿**（2026-11-04）；M2-1/M2-2 **已实施**（2026-11-05），V2 默认关闭
+> 状态：M2-0 **已定稿**（2026-11-04）；M2-1/M2-2/M2-3a **已实施**（2026-11-05），V2 默认关闭
 > 目标：把「任务 → 模型」从散落在代码/DB/env 的隐式规则，收敛成一份可校验、可解释、可回退的声明式配置。
 > 范围：只改模型路由与配置层，不动人格、记忆、工具实现、评测用例。
 
@@ -229,7 +229,7 @@ Embedding 第一版**只读**：换向量模型会让已有向量失效，必须
 | **M2-0** | 本文档：schema、优先级、迁移、验收 | 计划确认 | 不改代码 | ✅ 2026-11-04 |
 | **M2-1** | `packages/shared/model_config.py`：TOML 加载、schema 校验、env 插值、profile 解析 | 纯函数 + 单测；**不接 router** | 不改路由行为 | ✅ 2026-11-05（12 tests） |
 | **M2-2** | `ModelRouter` 接入 V2，`MODEL_ROUTING_V2=0` 开关；golden route tests | 默认配置下路由与今天一致 | 不改 UI | ✅ 2026-11-05（19 tests） |
-| **M2-3a** | `/api/models/config` 返回解析结果 + 来源；面板重做为只读五块（Models/Profiles/Routing/Effective/Embedding） | 能看到「现在用谁」 | 不做编辑 | 待开始 |
+| **M2-3a** | `/api/models/config` 返回解析结果 + 来源；面板重做为只读五块（Models/Profiles/Routing/Effective/Embedding） | 能看到「现在用谁」 | 不做编辑 | ✅ 2026-11-05 |
 | **M2-3b** | 可编辑：切换模型、fallback 增删、保存写 DB `source='ui'`、恢复文件默认 | UI 能改且立即生效 | 不动文件基线 | 待开始 |
 | **M2-4** | 打开默认、迁移旧 DB、更新文档、重跑 P3 | 默认启用 + 回归 | 不删旧路径 | 待开始 |
 
@@ -354,3 +354,32 @@ uv run pytest -q --ignore=tests/test_personality_regression.py          # 707 pa
 - 打包时 `config/` 还未加入 `xilian.spec`，M2-4 处理。
 
 下一步：M2-3a 让 `/api/models/config` 返回 `effective_routes` + 来源，M2-3b 再做可编辑面板。
+
+---
+
+## 13. M2-3a 只读面板（2026-11-05）
+
+已完成，只读展示，不提供编辑。
+
+| 文件 | 内容 |
+|---|---|
+| `gateway/channels/http_channel.py` | `/api/models/config` 新增 `routing_v2` + `routing`：`providers/models/profiles/embedding/effective`，`effective` 每项带 `source`、`fallbacks`、`capability_fallback` 或 `error` |
+| `packages/frontend/src/services/api.ts` | `RoutingConfigData` / `EffectiveRoute` 等类型；`ModelConfigResponse` 增加 `routing_v2` / `routing` |
+| `packages/frontend/src/stores/modelStore.ts` | 保存 `routingV2` / `routing` |
+| `packages/frontend/src/components/panels/SettingsPanel.tsx` | `routingV2=true` 时显示只读五块（Providers / Models / Profiles / Routing / Embedding）；V2=0 仍用原可编辑面板 |
+| `tests/test_http_channel.py` | API 返回 effective route 的测试 |
+
+验证：
+
+```bash
+cd packages/frontend && npm run build   # tsc + vite build 通过
+uv run pytest tests/test_http_channel.py -q  # 15 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py  # 708 passed / 8 skipped
+```
+
+边界：
+
+- 面板在 V2=1 时只读；编辑/保存/fallback 增删仍在 M2-3b。
+- `effective.source` 目前固定 `file`，DB `source='ui'` 尚未接。
+- V2=0 时仍显示原 tier/override 编辑面板，不受影响。
+- 前端没有新增 API 请求，复用 `/api/models/config`。

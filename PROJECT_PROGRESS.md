@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **707 passed / 8 skipped / ~26s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 完成；M2-1/M2-2 已落地（V2 默认关闭）；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2-3 API/UI |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **708 passed / 8 skipped / ~27s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 完成；M2-1/M2-2/M2-3a 已落地（V2 默认关闭）；评测集 v1 冻结；**LOOP_V2 已默认开启**（`.env`）；下一步 M2-3b 可编辑面板 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -259,6 +259,21 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 | 测试 | 新增 19 条；全量 **707 passed / 8 skipped / 26s**；真实 DeepSeek 小样本冒烟通过 |
 
 已知限制：V2 下暂时忽略 DB `tier:*`/`override:*`（`source='ui'` 在 M2-3 接）；API 失败后的 provider 级 fallback、配置 `base_url` 注入、打包 `config/` 留到后续。
+
+---
+
+## M2-3a：只读路由面板（2026-11-05）
+
+`MODEL_ROUTING_V2=1` 时，设置面板改为只读五块：Providers / Models / Profiles / Routing / Embedding；V2=0 仍显示原来的 tier/override 编辑面板。
+
+| 项 | 实现 |
+|---|---|
+| API | `/api/models/config` 新增 `routing_v2` + `routing`（providers/models/profiles/embedding/effective） |
+| 前端类型/状态 | `RoutingConfigData` / `EffectiveRoute`；`modelStore` 保存 `routingV2` / `routing` |
+| 面板 | `SettingsPanel` 按 `routingV2` 切换；只读展示 effective model/fallback/source/error |
+| 测试 | API 1 条 + 前端 `tsc + vite build` 通过；全量 **708 passed / 8 skipped / 27s** |
+
+边界：只读；`effective.source` 目前固定 `file`；编辑/保存/fallback 增删在 M2-3b。
 
 ---
 

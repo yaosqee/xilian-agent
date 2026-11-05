@@ -15,7 +15,7 @@
 
 ```bash
 cd D:\xilian-v3
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 707 passed / 8 skipped
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 应看到 708 passed / 8 skipped
 uv run python main.py                                            # 打开 http://127.0.0.1:8000
 ```
 
@@ -34,10 +34,10 @@ uv run python main.py                                            # 打开 http:/
 
 ### 1.3 知道现在在哪（10 分钟）
 
-- 测试基线：**707 passed / 8 skipped / ~26s**（真模型人格测试默认排除）。
+- 测试基线：**708 passed / 8 skipped / ~27s**（真模型人格测试默认排除）。
 - 新循环 `LOOP_V2` **本机已开启**（`.env` 里 `LOOP_V2=1`）；代码默认 0，只有回滚时才需要动它。老路径 `_handle_tool_calls` 仍保留作回退。
-- P0–P3 + X + M1 + P1.5 已完成；M2-1/M2-2 已完成（`model_config.py` + `MODEL_ROUTING_V2`，默认关闭）。
-- 下一步：M2-3a `/api/models/config` 返回生效路由 + 来源，M2-3b 再做可编辑面板。
+- P0–P3 + X + M1 + P1.5 已完成；M2-1/M2-2/M2-3a 已完成（声明式配置 + V2 路由 + 只读面板，默认关闭）。
+- 下一步：M2-3b 可编辑面板与 DB `source='ui'`；之后 M2-4 迁移/打开默认。
 
 ## 2. 2 小时版（能动手改）
 
@@ -101,7 +101,7 @@ codegraph impact ToolExecutor.execute
 ## 4. 快速自检（确认项目没坏）
 
 ```bash
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 707 passed
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 708 passed
 uv run python -c "import main"                                    # 导入无副作用
 uv run python main.py                                             # 本机已是新循环（LOOP_V2=1）
 # 需要对比老路径时：LOOP_V2=0 uv run python main.py
