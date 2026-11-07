@@ -43,6 +43,20 @@ DEEPSEEK_MODELS = [
         supports_prefix_cache=True,
     ),
     ModelInfo(
+        id="deepseek-v4-flash-vision-exp",
+        name="V4 Flash Vision (Exp)",
+        provider="deepseek",
+        cost_per_1k_in=0.00014,
+        cost_per_1k_out=0.00028,
+        supports_tools=True,
+        supports_thinking=True,
+        supports_streaming=True,
+        supports_prefix_cache=True,
+        input_modalities=["text", "image"],
+        context_window=128000,
+        max_output_tokens=8000,
+    ),
+    ModelInfo(
         id="deepseek-reasoner",
         name="Reasoner (R1)",
         provider="deepseek",
@@ -54,6 +68,15 @@ DEEPSEEK_MODELS = [
         supports_prefix_cache=False,
     ),
 ]
+
+VISION_MODEL = "deepseek-v4-flash-vision-exp"
+
+IMAGE_DESCRIPTION_PROMPT = """请用自然的中文详细描述这张图片的内容、氛围和细节。
+要求：
+- 2-4 句话，直接描述画面
+- 不要加「图片中」「图中显示」「这是」这类前缀
+- 像在跟朋友分享你看到的画面一样自然
+"""
 
 
 class DeepSeekAdapter:
@@ -147,10 +170,14 @@ class DeepSeekAdapter:
         if model == "deepseek-v4-pro":
             return await self._call_pro(messages, temperature, max_tokens,
                                         stream, tools, tool_choice, has_tools)
-        elif model in ("deepseek-flash", "deepseek-v4-flash"):
+        elif model in (
+            "deepseek-flash", "deepseek-v4-flash", VISION_MODEL,
+        ):
             # deepseek-v4-flash 是历史别名，API 侧统一为 deepseek-flash
-            return await self._call_flash(messages, temperature, max_tokens,
-                                          stream, tools, tool_choice, has_tools)
+            return await self._call_flash(
+                messages, temperature, max_tokens,
+                stream, tools, tool_choice, has_tools, model=model,
+            )
         else:
             # 未知模型 → 默认走 Flash（Pro 成本高，不默认兜底）
             logger.warning("deepseek.unknown_model_fallback_flash", model=model)
@@ -226,8 +253,9 @@ class DeepSeekAdapter:
     async def _call_flash(
         self, messages, temperature, max_tokens,
         stream, tools, tool_choice, has_tools,
+        model: str = "deepseek-flash",
     ) -> ProviderResponse | object:
-        """DS Flash. Falls back to Pro if Flash unavailable."""
+        """DS Flash / Vision. Falls back to Pro if Flash unavailable."""
         if not self._flash_client:
             logger.warning("DS Flash 不可用，fallback DS Pro")
             return await self._call_pro(messages, temperature, max_tokens,
@@ -235,7 +263,7 @@ class DeepSeekAdapter:
 
         t0 = _time_module.time()
         api_kwargs = dict(
-            model="deepseek-flash",
+            model=model,
             messages=messages,
             temperature=temperature,
             stream=stream,
@@ -283,10 +311,37 @@ class DeepSeekAdapter:
             content=msg.content,
             tool_calls=extract_tool_calls(msg),
             reasoning_content=getattr(msg, 'reasoning_content', None),
-            model="deepseek-flash",
+            model=model,
             usage=extract_usage(response),
             finish_reason=choice.finish_reason,
         )
+
+    # ── Image description helper ─────────────────────────────
+
+    async def describe_image(
+        self,
+        image_url: str,
+        model: str = VISION_MODEL,
+    ) -> str:
+        """用 DeepSeek 视觉模型描述图片，复用主 Key。"""
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": image_url}},
+                {"type": "text", "text": IMAGE_DESCRIPTION_PROMPT},
+            ],
+        }]
+        try:
+            response = await self.chat(
+                model=model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=300,
+            )
+            return (response.content or "").strip()
+        except Exception as e:
+            logger.warning("deepseek.describe_image_failed", error=str(e)[:200])
+            return ""
 
     # ── Embed ────────────────────────────────────────────────
 

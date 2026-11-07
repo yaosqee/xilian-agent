@@ -696,18 +696,18 @@ class AgentCore:
 
         # ── 1c. 多模态：图片预处理 ──
         image_description = ""
-        memory_task = None  # Native 路径的后台 MiMo 任务（不阻塞回复）
+        memory_task = None  # Native 路径的后台视觉描述任务（不阻塞回复）
         self._current_images = list(event.images) if event.images else []
         if self._current_images:
             provider, model = self.router.get_current_model_info()
             if self.router.supports_vision(provider, model):
-                # Native 路径：图片直入 multimodal，后台并行 MiMo 取描述（仅用于记忆）
+                # Native 路径：图片直入 multimodal，后台并行视觉描述（仅用于记忆）
                 trace_log.info("agent.multimodal.native", provider=provider, model=model)
                 memory_task = asyncio.create_task(
                     self._describe_image(self._current_images[0])
                 )
             else:
-                # Fallback 路径：先用 MiMo 描述再对话
+                # Fallback 路径：先用视觉模型描述再对话
                 trace_log.info("agent.multimodal.fallback", provider=provider)
                 image_description = await self._describe_image(self._current_images[0])
                 if image_description:
@@ -771,7 +771,7 @@ class AgentCore:
             if self.router.supports_vision(provider, model):
                 self._convert_to_multimodal(messages, self._current_images, provider)
             else:
-                # MiMo fallback 也失败了 → 优雅降级
+                # 视觉 fallback 也失败了 → 优雅降级
                 messages.insert(-1, {"role": "system", "content": "（伙伴发来了一张图片，但人家暂时看不太清楚呢……）"})
                 trace_log.warning("agent.multimodal.degraded", provider=provider)
 
@@ -2010,7 +2010,7 @@ class AgentCore:
 
     async def _describe_image(self, image_url: str) -> str:
         """
-        使用 MiMo-V2.5 描述图片内容（视觉兜底）。
+        使用视觉模型描述图片内容（默认 DeepSeek，复用主 Key）。
 
         Phase 2: 当主模型不支持 vision 时调用。
         缓存：同一 URL 在单次会话中只调用一次。
@@ -2019,7 +2019,7 @@ class AgentCore:
 
     @staticmethod
     def _compress_image_desc(description: str, max_chars: int = 30) -> str:
-        """将 MiMo 描述压缩为短句，用于嵌入 user_message 存入历史。"""
+        """将视觉描述压缩为短句，用于嵌入 user_message 存入历史。"""
         return MultimodalProcessor.compress_image_desc(description, max_chars)
 
     def _enforce_speech_rule(self, text: str) -> str:

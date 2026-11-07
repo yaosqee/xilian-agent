@@ -33,6 +33,14 @@ max_output_tokens = 8000
 cost_per_1k_in = 0.0
 cost_per_1k_out = 0.0
 
+[models.deepseek-v4-flash-vision-exp]
+provider = "deepseek"
+capabilities = ["tools", "streaming", "thinking", "vision"]
+context_window = 128000
+max_output_tokens = 8000
+cost_per_1k_in = 0.0
+cost_per_1k_out = 0.0
+
 [profiles.dialogue]
 model = "deepseek-flash"
 fallbacks = ["deepseek-v4-pro"]

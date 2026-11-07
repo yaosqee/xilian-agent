@@ -1,5 +1,6 @@
-"""MultimodalProcessor — 多模态图片处理（URL 解析 + base64 转换 + MiMo 描述）"""
+"""MultimodalProcessor — 多模态图片处理（URL 解析 + base64 转换 + 视觉模型描述）"""
 
+import os
 from pathlib import Path
 from loguru import logger
 
@@ -51,35 +52,54 @@ class MultimodalProcessor(ServiceModule):
         return url
 
     async def describe_image(self, image_url: str) -> str:
-        """使用 MiMo-V2.5 描述图片内容（视觉兜底）。缓存：同一 URL 单次会话只调用一次。"""
+        """用视觉模型描述图片内容（默认 DeepSeek，复用主 Key）。
+
+        VISION_PROVIDER=deepseek|mimo（默认 deepseek）
+        VISION_MODEL=deepseek-v4-flash-vision-exp（默认）
+        缓存：同一 URL 单次会话只调用一次。
+        """
         if image_url in self._desc_cache:
             return self._desc_cache[image_url]
 
         resolved_url = self._resolve_image_url(image_url)
+        provider = (os.getenv("VISION_PROVIDER") or "deepseek").strip().lower()
+        default_model = (
+            "deepseek-v4-flash-vision-exp" if provider == "deepseek" else ""
+        )
+        model = (os.getenv("VISION_MODEL") or default_model).strip()
 
         try:
-            adapter = self._router._adapters.get("mimo") if self._router else None
+            adapter = self._router._adapters.get(provider) if self._router else None
             if adapter is None and self._router:
-                adapter = self._router._create_adapter("mimo")
+                adapter = self._router._create_adapter(provider)
                 if adapter is not None:
-                    self._router._adapters["mimo"] = adapter
+                    self._router._adapters[provider] = adapter
             if adapter is None:
-                logger.warning("agent.describe_image.no_adapter")
+                logger.warning("agent.describe_image.no_adapter", provider=provider)
                 return ""
 
-            description = await adapter.describe_image(resolved_url)
+            if provider == "deepseek":
+                description = await adapter.describe_image(resolved_url, model=model)
+            else:
+                description = await adapter.describe_image(resolved_url)
             if description:
                 self._desc_cache[image_url] = description
-                logger.debug("agent.describe_image.ok", preview=description[:80])
+                logger.debug(
+                    "agent.describe_image.ok",
+                    provider=provider, model=model, preview=description[:80],
+                )
                 return description
         except Exception as e:
-            logger.warning("agent.describe_image.failed", error=str(e))
+            logger.warning(
+                "agent.describe_image.failed",
+                provider=provider, model=model, error=str(e)[:200],
+            )
 
         return ""
 
     @staticmethod
     def compress_image_desc(description: str, max_chars: int = 30) -> str:
-        """将 MiMo 描述压缩为短句，用于嵌入 user_message 存入历史。"""
+        """将视觉描述压缩为短句，用于嵌入 user_message 存入历史。"""
         if not description:
             return ""
         desc = description.split("。")[0].strip()

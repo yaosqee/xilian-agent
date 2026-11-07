@@ -23,7 +23,7 @@ REQUIRED_ATTRS = [
 ]
 
 REQUIRED_METHODS = ["chat", "embed", "get_available_models"]
-# describe_image 是可选方法——仅视觉模型（MiMo）需要实现
+# describe_image 是可选方法——有视觉能力的 adapter 实现
 
 
 class TestProviderRegistry:
@@ -94,3 +94,15 @@ class TestAdapterStructure:
         assert mimo is not None
         assert hasattr(mimo, "describe_image")
         assert callable(getattr(mimo, "describe_image"))
+
+    def test_deepseek_has_vision_model_and_describe_image(self, all_adapters):
+        """DeepSeek 视觉模型与 describe_image（复用主 Key）。"""
+        deepseek = all_adapters.get("deepseek")
+        assert deepseek is not None
+        assert callable(getattr(deepseek, "describe_image"))
+        vision = [
+            m for m in deepseek.get_available_models()
+            if "image" in (m.input_modalities or [])
+        ]
+        assert vision
+        assert vision[0].id == "deepseek-v4-flash-vision-exp"
