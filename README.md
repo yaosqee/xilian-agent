@@ -196,6 +196,11 @@ cp .env.example .env
 DEEPSEEK_API_KEY=sk-你的第一个key
 DEEPSEEK_API_KEY_2=sk-你的第二个key（没有就填第一个）
 
+# 识图：默认复用上面的 DeepSeek Key，无需额外 Key
+# VISION_PROVIDER=deepseek
+# VISION_MODEL=deepseek-v4-flash-vision-exp
+# 可选：VISION_PROVIDER=mimo + MIMO_API_KEY=...（保留兼容）
+
 # 推荐填（硅基流动，免费）
 EMBED_API_KEY=sk-你的硅基流动key
 EMBED_BASE_URL=https://api.siliconflow.cn/v1
@@ -351,7 +356,7 @@ xilian-v3/
 ├── photo/                        # 🖼️ 背景图片 + 风格参考
 ├── alembic/                      # 🗄️ 数据库迁移
 ├── skills/manual/                # 🛠️ 4 个技能文件
-└── tests/                        # 🧪 732+ 条测试
+└── tests/                        # 🧪 735+ 条测试
 ```
 
 ---

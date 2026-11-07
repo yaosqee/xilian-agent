@@ -74,6 +74,9 @@ cd packages/frontend && npm run dev
 # ── 必需 ──
 DEEPSEEK_API_KEY=sk-xxx          # DeepSeek V4-Pro 主 Key
 DEEPSEEK_API_KEY_2=sk-xxx        # DeepSeek V4 备用 Key（Pro 双 Key 轮询 + Flash）
+# 识图默认复用 DeepSeek Key，无需额外 Key
+VISION_PROVIDER=deepseek
+VISION_MODEL=deepseek-v4-flash-vision-exp
 EMBED_API_KEY=sk-xxx             # 硅基流动 bge-m3 嵌入 API（通常与 DEEPSEEK_API_KEY_2 相同）
 EMBED_BASE_URL=https://api.siliconflow.cn/v1  # 嵌入 API 地址
 

@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 732 passed / 28s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 735 passed / 28s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -66,6 +66,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - 人格提示词纳入 Git 版本管理：`prompts/personality_v4.md`（当前 v4.1）
 - 工具系统：LLM function calling 驱动，4 工具 autodiscover 注册，README_ONLY 自主 / EXECUTE 需确认；天气默认 Open-Meteo 无需 Key，和风/搜索可选
 - 外部 API Key（QWeather / Zhipu）仅存储在 .env，不入 git，不写入文档
+- 识图：默认复用 `DEEPSEEK_API_KEY` + `deepseek-v4-flash-vision-exp`；MiMo 仅保留 `VISION_PROVIDER=mimo` 兼容
 - 工具新增只需一个文件：在 `packages/agent/tools/` 下创建 + `@register_tool` 装饰器
 
 ## 前端风格

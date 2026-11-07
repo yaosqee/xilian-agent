@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > 📅 最后更新：2026-11-05
-> 🔖 当前：P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气修复完成；V2 由 `.env` 开启；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **732 passed / 8 skipped**。
+> 🔖 当前：P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图修复完成；V2 由 `.env` 开启；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **735 passed / 8 skipped**。
 
 ## 📚 文档导航
 
@@ -125,7 +125,7 @@ xilian-v3/
 │   ├── pipeline/                     # ServiceModule 提取（V3.7）
 │   │   ├── _base.py                  #   ServiceModule 基类（依赖注入容器）
 │   │   ├── perception.py             #   PerceptionProcessor（感知阶段）
-│   │   ├── multimodal.py             #   MultimodalProcessor（图片处理+MiMo描述）
+│   │   ├── multimodal.py             #   MultimodalProcessor（图片处理+DeepSeek 视觉描述）
 │   │   ├── memory_retrieval.py       #   MemoryRetrievalProcessor（记忆检索）
 │   │   └── tool_handler.py           #   ToolHandlerProcessor（骨架，待后续填充）
 │   └── tools/
@@ -377,6 +377,7 @@ AttentionScheduler 任务提醒流程：
 | M2 | M2-1~M2-6 完成：TOML / DB ui 覆盖 / 可编辑 Profiles / 供应商目录 / 凭据 resolver / Onboarding 写 DB / 自定义模型 / 删除 UI；动态模型发现待做 |
 | 时间/意图 | `DatetimeModule` 已移除时段词；`INTENT_ROUTER=0` 可关全部硬路由；`WEATHER_INTENT_ROUTER=0` 只放开天气；A/B 显示 memory/天气仍应保留强制 |
 | 天气 | `query_weather` 默认 Open-Meteo（无需 Key），有和风 Key 优先，搜索兜底 |
+| 识图 | 默认 `VISION_PROVIDER=deepseek` + `deepseek-v4-flash-vision-exp`，复用主 Key；MiMo 兼容 |
 | `model_stats` | 内存统计，重启清零，未持久化 |
 | `evals` | 40 条用例已冻结（`cases_sha256` 指纹）；含 `tool_success_rate`；搜索已切 DeepSeek Search |
 | `ConfirmationStore` | 进程内内存，重启丢 pending；跨会话隔离已做 |
