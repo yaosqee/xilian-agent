@@ -108,15 +108,38 @@ async def main():
             if getattr(sys, "frozen", False)
             else [sys.executable, str(Path(__file__).resolve())]
         )
+        logger.info("config.restart_cmd", cmd=restart_cmd)
+        restart_log_path = _get_env_dir() / "data" / "restart.log"
+        restart_log_path.parent.mkdir(parents=True, exist_ok=True)
+        restart_log = open(restart_log_path, "a", encoding="utf-8")
+        logger.info("config.restart_log", path=str(restart_log_path))
+        # onefile 重启时不要把旧 PyInstaller 临时目录环境传给新进程，
+        # 否则新进程会复用已被父进程删除的 _MEI 目录（表现为缺 unicodedata 等）。
+        restart_env = os.environ.copy()
+        for key in (
+            "_PYI_ARCHIVE_FILE",
+            "_PYI_APPLICATION_HOME_DIR",
+            "_PYI_PARENT_PROCESS_LEVEL",
+            "_PYI_SPLASH_IPC",
+        ):
+            restart_env.pop(key, None)
+        restart_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         if sys.platform == "win32":
-            # Windows: shell=True 保证中文路径可用
+            # 直接用 argv 列表，避免 shell=True 下中文路径/引号被 cmd 再解析。
             subprocess.Popen(
-                subprocess.list2cmdline(restart_cmd),
-                shell=True,
+                restart_cmd,
                 creationflags=0x00000008,  # DETACHED_PROCESS
+                env=restart_env,
+                stdout=restart_log,
+                stderr=subprocess.STDOUT,
             )
         else:
-            subprocess.Popen(restart_cmd)
+            subprocess.Popen(
+                restart_cmd,
+                env=restart_env,
+                stdout=restart_log,
+                stderr=subprocess.STDOUT,
+            )
         time.sleep(0.5)
         logger.info("config.exiting")
         os._exit(0)

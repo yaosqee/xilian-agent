@@ -73,6 +73,8 @@ a = Analysis(
         'dotenv',
         # Migrations
         'alembic',
+        # stdlib extension missed by PyInstaller 6.20 analysis (idna dependency)
+        'unicodedata',
         # YAML
         'yaml',
         # HTTP multipart

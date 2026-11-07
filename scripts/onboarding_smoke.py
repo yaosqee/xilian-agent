@@ -131,12 +131,15 @@ def main() -> int:
             "TEMP": str(win_tmp),
             "TMP": str(win_tmp),
         })
-        # 开发模式用项目解释器；--exe 用打包后的可执行文件。
-        command = (
-            [str(args.exe.resolve())]
-            if args.exe
-            else [sys.executable, str(ROOT / "main.py")]
-        )
+        # 开发模式用项目解释器；--exe 先复制到临时目录再运行。
+        # 某些 Windows 环境下，从项目目录直接运行 onefile exe 会在解压临时目录时失败；
+        # 复制到系统临时目录可模拟真实安装位置。
+        if args.exe:
+            exe_copy = temp / "app.exe"
+            shutil.copy2(args.exe.resolve(), exe_copy)
+            command = [str(exe_copy)]
+        else:
+            command = [sys.executable, str(ROOT / "main.py")]
         log_file = log_path.open("w", encoding="utf-8")
         proc = subprocess.Popen(
             command,
