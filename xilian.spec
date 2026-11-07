@@ -32,7 +32,7 @@ a = Analysis(
     hiddenimports=[
         # sqlite-vec (loads vec0 via sqlite3.load_extension)
         'sqlite_vec',
-        # System tray (needs pystray + Pillow + pywin32 on Windows)
+        # System tray (pystray wins via ctypes; pywin32 not required)
         'pystray',
         'pystray._win32',
         'pystray._util',
@@ -40,11 +40,6 @@ a = Analysis(
         'PIL',
         'PIL.Image',
         'PIL.ImageDraw',
-        'win32api',
-        'win32gui',
-        'win32con',
-        'win32process',
-        'win32clipboard',
         # AI/API
         'openai',
         'httpx',
