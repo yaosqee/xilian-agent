@@ -31,10 +31,13 @@ python -m venv .venv
 pip install openai python-dotenv loguru fastapi uvicorn aiosqlite apscheduler sqlite-vec rich alembic pyyaml python-multipart pystray Pillow pyinstaller pywin32
 cd packages\frontend && npm install && npm run build && cd ..\..
 pyinstaller xilian.spec --noconfirm
+# 或：uv run pyinstaller xilian.spec --noconfirm
 # 产物：dist/昔涟.exe
 ```
 
 首次双击 exe 进入 API Key 引导页，配置后自动重启进入主界面。详见 `.env.example`。
+
+> onefile 建议复制到普通用户目录（如 `C:\Users\<你>\Apps\昔涟\`）再运行，不要直接在项目源码目录里跑；部分工作区/安全软件环境会阻止 onefile 解压临时目录。
 
 ---
 

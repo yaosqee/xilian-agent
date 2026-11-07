@@ -10,7 +10,7 @@
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
 | 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **735 passed / 8 skipped / ~28s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图修复完成；**V2 由 `.env` 开启**；全量 V2 100%；下一步真实 Onboarding/exe 打包冒烟 |
+| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图/Onboarding/exe 冒烟完成；**V2 由 `.env` 开启**；全量 V2 100%；下一步真实图片与发布目录测试 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |
@@ -303,15 +303,19 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 - 开发模式真实 Key 冒烟：**PASS**（`model_providers` 有 `('deepseek','db')`，重启后 `/api/status` 正常）；
 - 修复开发模式重启只启动 `python.exe`、没带 `main.py` 的问题。
 
-### exe 阻塞
+### exe 冒烟结果
 
 - `pyinstaller xilian.spec` 构建成功；
-- 新构建的 onefile exe 启动时报：
-  `[PYI-...:ERROR] Could not create temporary directory!`
-- 无 UPX 构建同样失败；旧 `dist/昔涟.exe` 能启动（但没有 `XILIAN_HOME` 支持）。
-- `uv run pyinstaller` 与直接 `pyinstaller` 在本机指向同一个 `.venv`；区别主要是前者保证项目环境，后者依赖 PATH。
-- 需要下一步排查 PyInstaller 6.20 onefile / 临时目录 / 安全软件问题，或改用 onedir。
+- **已修复**：onefile 重启时继承旧的 `_PYI_APPLICATION_HOME_DIR/_PYI_ARCHIVE_FILE`，新进程复用已被删除的 `_MEI`，表现为缺 `unicodedata`；
+  - 重启时清理 `_PYI_*` 并设置 `PYINSTALLER_RESET_ENVIRONMENT=1`；
+- **已修复**：显式加入 `unicodedata` hidden import；
+- 打包 exe 复制到普通临时安装目录后：
+  - 无 Key Onboarding：**PASS**；
+  - 真实 Key → 写 DB → 重启 → `/api/status`：**PASS**。
+- **残留**：直接在 `D:\xilian-v3` 项目目录运行 onefile 仍可能报
+  `Could not create temporary directory!`；最小 hello onefile 也一样，复制到 `D:\` 根目录或系统 Temp 后正常。判断是工作区/安全软件环境问题，不是应用代码；发布时建议安装到普通用户目录，不要直接在项目源码目录运行 exe。
 - 构建警告：`win32api/win32gui/win32con/win32process/win32clipboard` hidden import 未找到；托盘相关需确认。
+- `uv run pyinstaller` 与直接 `pyinstaller` 在本机指向同一个 `.venv`；区别主要是前者保证项目环境，后者依赖 PATH。
 
 ---
 
