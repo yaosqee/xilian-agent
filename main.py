@@ -27,7 +27,13 @@ def _get_base_dir() -> Path:
 
 
 def _get_env_dir() -> Path:
-    """.env / data 等持久化文件的目录。开发模式=项目根；打包模式=exe 所在目录。"""
+    """.env / data 等持久化文件的目录。开发模式=项目根；打包模式=exe 所在目录。
+
+    XILIAN_HOME 可覆盖，用于隔离测试/便携部署。
+    """
+    override = os.getenv("XILIAN_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent
     return Path(__file__).parent
@@ -111,7 +117,7 @@ async def main():
         os._exit(0)
 
     # ── 1. Agent 核心初始化 ──
-    agent = AgentCore()
+    agent = AgentCore(db_path=str(_get_env_dir() / "data" / "xilian.db"))
     await agent.startup()  # 阶段 3: DB 初始化 + 记忆模块启动
 
     # ── 阶段 6: NudgeEngine 初始化 ──
