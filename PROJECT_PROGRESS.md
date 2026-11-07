@@ -298,14 +298,18 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
   - 在临时目录启动 `main.py`，清空供应商 Key；
   - 验证无 Key → 引导模式；
   - 验证 `/api/config/check=false`、引导页 HTML、空 Key 400、临时 DB 无 provider、未创建 `.env`；
-- 开发模式无 Key 冒烟：**PASS**。
+  - `SMOKE_DEEPSEEK_KEY` 存在时，验证真实 Key → 写 DB → 进程重启 → `/api/status`；
+- 开发模式无 Key 冒烟：**PASS**；
+- 开发模式真实 Key 冒烟：**PASS**（`model_providers` 有 `('deepseek','db')`，重启后 `/api/status` 正常）；
+- 修复开发模式重启只启动 `python.exe`、没带 `main.py` 的问题。
 
-### 阻塞
+### exe 阻塞
 
 - `pyinstaller xilian.spec` 构建成功；
 - 新构建的 onefile exe 启动时报：
   `[PYI-...:ERROR] Could not create temporary directory!`
 - 无 UPX 构建同样失败；旧 `dist/昔涟.exe` 能启动（但没有 `XILIAN_HOME` 支持）。
+- `uv run pyinstaller` 与直接 `pyinstaller` 在本机指向同一个 `.venv`；区别主要是前者保证项目环境，后者依赖 PATH。
 - 需要下一步排查 PyInstaller 6.20 onefile / 临时目录 / 安全软件问题，或改用 onedir。
 - 构建警告：`win32api/win32gui/win32con/win32process/win32clipboard` hidden import 未找到；托盘相关需确认。
 
