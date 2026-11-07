@@ -288,6 +288,29 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 
 ---
 
+## 真实 Onboarding / exe 冒烟（2026-11-07）
+
+### 已做
+
+- `XILIAN_HOME` 可把 `.env` / `data` 隔离到临时目录；开发/打包都适用；
+- `main()` 的 `AgentCore` 显式使用 `_get_env_dir()/data/xilian.db`，避免从别的 cwd 启动时写错 DB；
+- 新增 `scripts/onboarding_smoke.py`：
+  - 在临时目录启动 `main.py`，清空供应商 Key；
+  - 验证无 Key → 引导模式；
+  - 验证 `/api/config/check=false`、引导页 HTML、空 Key 400、临时 DB 无 provider、未创建 `.env`；
+- 开发模式无 Key 冒烟：**PASS**。
+
+### 阻塞
+
+- `pyinstaller xilian.spec` 构建成功；
+- 新构建的 onefile exe 启动时报：
+  `[PYI-...:ERROR] Could not create temporary directory!`
+- 无 UPX 构建同样失败；旧 `dist/昔涟.exe` 能启动（但没有 `XILIAN_HOME` 支持）。
+- 需要下一步排查 PyInstaller 6.20 onefile / 临时目录 / 安全软件问题，或改用 onedir。
+- 构建警告：`win32api/win32gui/win32con/win32process/win32clipboard` hidden import 未找到；托盘相关需确认。
+
+---
+
 ## 天气回复补城市名（2026-11-05）
 
 `AgentCore._ensure_weather_city()`：天气工具返回城市名，但模型常省略主语；回复中没有城市名时补「杭州这边，……」，已有则不动。

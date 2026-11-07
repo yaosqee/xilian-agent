@@ -274,6 +274,16 @@ curl -X POST http://localhost:8000/api/chat \
 
 ---
 
+无 Key 的隔离 Onboarding 冒烟：
+
+```bash
+uv run python scripts/onboarding_smoke.py
+```
+
+它使用临时 `XILIAN_HOME`，不会碰真实 `data/` 和 `.env`。
+
+---
+
 ### 开发模式（修改前端代码时用）
 
 如果以后要改前端界面，用开发模式可以热更新（改了代码浏览器自动刷新）：

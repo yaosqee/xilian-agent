@@ -85,6 +85,7 @@ EMBED_BASE_URL=https://api.siliconflow.cn/v1  # 嵌入 API 地址
 QWEATHER_API_KEY=xxx             # 可选：和风天气 API（query_weather 工具）
 WEATHER_PROVIDER=open-meteo      # 可选：qweather | open-meteo | search
 ZHIPU_SEARCH_API_KEY=xxx         # 可选：智谱搜索（search_web + 天气兜底）
+# XILIAN_HOME=D:\xilian-data     # 可选：把 .env/data 隔离到指定目录（便携/冒烟）
 ```
 
 **获取 API Key**：
