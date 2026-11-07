@@ -314,7 +314,7 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
   - 真实 Key → 写 DB → 重启 → `/api/status`：**PASS**。
 - **残留**：直接在 `D:\xilian-v3` 项目目录运行 onefile 仍可能报
   `Could not create temporary directory!`；最小 hello onefile 也一样，复制到 `D:\` 根目录或系统 Temp 后正常。判断是工作区/安全软件环境问题，不是应用代码；发布时建议安装到普通用户目录，不要直接在项目源码目录运行 exe。
-- 构建警告：`win32api/win32gui/win32con/win32process/win32clipboard` hidden import 未找到；托盘相关需确认。
+- **托盘**：`pystray` Windows 后端走 ctypes，不需要 pywin32；已从 spec 移除 `win32*` hidden imports，打包启动日志出现「系统托盘已启动」。
 - `uv run pyinstaller` 与直接 `pyinstaller` 在本机指向同一个 `.venv`；区别主要是前者保证项目环境，后者依赖 PATH。
 
 ---

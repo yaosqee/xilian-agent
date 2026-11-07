@@ -28,7 +28,7 @@
 # 在 Windows 上（需 Python 3.12+ + Node.js）
 python -m venv .venv
 .venv\Scripts\activate
-pip install openai python-dotenv loguru fastapi uvicorn aiosqlite apscheduler sqlite-vec rich alembic pyyaml python-multipart pystray Pillow pyinstaller pywin32
+pip install openai python-dotenv loguru fastapi uvicorn aiosqlite apscheduler sqlite-vec rich alembic pyyaml python-multipart pystray Pillow pyinstaller
 cd packages\frontend && npm install && npm run build && cd ..\..
 pyinstaller xilian.spec --noconfirm
 # 或：uv run pyinstaller xilian.spec --noconfirm
