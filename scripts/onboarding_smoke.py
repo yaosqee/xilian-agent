@@ -78,6 +78,33 @@ def _kill(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
+def _pids_on_port(port: int) -> list[int]:
+    """Windows netstat 找监听端口的 PID；用于清理 onboarding 重启后的进程。"""
+    try:
+        out = subprocess.check_output(
+            ["netstat", "-ano"], text=True, errors="ignore", timeout=10,
+        )
+    except Exception:
+        return []
+    pids = []
+    needle = f":{port}"
+    for line in out.splitlines():
+        if "LISTENING" not in line.upper() or needle not in line:
+            continue
+        parts = line.split()
+        if parts and parts[-1].isdigit():
+            pids.append(int(parts[-1]))
+    return sorted(set(pids))
+
+
+def _kill_port(port: int) -> None:
+    for pid in _pids_on_port(port):
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=18080)
@@ -143,6 +170,33 @@ def main() -> int:
         assert providers == 0, f"空 Key 不应写 provider，实际 {providers}"
         assert not (temp / ".env").exists(), "Onboarding 不应创建 .env"
 
+        smoke_key = os.getenv("SMOKE_DEEPSEEK_KEY", "").strip()
+        if smoke_key:
+            # 真实 Key 路径：保存 → 主进程重启 → /api/status 可用 → DB 有 provider。
+            status, saved = _json(f"{base}/api/config/save", {
+                "provider": "deepseek", "api_key": smoke_key,
+            })
+            assert status == 200 and saved.get("status") == "ok", saved
+
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("保存 Key 后引导进程未退出")
+
+            _wait_http(f"{base}/api/status", timeout=120)
+            status, status_data = _json(f"{base}/api/status")
+            assert status == 200, status_data
+
+            with sqlite3.connect(db_path) as conn:
+                providers = conn.execute(
+                    "select provider, key_source from model_providers"
+                ).fetchall()
+            assert ("deepseek", "db") in providers, providers
+            assert not (temp / ".env").exists(), "保存 Key 不应写 .env"
+            print("PASS: 真实 Key 保存 + 重启 + /api/status")
+            print(f"  providers={providers}")
+            print(f"  status_keys={sorted(status_data)[:8]}")
+
         print("PASS: 无 Key 引导模式")
         print(f"  temp={temp}")
         print(f"  check={data}")
@@ -160,6 +214,7 @@ def main() -> int:
     finally:
         if proc is not None:
             _kill(proc)
+        _kill_port(args.port)
         if ok and not args.keep:
             shutil.rmtree(temp, ignore_errors=True)
         elif not args.keep:

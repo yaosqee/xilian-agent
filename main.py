@@ -103,15 +103,20 @@ async def main():
         await _start_onboarding()
         # 配置保存后重启进入正常模式
         logger.info("config.restarting", exe=sys.executable)
+        restart_cmd = (
+            [sys.executable]
+            if getattr(sys, "frozen", False)
+            else [sys.executable, str(Path(__file__).resolve())]
+        )
         if sys.platform == "win32":
             # Windows: shell=True 保证中文路径可用
             subprocess.Popen(
-                f'"{sys.executable}"',
+                subprocess.list2cmdline(restart_cmd),
                 shell=True,
                 creationflags=0x00000008,  # DETACHED_PROCESS
             )
         else:
-            subprocess.Popen([sys.executable])
+            subprocess.Popen(restart_cmd)
         time.sleep(0.5)
         logger.info("config.exiting")
         os._exit(0)
