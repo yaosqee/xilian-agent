@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 735 passed / 28s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 734 passed / 27s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
