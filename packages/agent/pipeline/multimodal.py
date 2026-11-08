@@ -2,7 +2,10 @@
 
 import os
 from pathlib import Path
+
 from loguru import logger
+
+from packages.shared.paths import data_dir
 
 from ._base import ServiceModule
 
@@ -35,15 +38,25 @@ class MultimodalProcessor(ServiceModule):
             try:
                 import base64
                 rel_path = url[len("/api/uploads/"):]
-                local_path = Path("data/uploads") / rel_path
+                local_path = data_dir() / "uploads" / rel_path
                 if local_path.exists():
                     image_data = local_path.read_bytes()
                     ext = local_path.suffix.lower()
                     mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                                 ".webp": "image/webp", ".gif": "image/gif"}
                     mime = mime_map.get(ext, "image/webp")
+                    # DeepSeek vision 对 webp/gif 的 data URL 兼容性差，统一转 JPEG。
+                    if ext in (".webp", ".gif"):
+                        import io
+                        from PIL import Image
+                        image = Image.open(io.BytesIO(image_data)).convert("RGB")
+                        image.thumbnail((1280, 1280))
+                        buf = io.BytesIO()
+                        image.save(buf, format="JPEG", quality=85)
+                        image_data = buf.getvalue()
+                        mime = "image/jpeg"
                     b64 = base64.b64encode(image_data).decode("ascii")
-                    logger.debug("image.to_base64", url=url[:50], path=str(local_path), size=len(image_data))
+                    logger.debug("image.to_base64", url=url[:50], path=str(local_path), size=len(image_data), mime=mime)
                     return f"data:{mime};base64,{b64}"
                 else:
                     logger.warning("image.file_not_found", path=str(local_path))

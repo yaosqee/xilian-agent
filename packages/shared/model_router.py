@@ -309,6 +309,10 @@ class ModelRouter:
             logger.info("model_router.no_db — using env-var defaults")
             return
 
+        # AgentCore 可能在构造后才注入 _db；同步给凭据解析器。
+        if getattr(self._credentials, "_db", None) is None:
+            self._credentials._db = self._db
+
         await self._credentials.load()
         self._credentials.apply_to_env()
         # DB 里配置过 Key 的 provider，重建 adapter 以使用 DB 凭据
@@ -497,9 +501,9 @@ class ModelRouter:
             return adapter
         except ImportError as e:
             if lazy_import:
-                logger.warning(f"{provider}_adapter.import_failed", error=str(e))
+                logger.warning(f"{provider}_adapter.import_failed: {e!r}"[:500])
             else:
-                logger.error(f"{provider}_adapter.import_failed", error=str(e))
+                logger.error(f"{provider}_adapter.import_failed: {e!r}"[:500])
             return None
 
     # ══════════════════════════════════════════════════════════

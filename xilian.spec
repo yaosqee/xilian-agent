@@ -43,6 +43,17 @@ a = Analysis(
         # AI/API
         'openai',
         'httpx',
+        # Provider adapters + tools are imported dynamically; PyInstaller
+        # cannot see them through PROVIDER_REGISTRY / autodiscover strings.
+        'packages.shared.providers.deepseek',
+        'packages.shared.providers.openai_adapter',
+        'packages.shared.providers.anthropic',
+        'packages.shared.providers.google_adapter',
+        'packages.shared.providers.mimo_adapter',
+        'packages.agent.tools.query_weather',
+        'packages.agent.tools.search_web',
+        'packages.agent.tools.search_memory',
+        'packages.agent.tools.coding_delegate',
         # Web server
         'fastapi',
         'uvicorn',

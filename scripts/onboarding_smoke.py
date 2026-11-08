@@ -27,6 +27,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import httpx
+
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_KEYS = (
     "DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_2", "OPENAI_API_KEY",
@@ -109,6 +111,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=18080)
     parser.add_argument("--exe", type=Path, default=None, help="用打包 exe 做冒烟")
+    parser.add_argument("--image", type=Path, default=None, help="上传该图片并跑一次识图聊天")
     parser.add_argument("--keep", action="store_true", help="保留临时目录")
     args = parser.parse_args()
 
@@ -128,6 +131,9 @@ def main() -> int:
             "HTTP_PORT": str(args.port),
             "FRONTEND_DEV": "0",
             "PYTHONUNBUFFERED": "1",
+            "MODEL_ROUTING_V2": "1",
+            "LOOP_V2": "1",
+            "DEEPSEEK_DISABLE_THINKING": "1",
             "TEMP": str(win_tmp),
             "TMP": str(win_tmp),
         })
@@ -199,6 +205,31 @@ def main() -> int:
             print("PASS: 真实 Key 保存 + 重启 + /api/status")
             print(f"  providers={providers}")
             print(f"  status_keys={sorted(status_data)[:8]}")
+
+            if args.image:
+                image_path = args.image.resolve()
+                assert image_path.exists(), f"图片不存在: {image_path}"
+                with httpx.Client(base_url=base, timeout=120) as client:
+                    with image_path.open("rb") as fh:
+                        upload = client.post(
+                            "/api/upload",
+                            files={"file": (image_path.name, fh, "image/webp")},
+                        )
+                    upload.raise_for_status()
+                    image_url = upload.json().get("url")
+                    assert image_url, upload.text
+                    chat = client.post("/api/chat", json={
+                        "message": "看看这张图里是什么？",
+                        "images": [image_url],
+                        "user_id": "hezi",
+                    })
+                    chat.raise_for_status()
+                    chat_data = chat.json()
+                reply = chat_data.get("reply", "")
+                assert reply and "agent not ready" not in reply, chat_data
+                print("PASS: 图片上传 + 识图聊天")
+                print(f"  url={image_url}")
+                print(f"  reply={reply[:200]}")
 
         print("PASS: 无 Key 引导模式")
         print(f"  temp={temp}")

@@ -978,9 +978,11 @@ class HTTPChannel(Channel):
         from fastapi import UploadFile, File
         from fastapi.responses import FileResponse
 
-        # 上传目录
-        uploads_dir = _Path(__file__).resolve().parent.parent.parent / "data" / "uploads"
-        stickers_dir = _Path(__file__).resolve().parent.parent.parent / "data" / "stickers"
+        # 上传目录（必须与 MultimodalProcessor 使用同一 data 根目录）
+        from packages.shared.paths import data_dir
+        _data_root = data_dir()
+        uploads_dir = _data_root / "uploads"
+        stickers_dir = _data_root / "stickers"
 
         @self.app.post("/api/upload")
         async def upload_image(file: UploadFile = File(...)):
