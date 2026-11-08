@@ -296,6 +296,9 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 
 实际回复识别出了图片：「一颗浅橙色的心，圆圆的……」
 
+公网随机图也验证过：本机下载 `picsum.photos` 图片后按前端上传路径走，模型能正确描述。  
+注意：直接把外部 URL 交给 DeepSeek 会报 `Failed to download image`（服务端取图失败）；前端上传会先落本地再转 base64，不受影响。远程 URL 直传暂不支持。
+
 排查并修复了 4 个问题：
 
 1. `ModelRouter` 构造后才注入 `_db`，`CredentialResolver` 仍持有 `None` → DB 里的 Key 没生效；初始化时同步。
