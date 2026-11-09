@@ -70,8 +70,12 @@ class Gateway:
                     error=str(e),
                 )
 
-        for task in self._tasks:
-            if not task.done():
+        # 先给 uvicorn 等通道一个优雅退出的窗口（触发 lifespan shutdown），
+        # 再取消仍未结束的任务；立即 cancel 会在 uvicorn lifespan 里抛 CancelledError。
+        if self._tasks:
+            _done, pending = await asyncio.wait(self._tasks, timeout=5)
+            for task in pending:
                 task.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
 
         logger.info("gateway.stopped")
