@@ -9,8 +9,8 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **736 passed / 8 skipped / ~27s** |
-| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图/Onboarding/exe 冒烟完成；**V2 由 `.env` 开启**；全量 V2 100%；下一步发布构建与真实 UI 操作 |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **737 passed / 8 skipped / ~28s** |
+| 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图/Onboarding/exe 冒烟完成；**MODEL_ROUTING_V2 已转默认 1**（V1 legacy 可回滚）；全量 V2 100% |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
 | 工具执行成功率 | 两者均 **100%**（搜索已切 DeepSeek Search；此前 69.4% 全部来自智谱 429 余额不足） |

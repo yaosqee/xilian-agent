@@ -2,7 +2,7 @@
 
 > 📍 告诉新 AI 哪个文件做什么、数据怎么流、有什么约定。
 > 📅 最后更新：2026-11-05
-> 🔖 当前：P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图/Onboarding/exe 修复完成；V2 由 `.env` 开启；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **736 passed / 8 skipped**。
+> 🔖 当前：P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图/Onboarding/exe 修复完成；MODEL_ROUTING_V2 默认 1（V1 legacy 可回滚）；`LOOP_V2` 本机已开（`.env=1`，代码默认 0）；测试基线 **737 passed / 8 skipped**。
 
 ## 📚 文档导航
 

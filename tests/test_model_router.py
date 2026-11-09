@@ -28,7 +28,7 @@ class TestModelRouter:
 
     def test_init_no_api_keys(self):
         """无任何 API Key → 空 adapters + warning。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             router = ModelRouter()
             assert len(router._adapters) == 0
             assert len(router._tier_configs) == 0
@@ -47,13 +47,13 @@ class TestModelRouter:
 
     def test_supports_tools_default_true(self):
         """未缓存 → 默认返回 True（乐观假设支持）。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             router = ModelRouter()
             assert router._supports_tools("unknown:model") is True
 
     def test_supports_tools_cached_false(self):
         """缓存标记为不支持 → 返回 False。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             router = ModelRouter()
             router._tools_support_cache["deepseek:test"] = False
             assert router._supports_tools("deepseek:test") is False
@@ -62,7 +62,7 @@ class TestModelRouter:
 
     def test_get_current_model_info_with_tier(self):
         """有 tier 配置 → 返回 tier 的 provider + model。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             router = ModelRouter()
             router._tier_configs["powerful"] = TierConfig(
                 tier="powerful", provider="deepseek", model_name="deepseek-v4-pro",
@@ -74,7 +74,7 @@ class TestModelRouter:
 
     def test_get_current_model_info_with_override(self):
         """有 task override → 优先返回 override。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             router = ModelRouter()
             from packages.shared.providers import TaskOverride
             router._task_overrides["chat"] = TaskOverride(
@@ -89,7 +89,7 @@ class TestModelRouter:
     @pytest.mark.asyncio
     async def test_route_success(self):
         """正常路由 → adapter.chat() 被调用并返回结果。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             mock_adapter = MagicMock()
             mock_adapter.chat = AsyncMock(return_value=ProviderResponse(
                 content="hello", tool_calls=None, reasoning_content="",
@@ -109,7 +109,7 @@ class TestModelRouter:
     @pytest.mark.asyncio
     async def test_route_tool_error_retry(self):
         """tool error → 原样重试一次成功，不永久禁用 tools。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             mock_adapter = MagicMock()
             mock_adapter.chat = AsyncMock(side_effect=[
                 ToolRelatedError("tools not supported"),
@@ -136,7 +136,7 @@ class TestModelRouter:
     @pytest.mark.asyncio
     async def test_route_tool_error_degrades_after_two_failures(self):
         """连续两次 tool error → 临时禁用 tools，第三次无 tools 成功。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             mock_adapter = MagicMock()
             mock_adapter.chat = AsyncMock(side_effect=[
                 ToolRelatedError("tools not supported"),
@@ -164,7 +164,7 @@ class TestModelRouter:
     @pytest.mark.asyncio
     async def test_route_tool_choice_error_retries_auto(self):
         """tool_choice 不兼容 → 改用 auto 重试，不临时禁用 tools。"""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             mock_adapter = MagicMock()
             mock_adapter.chat = AsyncMock(side_effect=[
                 Exception("Thinking mode does not support this tool_choice"),
@@ -193,7 +193,7 @@ class TestModelRouter:
     def test_model_policy_from_adapter_info(self):
         from packages.shared.providers.base import ModelInfo
 
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             mock_adapter = MagicMock()
             mock_adapter.get_available_models.return_value = [
                 ModelInfo(
@@ -212,7 +212,7 @@ class TestModelRouter:
 
     @pytest.mark.asyncio
     async def test_stats_records_calls_and_latency(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             mock_adapter = MagicMock()
             mock_adapter.chat = AsyncMock(return_value=ProviderResponse(
                 content="ok", tool_calls=None, reasoning_content="",
@@ -232,7 +232,7 @@ class TestModelRouter:
     def test_degradation_expires(self):
         import time
 
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             router = ModelRouter()
             router._tools_support_cache["x:y"] = False
             router._tools_disabled_until["x:y"] = time.time() - 1
@@ -274,8 +274,14 @@ class TestRoutingV2:
         router._adapters["deepseek"] = adapter
         return router, adapter
 
-    def test_flag_defaults_off(self):
+    def test_flag_defaults_on(self):
         with patch.dict(os.environ, {}, clear=True):
+            router = ModelRouter()
+            assert router.routing_v2 is True
+            assert router.routing_config is not None
+
+    def test_flag_can_be_disabled(self):
+        with patch.dict(os.environ, {"MODEL_ROUTING_V2": "0"}, clear=True):
             router = ModelRouter()
             assert router.routing_v2 is False
             assert router.routing_config is None

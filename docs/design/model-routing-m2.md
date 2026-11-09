@@ -545,3 +545,15 @@ uv run pytest -q --ignore=tests/test_personality_regression.py  # 723 passed / 8
 | 测试 | 新增 1 条 API 测试；全量 **724 passed / 8 skipped**；前端 build 通过 |
 
 边界：自定义模型只做目录登记，不验证模型是否真实存在；动态发现仍未做。
+
+---
+
+## 19. V2 默认转正 / V1 legacy（2026-11-09）
+
+- `MODEL_ROUTING_V2` 代码默认由 0 改为 **1**；
+- `MODEL_ROUTING_V2=0` 保留为 V1 legacy 回滚开关；
+- V1 标记为 legacy：旧 Tier 设置页显示提示，不再加新功能；`_auto_seed_db()` 在 V2 下不再执行；
+- Onboarding 仍写运行开关（`MODEL_ROUTING_V2=1` / `LOOP_V2=1` / `DEEPSEEK_DISABLE_THINKING=1`），不写 Key；
+- `LOOP_V2` 与 `MODEL_ROUTING_V2` 保持独立。
+
+验证：全量 **737 passed / 8 skipped**；V2 全量 P3 100%。

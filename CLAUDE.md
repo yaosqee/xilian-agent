@@ -6,7 +6,7 @@
 
 ```bash
 uv run python main.py                # 全栈启动（Windows 原生，D:\xilian-v3）
-uv run pytest -q --ignore=tests/test_personality_regression.py   # 736 passed / 27s
+uv run pytest -q --ignore=tests/test_personality_regression.py   # 737 passed / 28s
 cd packages/frontend && npm run dev  # 前端开发模式
 ```
 
@@ -34,7 +34,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - `packages/agent/tools/` — 4 个工具：search_memory / query_weather / search_web / coding_delegate
 - `packages/shared/providers/` — 多供应商适配器 + ProviderAdapter Protocol + `model_policy.py`（ModelPolicy 能力矩阵）
 - `packages/shared/model_config.py` — M2-1 声明式路由配置加载/校验/解析
-- `packages/shared/model_router.py` — V1 Tier + V2 声明式路由（`MODEL_ROUTING_V2` 默认 0）+ tool 重试/降级 + stats
+- `packages/shared/model_router.py` — V2 声明式路由（默认 1）+ V1 Tier legacy（`MODEL_ROUTING_V2=0` 回滚）+ tool 重试/降级 + stats
 - `config/model_routing.toml` — 当前路由默认基线（TOML）
 - `packages/shared/credentials.py` — M2-5 凭据解析（DB Key 优先，`.env` fallback）
 - `packages/shared/provider_service.py` — 供应商验 Key / 静态模型目录导入（设置面板 + Onboarding 共用）
@@ -57,7 +57,7 @@ cd packages/frontend && npm run dev  # 前端开发模式
 - DeepSeek 纯云端路由：对话 `deepseek-flash`，`tier:reasoning` 保留 `deepseek-v4-pro`（ModelRouter）
 - Agent 循环：**本机 `.env` 已设 `LOOP_V2=1`**（走 `packages/agent/loop/`：预算/结构化回填/会话确认/真 token 流）；代码默认 0，回滚删掉该项即可
 - 意图路由：`INTENT_ROUTER=1` 默认保留关键词强制工具；`=0` 交给模型 auto（A/B 用，memory 类会掉）；`WEATHER_INTENT_ROUTER=0` 只放开天气（A/B 显示正确工具率降到 87.5%）
-- 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；`MODEL_ROUTING_V2=1` 可切声明式 TOML；供应商 Key 存 DB（DB > env），Onboarding 已改为写 DB
+- 模型路由：`ModelPolicy` 能力矩阵 + tool 错误「重试一次 → 15m 降级」+ `model_stats`；`MODEL_ROUTING_V2=1` 为默认，`=0` 回滚 V1 legacy；供应商 Key 存 DB（DB > env），Onboarding 已改为写 DB
 - SQLite (aiosqlite, WAL) + sqlite-vec 向量扩展，零外部依赖，~13 张表
 - React + TypeScript + Vite + Zustand，前端嵌入后端单进程 serve
 - loguru 结构化日志：`logger.bind(trace_id=...).info("模块.动作", **kwargs)`

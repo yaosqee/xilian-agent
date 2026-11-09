@@ -3,8 +3,8 @@
 V3.3 → V3.4 升级：硬编码 DeepSeek Pro/Flash 二分 → Tier 系统 + Provider Adapter 委派。
 
 路由流程:
-    V1（默认）: task_type → tier (TASK_TIER_MAP) → TierConfig → adapter.chat()
-    V2（MODEL_ROUTING_V2=1）: task_type → profile → model + fallbacks → adapter.chat()
+    V1（legacy，MODEL_ROUTING_V2=0）: task_type → tier (TASK_TIER_MAP) → TierConfig → adapter.chat()
+    V2（默认，MODEL_ROUTING_V2=1）: task_type → profile → model + fallbacks → adapter.chat()
 
 向后兼容:
     仅设置 DEEPSEEK_API_KEY 的用户自动使用 DeepSeekAdapter，行为完全不变。
@@ -77,8 +77,8 @@ class ModelRouter:
         # ── 统一凭据：DB UI Key 优先，.env fallback ──
         self._credentials = CredentialResolver(db)
 
-        # ── M2: 声明式路由（默认关闭，保持旧 tier 路径不变）──
-        self._routing_v2 = _env_flag("MODEL_ROUTING_V2", False)
+        # ── M2: 声明式路由（默认 V2；显式 =0 回滚 legacy tier）──
+        self._routing_v2 = _env_flag("MODEL_ROUTING_V2", True)
         self._routing_config = None
         self._routing_file = None
 
@@ -114,6 +114,7 @@ class ModelRouter:
             adapters=list(self._adapters.keys()),
             tiers=list(self._tier_configs.keys()),
             routing_v2=self._routing_v2,
+            mode="v2" if self._routing_v2 else "legacy",
         )
 
     @property
@@ -380,9 +381,12 @@ class ModelRouter:
             logger.warning("model_router.db_load_failed", error=str(e))
 
     async def _auto_seed_db(self):
-        """首次升级：从 .env 检测现有配置，自动播种 DB。"""
+        """V1 legacy 首次升级：从 .env 检测现有配置，自动播种 DB。"""
         if not self._db:
             return
+        if self._routing_v2:
+            return
+        logger.warning("model_router.legacy_auto_seed")
 
         providers = detect_configured_providers()
         if not providers:
@@ -558,7 +562,7 @@ class ModelRouter:
     ) -> ProviderResponse | object:
         """路由主入口。
 
-        V1（默认）:
+        V1（legacy）:
           1. 解析 task_type → tier
           2. 检查 task_type 覆盖
           3. 解析 tier → provider + model

@@ -80,9 +80,12 @@ const ModelSettingsSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({
 
   return (
     <div style={sectionStyle}>
-      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 10 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 4 }}>
         模型设置
       </div>
+      <p style={{ fontSize: 10, color: 'var(--color-text-muted)', margin: '0 0 10px' }}>
+        旧版 Tier 路由（Legacy）；推荐使用 MODEL_ROUTING_V2=1
+      </p>
 
       {tierEntries.length === 0 ? (
         <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
