@@ -177,7 +177,9 @@ def main() -> int:
         with sqlite3.connect(db_path) as conn:
             providers = conn.execute("select count(*) from model_providers").fetchone()[0]
         assert providers == 0, f"空 Key 不应写 provider，实际 {providers}"
-        assert not (temp / ".env").exists(), "Onboarding 不应创建 .env"
+        env_path = temp / ".env"
+        if env_path.exists():
+            assert "DEEPSEEK_API_KEY" not in env_path.read_text(encoding="utf-8")
 
         smoke_key = os.getenv("SMOKE_DEEPSEEK_KEY", "").strip()
         if smoke_key:
@@ -201,7 +203,13 @@ def main() -> int:
                     "select provider, key_source from model_providers"
                 ).fetchall()
             assert ("deepseek", "db") in providers, providers
-            assert not (temp / ".env").exists(), "保存 Key 不应写 .env"
+            env_text = (temp / ".env").read_text(encoding="utf-8")
+            assert "DEEPSEEK_API_KEY" not in env_text, "Onboarding 不应把 Key 写进 .env"
+            assert "MODEL_ROUTING_V2=1" in env_text
+            assert "LOOP_V2=1" in env_text
+            assert "DEEPSEEK_DISABLE_THINKING=1" in env_text
+            _status, model_cfg = _json(f"{base}/api/models/config")
+            assert model_cfg.get("routing_v2") is True, model_cfg
             print("PASS: 真实 Key 保存 + 重启 + /api/status")
             print(f"  providers={providers}")
             print(f"  status_keys={sorted(status_data)[:8]}")

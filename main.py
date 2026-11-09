@@ -39,6 +39,38 @@ def _get_env_dir() -> Path:
     return Path(__file__).parent
 
 
+def _ensure_runtime_flags() -> Path:
+    """.env 只放运行开关，不写 API Key；首次引导后启用 V2/新循环。"""
+    env_path = _get_env_dir() / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    desired = {
+        "MODEL_ROUTING_V2": "1",
+        "LOOP_V2": "1",
+        "DEEPSEEK_DISABLE_THINKING": "1",
+    }
+    changed = False
+    for key, value in desired.items():
+        prefix = f"{key}="
+        found = False
+        for index, line in enumerate(lines):
+            if line.startswith(prefix):
+                found = True
+                if line.strip() == prefix:
+                    lines[index] = f"{key}={value}"
+                    changed = True
+                break
+        if not found:
+            lines.append(f"{key}={value}")
+            changed = True
+        if not os.getenv(key):
+            os.environ[key] = value
+    if changed:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        logger.info("config.runtime_flags_saved", path=str(env_path))
+    return env_path
+
+
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -67,6 +99,7 @@ async def main():
     elif cwd_env.exists():
         load_dotenv(dotenv_path=str(cwd_env))
     setup_logging()
+    _ensure_runtime_flags()
 
     _frozen = getattr(sys, 'frozen', False)
     _has = bool(os.getenv("DEEPSEEK_API_KEY"))
@@ -641,6 +674,7 @@ async def _start_onboarding():
             models=len(models),
             embed=bool(siliconflow_key),
         )
+        _ensure_runtime_flags()
         _done.set()
         return {
             "status": "ok",

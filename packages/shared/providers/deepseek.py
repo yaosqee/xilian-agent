@@ -159,6 +159,7 @@ class DeepSeekAdapter:
         stream: bool = False,
         tools: list | None = None,
         tool_choice: str | None = None,
+        disable_thinking: bool | None = None,
     ) -> ProviderResponse | object:
         """Chat completion via DeepSeek API.
 
@@ -177,12 +178,14 @@ class DeepSeekAdapter:
             return await self._call_flash(
                 messages, temperature, max_tokens,
                 stream, tools, tool_choice, has_tools, model=model,
+                disable_thinking=disable_thinking,
             )
         else:
             # 未知模型 → 默认走 Flash（Pro 成本高，不默认兜底）
             logger.warning("deepseek.unknown_model_fallback_flash", model=model)
             return await self._call_flash(messages, temperature, max_tokens,
-                                          stream, tools, tool_choice, has_tools)
+                                          stream, tools, tool_choice, has_tools,
+                                          disable_thinking=disable_thinking)
 
     async def _call_pro(
         self, messages, temperature, max_tokens,
@@ -254,6 +257,7 @@ class DeepSeekAdapter:
         self, messages, temperature, max_tokens,
         stream, tools, tool_choice, has_tools,
         model: str = "deepseek-flash",
+        disable_thinking: bool | None = None,
     ) -> ProviderResponse | object:
         """DS Flash / Vision. Falls back to Pro if Flash unavailable."""
         if not self._flash_client:
@@ -273,7 +277,7 @@ class DeepSeekAdapter:
         if has_tools:
             api_kwargs["tools"] = tools
             api_kwargs["tool_choice"] = tool_choice or "auto"
-        if self._disable_thinking:
+        if self._disable_thinking or disable_thinking:
             api_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
         try:
@@ -336,7 +340,8 @@ class DeepSeekAdapter:
                 model=model,
                 messages=messages,
                 temperature=0.3,
-                max_tokens=300,
+                max_tokens=500,
+                disable_thinking=True,
             )
             return (response.content or "").strip()
         except Exception as e:
