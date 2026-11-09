@@ -520,6 +520,7 @@ async def main():
 
     # ── 5. 阶段 8: 系统托盘 ──
     tray_icon = None
+    main_loop = asyncio.get_running_loop()
     try:
         import pystray
         from PIL import Image
@@ -562,7 +563,8 @@ async def main():
 
         def on_exit(tray_icon_ref):
             tray_icon_ref.stop()
-            asyncio.get_event_loop().call_soon_threadsafe(
+            # pystray 回调在独立线程运行，必须回到主 asyncio 事件循环。
+            main_loop.call_soon_threadsafe(
                 lambda: asyncio.ensure_future(shutdown_all())
             )
 

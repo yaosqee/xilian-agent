@@ -782,6 +782,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
     saveRoutingProfile, resetRoutingProfile,
   } = useModelStore();
   const [tab, setTab] = useState<'profiles' | 'providers' | 'models' | 'routing' | 'embedding'>('profiles');
+  const bundledSource = (routing?.source_path || '').includes('_MEI');
 
   useEffect(() => {
     loadProviders();
@@ -829,7 +830,7 @@ const ModelRoutingSection: React.FC<{ sectionStyle: React.CSSProperties }> = ({ 
         fontSize: 10, color: 'var(--color-text-muted)', margin: '0 0 12px',
         wordBreak: 'break-all',
       }}>
-        来源：{routing.source_path || 'config/model_routing.toml'}
+        来源：{bundledSource ? '内置默认基线（不含 API Key）' : (routing.source_path || 'config/model_routing.toml')}
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 12 }}>
