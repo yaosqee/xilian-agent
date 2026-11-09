@@ -9,7 +9,7 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **735 passed / 8 skipped / ~29s** |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **736 passed / 8 skipped / ~27s** |
 | 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图/Onboarding/exe 冒烟完成；**V2 由 `.env` 开启**；全量 V2 100%；下一步发布构建与真实 UI 操作 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
@@ -284,7 +284,7 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 - `MultimodalProcessor` 默认 `VISION_PROVIDER=deepseek`，复用 `DEEPSEEK_API_KEY`；
 - `VISION_MODEL=deepseek-v4-flash-vision-exp` 可覆盖；
 - MiMo 保留为 `VISION_PROVIDER=mimo` 兼容路径，不再要求用户注册小米；
-- 测试：`test_multimodal.py` + provider 结构测试；全量 **735 passed / 8 skipped**。
+- 测试：`test_multimodal.py` + provider 结构测试；全量 **736 passed / 8 skipped**。
 
 ### 真实图片端到端（2026-11-08）
 
