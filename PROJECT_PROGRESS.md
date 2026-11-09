@@ -9,7 +9,7 @@
 | 项 | 当前值 |
 |---|---|
 | 仓库 | `D:\xilian-v3`，分支 `main`；提交/推送状态以 `git status -sb` 为准；工作区干净 |
-| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **734 passed / 9 skipped / ~27s** |
+| 测试 | `uv run pytest -q --ignore=tests/test_personality_regression.py` → **735 passed / 8 skipped / ~29s** |
 | 阶段 | P0–P3 + X + M1 + P1.5 + M2-1~M2-6 + 时间/天气/识图/Onboarding/exe 冒烟完成；**V2 由 `.env` 开启**；全量 V2 100%；下一步发布构建与真实 UI 操作 |
 | 运行默认 | `LOOP_V2=1`（`.env`，本机）；代码默认仍是 0，回滚只需改 `.env` |
 | P3 终版基线 | 40 条（`cases_sha256=3d49b5cc`，**Flash**）：loop **97.5%** / legacy 82.5%；loop 多步 100%、事实 100%、正确工具 100%、工具成功率 100% |
@@ -284,7 +284,7 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 - `MultimodalProcessor` 默认 `VISION_PROVIDER=deepseek`，复用 `DEEPSEEK_API_KEY`；
 - `VISION_MODEL=deepseek-v4-flash-vision-exp` 可覆盖；
 - MiMo 保留为 `VISION_PROVIDER=mimo` 兼容路径，不再要求用户注册小米；
-- 测试：`test_multimodal.py` + provider 结构测试；全量 **734 passed / 9 skipped**。
+- 测试：`test_multimodal.py` + provider 结构测试；全量 **735 passed / 8 skipped**。
 
 ### 真实图片端到端（2026-11-08）
 
@@ -305,6 +305,25 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 2. DeepSeek vision 对 WebP data URL 兼容差 → `MultimodalProcessor` 统一把 WebP/GIF 转 JPEG。
 3. `http_channel` 与 `MultimodalProcessor` 的上传目录不一致（打包后一个在 `_MEIPASS`、一个在 cwd）→ 统一走 `packages/shared/paths.data_dir()`。
 4. PyInstaller 看不到动态导入的 provider/tool 模块 → spec 显式加入 deepseek/openai/anthropic/google/mimo 与 4 个工具模块。
+
+### 真实安装复测问题（2026-11-09）
+
+用户在 `E:\昔涟exe` 实测暴露两个问题：
+
+1. **识图失败**：日志为 `deepseek-flash output truncated (max_tokens reached)`。  
+   根因：全新安装没有 `.env` 的 `DEEPSEEK_DISABLE_THINKING=1`，视觉模型把 300 tokens 花在 thinking 上，正文为空。  
+   修复：`describe_image` 强制 `disable_thinking=True`，并把上限提到 500。
+
+2. **设置页下拉 6 项/重复/不可选**：全新安装没有 `MODEL_ROUTING_V2=1`，走了 V1 tier 下拉。  
+   修复：Onboarding 和启动时自动写运行开关到 `.env`（不写 Key）：
+   ```text
+   MODEL_ROUTING_V2=1
+   LOOP_V2=1
+   DEEPSEEK_DISABLE_THINKING=1
+   ```
+   已用现有 `E:\昔涟exe\data` 复制验证：启动后 `routing_v2=true`，模型列表 4 个唯一项（flash / pro / vision / reasoner）。
+
+向量模型 Key 未填不影响启动和识图；只是 embedding 相关记忆检索会走降级路径。
 
 ---
 
