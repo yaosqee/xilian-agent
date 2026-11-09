@@ -356,6 +356,12 @@ loop 唯一失败是 multi-02：工具选择正确（天气+搜索），但搜�
 - **托盘**：`pystray` Windows 后端走 ctypes，不需要 pywin32；已从 spec 移除 `win32*` hidden imports，打包启动日志出现「系统托盘已启动」。
 - `uv run pyinstaller` 与直接 `pyinstaller` 在本机指向同一个 `.venv`；区别主要是前者保证项目环境，后者依赖 PATH。
 
+### 托盘退出 / 配置路径（2026-11-09）
+
+- 托盘「退出」报 `There is no current event loop in thread 'Thread-3'`：
+  pystray 回调在独立线程，不能 `asyncio.get_event_loop()`；已改为捕获主循环并 `call_soon_threadsafe` 调度 `shutdown_all()`。
+- 设置页显示的 `C:\Users\...\Temp\_MEI...\config\model_routing.toml` 是 **onefile 解压出来的内置配置路径**，不是 API Key；该 TOML 只包含 `api_key_env` 变量名。UI 已在 `_MEI` 路径下显示「内置默认基线（不含 API Key）」。
+
 ---
 
 ## 天气回复补城市名（2026-11-05）
